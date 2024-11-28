@@ -17,10 +17,17 @@ add_executable(mote
 	TimeKeeper.cpp
 	LogKeeper.cpp
 	UnitTests.cpp
+	Config.cpp
 )
 
+add_subdirectory(lib/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico/src/ build)
+
 # Add pico_stdlib library which aggregates commonly used features
-target_link_libraries(mote pico_stdlib pico_multicore)
+target_link_libraries(mote
+	pico_stdlib
+	pico_multicore
+	no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
+)
 
 pico_enable_stdio_usb(mote 1)
 pico_enable_stdio_uart(mote 0)

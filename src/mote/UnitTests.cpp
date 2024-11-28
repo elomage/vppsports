@@ -241,10 +241,29 @@ Assertion SDBufferTests() {
 }
 
 
+Assertion NullableTests() {
+	const std::string _testName = "NullableTests";
+	Assertion assertion;
+
+	Nullable<int64_t> nullableObj1(false, 1265);
+	char buffer[nullableObj1.GetEncodedBufferSize()];
+	nullableObj1.EncodeToBuffer(buffer);
+	Nullable<int64_t> nullableObj2(buffer);
+	if ((assertion = Assertion("Encode/Decode check", _testName, __LINE__, nullableObj1.isNull, nullableObj2.isNull)).TestFailed())
+		return assertion;
+	if ((assertion = Assertion("Encode/Decode check", _testName, __LINE__, nullableObj1.value, nullableObj2.value)).TestFailed())
+		return assertion;
+	if ((assertion = Assertion("Encode/Decode check", _testName, __LINE__, (int64_t)nullableObj1, (int64_t)nullableObj2)).TestFailed())
+		return assertion;
+
+	return assertion;
+}
+
+
 bool runUnitTests() {
 	logInfo("Running unit tests");
 	bool anyFailed = false;
-	std::function<Assertion()> tests[] = { LimitedQueueTests, LogEncodeTest, SDBufferTests };//Add any new unit tests here
+	std::function<Assertion()> tests[] = { LimitedQueueTests, LogEncodeTest, SDBufferTests, NullableTests };//Add any new unit tests here
 
 	for (auto test : tests) {
 		Assertion assertion = test();

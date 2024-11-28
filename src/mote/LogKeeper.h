@@ -4,8 +4,12 @@
 #include <cstddef>
 #include <map>
 
+#include "hw_config.h"
+#include "ff.h"
+
 #include "constants.h"
 #include "helper_funcs.h"
+#include "Config.h"
 
 template <typename T>
 struct FullLog {
@@ -206,26 +210,19 @@ public:
 };
 
 //Writes immediately
-class ImmediateLogger {
-	static std::map<sensor_id, char[SD_CARD_SECTOR_SIZE]> _logMap;
+class ImmediateLogger {//TODO:Make this more resilient against SD card failures
+	static std::map<sensor_id, SDCardBuffer> _logMap;
 	static bool _initialized;
+	static std::string _runName;
+	static FATFS _sdFs;
+
+	static void _dumpBuffer();
+	static std::string _getFilePath(sensor_id sensorID);
 
 public:
-	static void Init();
-	static void DumpBuffer();
+	static void Init(uint64_t absStartTime, Sensor *sensors, short sensorCount);
+	static void InitSensors();
 	static void StoreLog(sensor_id, Log);
-};
-
-//Runs writes on a seperate thread
-class LogKeeper {
-	volatile static bool _stopCalled;
-	static std::map<sensor_id, LimitedQueue<Log>> _logMap;
-	
-	static void _dumpAll();
-
-public:
-	static void RunLogDumper();
-	static bool AddSensorLog(sensor_id id, Log log);
 	static void Stop();
 };
 

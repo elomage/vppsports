@@ -4,6 +4,9 @@
 #include <string>
 #include <queue>
 #include <stdarg.h>
+#include <cstring>
+
+#include "ff.h"
 
 void fatalError(std::string errorMessage);
 void logError(const char *format, ...);
@@ -17,6 +20,14 @@ void setPrintBlock(bool block);
 #define TEST4 logWarning("Test 4")
 #define TEST5 logWarning("Test 5")
 #define TEST6 logWarning("Test 6")
+
+/**
+ * Recursively deletes any files and directories, if the given object exists
+ *
+ * @param path Path to the file/dir to be deleted
+ * return Returns true, if the file/dir doesn't exist, false if an error was encountered
+ */
+bool recursivelyDeleteIfExists(const TCHAR *path);
 
 template <typename T>
 class LimitedQueue {//Methods implemented here because compiler freaks out when they're not (template stuff)
@@ -54,6 +65,27 @@ public:
 		bool result = _queue.empty();
 		_accessLock = false;
 		return result;
+	}
+};
+
+template <typename T>
+struct Nullable{
+	bool isNull = true;
+	T value;
+
+	operator bool() { return !isNull; }
+	operator T() { return value; }
+	Nullable(bool isNull, T value) { this->isNull = isNull; this->value = value; }
+	static size_t GetEncodedBufferSize() { return sizeof(isNull) + sizeof(value); }
+
+	Nullable(char *buff) {
+		std::memcpy(&isNull, buff, sizeof(isNull));
+		std::memcpy(&value, buff + sizeof(isNull), sizeof(value));
+	}
+
+	void EncodeToBuffer(char *buff) {
+		std::memcpy(buff, &isNull, sizeof(isNull));
+		std::memcpy(buff + sizeof(isNull), &value, sizeof(value));
 	}
 };
 
