@@ -7,7 +7,8 @@
 
 ### First build
 
-1) `mkdir build && cd build`
-2) `PICO_SDK_PATH=/path/to/pico/sdk cmake ..`
-3) `make mote`
+1) `git submodule update --init` - update/download submodules
+2) `mkdir build && cd build`
+3) `PICO_SDK_PATH=/path/to/pico/sdk cmake ..`
+4) `make mote`
 
