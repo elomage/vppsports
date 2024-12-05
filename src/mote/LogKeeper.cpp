@@ -203,7 +203,7 @@ static spi_t spi = {
 
 static sd_spi_if_t spi_if = {
     .spi = &spi,
-    .ss_gpio = SD_SPI_CS_GP
+    .ss_gpio = SD_SPI_CS_GPIO
 };
 
 static sd_card_t sd_card = {

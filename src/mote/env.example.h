@@ -9,12 +9,12 @@
 #define VPP_LOG_INFO
 
 #define SPI_SET spi0
-#define SPI_SCK_GP 2
-#define SPI_MOSI_GP 3
-#define SPI_MISO_GP 4
+#define SPI_SCK_GPIO 2
+#define SPI_MOSI_GPIO 3
+#define SPI_MISO_GPIO 4
 #define SPI_BAUD_RATE 125 * 1000 * 1000 / 4  //31250000 Hz
 
-#define SD_SPI_CS_GP 5
+#define SD_SPI_CS_GPIO 5
 
 #endif
 
