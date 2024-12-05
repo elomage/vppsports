@@ -214,7 +214,7 @@ static sd_card_t sd_card = {
 
 bool ImmediateLogger::_initialized = false;
 
-void ImmediateLogger::Init(uint64_t absStartTime, Sensor *sensors, short sensorCount) {
+void ImmediateLogger::Init(abs_timestamp absStartTime, Sensor *sensors, short sensorCount) {
 	_runName = "Run_" + std::to_string(absStartTime);
 	logInfo("[ImmediateLogger::Init]: Mounting SD card's filesystem");
 	if (f_mount(&_sdFs, "", 1) != FR_OK)

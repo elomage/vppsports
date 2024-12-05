@@ -28,8 +28,9 @@ enum MeasurementDataType {
 	bool8 = 11
 };
 
+//Name_ID-from-sensor-sheet_connection-method
 enum SensorType {
-
+	lcm20600_AK09918_14_I2C = 0
 };
 
 enum NodeConType {

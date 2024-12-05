@@ -209,8 +209,7 @@ public:
 	short DiscardBuffer();
 };
 
-//Writes immediately
-class ImmediateLogger {//TODO:Make this more resilient against SD card failures
+class ImmediateLogger {
 	static std::map<sensor_id, SDCardBuffer> _logMap;
 	static bool _initialized;
 	static std::string _runName;
@@ -220,7 +219,7 @@ class ImmediateLogger {//TODO:Make this more resilient against SD card failures
 	static std::string _getFilePath(sensor_id sensorID);
 
 public:
-	static void Init(uint64_t absStartTime, Sensor *sensors, short sensorCount);
+	static void Init(abs_timestamp absStartTime, Sensor *sensors, short sensorCount);
 	static void InitSensors();
 	static void StoreLog(sensor_id, Log);
 	static void Stop();

@@ -9,6 +9,7 @@
 #include "ff.h"
 
 void fatalError(std::string errorMessage);
+void notImplemented();
 void logError(const char *format, ...);
 void logWarning(const char *format, ...);
 void logInfo(const char *format, ...);
@@ -73,9 +74,12 @@ struct Nullable{
 	bool isNull = true;
 	T value;
 
+	Nullable(): isNull(true) {}
+	Nullable(bool isNull, T value): isNull(isNull), value(value) {}
 	operator bool() { return !isNull; }
 	operator T() { return value; }
-	Nullable(bool isNull, T value) { this->isNull = isNull; this->value = value; }
+	operator std::string() const { return isNull ? "NULL" : std::to_string(value); }
+
 	static size_t GetEncodedBufferSize() { return sizeof(isNull) + sizeof(value); }
 
 	Nullable(char *buff) {

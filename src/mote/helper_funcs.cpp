@@ -16,6 +16,8 @@ void fatalError(std::string errorMessage) {
 	}
 }
 
+void notImplemented() { fatalError("Not implemented!"); }
+
 void setPrintBlock(bool block) { printBlocked = block; }
 
 #define _LOGGER_LOG va_list args; va_start(args, format); vprintf(format, args); va_end(args); printf("\n"); fflush(stdout);

@@ -6,6 +6,8 @@
 #include "constants.h"
 #include "LogKeeper.h"
 #include "helper_funcs.h"
+#include "Config.h"
+#include "TimeKeeper.h"
 
 Assertion::operator std::string() const {
 	if (!_assertionFailed)
@@ -19,6 +21,7 @@ std::string Assertion::convertBoolToString(bool val) { return val ? "true" : "fa
 
 Assertion LimitedQueueTests() {
 	const std::string _testName = "LimitedQueueTests";
+	logInfo("Running %s", _testName.c_str());
 	Assertion assertion;
 	LimitedQueue<int16_t> queue(3);
 	if ((assertion = Assertion("Queue empty", _testName, __LINE__, true, queue.Empty())).TestFailed())
@@ -53,6 +56,7 @@ Assertion LimitedQueueTests() {
 
 Assertion LogEncodeTest() {
 	const std::string _testName = "LogEncodeTest";
+	logInfo("Running %s", _testName.c_str());
 	Assertion assertion;
 	char buffer[100];
 	int32_t m32_1[] = { 31 };
@@ -172,6 +176,7 @@ Assertion LogEncodeTest() {
 
 Assertion SDBufferTests() {
 	const std::string _testName = "SDBufferTests";
+	logInfo("Running %s", _testName.c_str());
 	Assertion assertion;
 	
 	SDCardBuffer sdBuffer = SDCardBuffer(100);
@@ -240,9 +245,9 @@ Assertion SDBufferTests() {
 	return Assertion();
 }
 
-
 Assertion NullableTests() {
 	const std::string _testName = "NullableTests";
+	logInfo("Running %s", _testName.c_str());
 	Assertion assertion;
 
 	Nullable<int64_t> nullableObj1(false, 1265);
@@ -256,23 +261,85 @@ Assertion NullableTests() {
 	if ((assertion = Assertion("Encode/Decode check", _testName, __LINE__, (int64_t)nullableObj1, (int64_t)nullableObj2)).TestFailed())
 		return assertion;
 
-	return assertion;
+	return Assertion();
+}
+
+Assertion ConfigTests() {
+	const std::string _testName = "ConfigTests";
+	logInfo("Running %s", _testName.c_str());
+	Assertion assertion;
+	RideConfigV1 rideConfigV1(
+		decltype(RideConfigV1::driverID)(true, 0),
+		decltype(RideConfigV1::startLocationLat)(false, 538.68),
+		decltype(RideConfigV1::startLocationLon)(false, 16849.4865),
+		TimeKeeper::GetCurrentTimeStamp()
+	);
+
+	char rideBuffer[rideConfigV1.GetEncodedBufferSize()];
+	rideConfigV1.EncodeToBuffer(rideBuffer);
+	RideConfigV1 decodedConfigV1(rideBuffer);
+	if ((assertion = Assertion("RideConfig decode check", _testName, __LINE__, (std::string)rideConfigV1.driverID, (std::string)decodedConfigV1.driverID)).TestFailed())
+		return assertion;
+	if ((assertion = Assertion("RideConfig decode check", _testName, __LINE__, (std::string)rideConfigV1.startLocationLat, (std::string)decodedConfigV1.startLocationLat)).TestFailed())
+		return assertion;
+	if ((assertion = Assertion("RideConfig decode check", _testName, __LINE__, (std::string)rideConfigV1.startLocationLon, (std::string)decodedConfigV1.startLocationLon)).TestFailed())
+		return assertion;
+	if ((assertion = Assertion("RideConfig decode check", _testName, __LINE__, rideConfigV1.startTime, decodedConfigV1.startTime)).TestFailed())
+		return assertion;
+
+	int sensorCount = 2;
+	SensorV1 sensorsV1[sensorCount];
+	sensorsV1[0].ID=1; sensorsV1[0].type=lcm20600_AK09918_14_I2C; sensorsV1[0].sensorPins[0]=15; sensorsV1[0].targetedFrequency=1000; sensorsV1[0].subNodeConType=Nullable<NodeConType>(false, I2C); sensorsV1[0].subNodeConPins[0]=1; sensorsV1[0].subNodeConPins[1]=3; sensorsV1[0].measurementType=uint16, sensorsV1[0].measurementCountPerLog=3;
+	sensorsV1[1].ID=2; sensorsV1[1].type=lcm20600_AK09918_14_I2C; sensorsV1[1].sensorPins[0]=110; sensorsV1[1].sensorPins[1]=0; sensorsV1[1].targetedFrequency=2050; sensorsV1[1].subNodeConType=Nullable<NodeConType>(true, I2C); sensorsV1[1].measurementType=uint32, sensorsV1[1].measurementCountPerLog=1;
+	SettingsV1 settingsV1(sensorCount, sensorsV1);
+	char settingsV1Buffer[settingsV1.GetEncodedBufferSize()];
+	settingsV1.EncodeToBuffer(settingsV1Buffer);
+	SettingsV1 decodedSettingsV1(settingsV1Buffer);
+	if ((assertion = Assertion("SettingsV1 decode sensor cound check", _testName, __LINE__, settingsV1.sensorCount, decodedSettingsV1.sensorCount)).TestFailed())
+		return assertion;
+
+	for (int sensor = 0; sensor < sensorCount; sensor++) {
+		if ((assertion = Assertion("SettingsV1 decode sensor ID check", _testName, __LINE__, settingsV1.sensors[sensor].ID, decodedSettingsV1.sensors[sensor].ID)).TestFailed())
+			return assertion;
+		if ((assertion = Assertion("SettingsV1 decode sensor type check", _testName, __LINE__, settingsV1.sensors[sensor].type, decodedSettingsV1.sensors[sensor].type)).TestFailed())
+			return assertion;
+		for (int pin = 0; pin < SensorV1::maxPinsInDefinition; pin++) {
+			if ((assertion = Assertion("SettingsV1 decode sensor connection pin check", _testName, __LINE__, settingsV1.sensors[sensor].sensorPins[pin], decodedSettingsV1.sensors[sensor].sensorPins[pin])).TestFailed())
+				return assertion;
+			if ((assertion = Assertion("SettingsV1 decode sensor subnode connection pin check", _testName, __LINE__, settingsV1.sensors[sensor].subNodeConPins[pin], decodedSettingsV1.sensors[sensor].subNodeConPins[pin])).TestFailed())
+				return assertion;
+		}
+		if ((assertion = Assertion("SettingsV1 decode sensor frequency check", _testName, __LINE__, settingsV1.sensors[sensor].targetedFrequency, decodedSettingsV1.sensors[sensor].targetedFrequency)).TestFailed())
+			return assertion;
+		if ((assertion = Assertion("SettingsV1 decode sensor subNodeConType check", _testName, __LINE__, (std::string)settingsV1.sensors[sensor].subNodeConType, (std::string)decodedSettingsV1.sensors[sensor].subNodeConType)).TestFailed())
+			return assertion;
+		if ((assertion = Assertion("SettingsV1 decode sensor frequency check", _testName, __LINE__, settingsV1.sensors[sensor].measurementType, decodedSettingsV1.sensors[sensor].measurementType)).TestFailed())
+			return assertion;
+		if ((assertion = Assertion("SettingsV1 decode sensor frequency check", _testName, __LINE__, settingsV1.sensors[sensor].measurementCountPerLog, decodedSettingsV1.sensors[sensor].measurementCountPerLog)).TestFailed())
+			return assertion;
+	}
+
+	return Assertion();
 }
 
 
 bool runUnitTests() {
 	logInfo("Running unit tests");
 	bool anyFailed = false;
-	std::function<Assertion()> tests[] = { LimitedQueueTests, LogEncodeTest, SDBufferTests, NullableTests };//Add any new unit tests here
+	log_timestamp allTestStart = TimeKeeper::GetMsSinceBoot();
+	std::function<Assertion()> tests[] = { LimitedQueueTests, LogEncodeTest, SDBufferTests, NullableTests, ConfigTests };//Add any new unit tests here
 
 	for (auto test : tests) {
+		log_timestamp testStart = TimeKeeper::GetMsSinceBoot();
 		Assertion assertion = test();
 		if (assertion.TestFailed()) {
 			logError(((std::string)assertion).c_str());
 			anyFailed = true;
 		}
+		logInfo("Test finished in %ums", TimeKeeper::GetMsSinceBoot() - testStart);
 	}
-
+	
+	logInfo("All test run time: %ums", TimeKeeper::GetMsSinceBoot() - allTestStart);
 	if (anyFailed) logWarning("One or more tests failed!");
 	else logInfo("All tests passed!");
 	return !anyFailed;
