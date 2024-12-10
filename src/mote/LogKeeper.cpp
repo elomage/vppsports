@@ -2,23 +2,6 @@
 
 #include <cstring>
 
-#include "env.h"
-
-template <typename T>
-FullLog<T>::FullLog(log_timestamp timestamp, sensor_id sensorID, short measurementCount, T *measurements) {
-	this->timestamp = timestamp;
-	this->sensorID = sensorID;
-	this->measurementCount = measurementCount;
-	this->measurements = new char[measurementCount];
-	for (short i = 0; i < measurementCount; i++)
-		this.measurements[i] = measurements[i];
-}
-
-template <typename T>
-FullLog<T>::~FullLog() {
-	delete measurements;
-}
-
 Log::Log(log_timestamp timestamp, size_t measurementSize, short measurementCount, char *measurements) {
 	this->timestamp = timestamp;
 	this->measurementCount = measurementCount;
@@ -85,14 +68,7 @@ Log& Log::operator=(Log&& log) {
 
 Log::~Log() { delete[] measurements; }
 
-size_t Log::GetMeasurementBufferSizeInBytes() { return GetMeasurementBufferSizeInBytes(measurementSize, measurementCount); }
-size_t Log::GetMeasurementBufferSizeInBytes(size_t measurementSize, short measurementCount) { return measurementSize * measurementCount; }
-size_t Log::GetSmallEncodeBufferSize() { return GetSmallEncodeBufferSize(measurementSize, measurementCount); }
-size_t Log::GetSmallEncodeBufferSize(size_t measurementSize, short measurementCount) { return sizeof(log_timestamp) + GetMeasurementBufferSizeInBytes(measurementSize, measurementCount); }
-size_t Log::GetEncodeBufferSize() { return GetEncodeBufferSize(measurementSize, measurementCount); }
-size_t Log::GetEncodeBufferSize(size_t measurementSize, short measurementCount) { return sizeof(log_timestamp) + sizeof(size_t) + sizeof(short) + GetMeasurementBufferSizeInBytes(measurementSize, measurementCount); }
-
-void Log::EncodeToBuffer(char *buffer) {
+void Log::EncodeToBuffer(char *buffer) const {
 	int pos = 0;
 	std::memcpy(buffer + pos, &timestamp, sizeof(timestamp)); pos += sizeof(timestamp);
 	std::memcpy(buffer + pos, &measurementSize, sizeof(measurementSize)); pos += sizeof(measurementSize);
@@ -100,7 +76,7 @@ void Log::EncodeToBuffer(char *buffer) {
 	std::memcpy(buffer + pos, measurements, GetMeasurementBufferSizeInBytes());
 }
 
-void Log::EncodeToBufferSmall(char *buffer) {
+void Log::EncodeToBufferSmall(char *buffer) const {
 	int pos = 0;
 	std::memcpy(buffer + pos, &timestamp, sizeof(timestamp)); pos += sizeof(timestamp);
 	std::memcpy(buffer + pos, measurements, GetMeasurementBufferSizeInBytes());
@@ -190,95 +166,5 @@ short SDCardBuffer::DiscardBuffer() {
 	std::memcpy(buffer, _bufferOverrunData, _bufferPosition);
 	std::memcpy(_bufferOverrunData, _bufferOverrunData + _bufferPosition, _bufferOverrunPosition -= _bufferPosition);
 	return GetBufferSize();
-}
-
-
-static spi_t spi = {
-    .hw_inst = SPI_SET,
-    .miso_gpio = SPI_MISO_GPIO,
-    .mosi_gpio = SPI_MOSI_GPIO,
-    .sck_gpio = SPI_SCK_GPIO,
-    .baud_rate = SPI_BAUD_RATE
-};
-
-static sd_spi_if_t spi_if = {
-    .spi = &spi,
-    .ss_gpio = SD_SPI_CS_GPIO
-};
-
-static sd_card_t sd_card = {
-    .type = SD_IF_SPI,
-    .spi_if_p = &spi_if
-};
-
-
-bool ImmediateLogger::_initialized = false;
-
-void ImmediateLogger::Init(abs_timestamp absStartTime, Sensor *sensors, short sensorCount) {
-	_runName = "Run_" + std::to_string(absStartTime);
-	logInfo("[ImmediateLogger::Init]: Mounting SD card's filesystem");
-	if (f_mount(&_sdFs, "", 1) != FR_OK)
-		fatalError("[ImmediateLogger::Init]: Failed to mount the SD card's filesystem");
-	logInfo("[ImmediateLogger::Init]: Clearing any previous run with the same name");
-	if (!recursivelyDeleteIfExists(_runName.c_str()))
-		fatalError("[ImmediateLogger::Init]: Failed to clear identical run from SD card");
-	logInfo("[ImmediateLogger::Init]: Creating a directory for this run");
-	if (f_mkdir(_runName.c_str()) != FR_OK)
-		fatalError("[ImmediateLogger::Init]: Failed to initialize this run's directory");
-	logInfo("[ImmediateLogger::Init]: SD card logger initialized");
-
-	for (short sensor = 0; sensor < sensorCount; sensor++) {
-		logInfo("[ImmediateLogger::Init]: Initializing the new sensor(%d) log file", sensors[sensor].ID);
-		_logMap.emplace(sensors[sensor].ID, SD_CARD_SECTOR_SIZE);
-		FIL file;
-		if (f_open(&file, _getFilePath(sensors[sensor].ID).c_str(), FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
-			fatalError("[ImmediateLogger::Init]: Failed to create/open the new sensor log file");
-		size_t bufferSize = sensors[sensor].GetEncodedBufferSize();
-		char buffer[bufferSize];
-		sensors[sensor].EncodeToBuffer(buffer);
-		if (f_write(&file, buffer, sizeof(bufferSize), NULL) != FR_OK)
-			fatalError("[ImmediateLogger::Init]: Failed to write to the new sensor log file");
-		f_close(&file);
-	}
-	logInfo("[ImmediateLogger::Init]: All sensor logfile initialized");
-	_initialized = true;
-}
-
-void ImmediateLogger::_dumpBuffer() {
-	if (!_initialized) fatalError("[ImmediateLogger::_dumpBuffer]: ImmediateLogger has not been initialized");
-	for (std::map<sensor_id, SDCardBuffer>::iterator it = _logMap.begin(); it != _logMap.end(); it++) {
-		for (;it->second.IsBufferFull(); it->second.DiscardBuffer()) {
-			FIL file;
-			if (f_open(&file, _getFilePath(it->first).c_str(), FA_OPEN_APPEND | FA_WRITE) != FR_OK)
-				fatalError("[ImmediateLogger::_dumpBuffer]: Failed to open the file");
-			for (; it->second.GetBufferSize() != 0; it->second.DiscardBuffer()) {
-				if (f_write(&file, it->second.buffer, it->second.GetBufferSize(), NULL) != FR_OK)
-					fatalError("[ImmediateLogger::_dumpBuffer]: Failed to write");
-			}
-			f_close(&file);
-		}
-	}
-}
-
-std::string ImmediateLogger::_getFilePath(sensor_id sensorID) {
-	return _runName + "/Log_" + std::to_string(sensorID) + ".bin";
-}
-
-void ImmediateLogger::StoreLog(sensor_id id, Log log) {
-	if (!_initialized) fatalError("[ImmediateLogger::StoreLog]: ImmediateLogger has not been initialized");
-	if (_logMap.find(id) == _logMap.end()) return;
-	char buffer[log.GetSmallEncodeBufferSize()];
-	log.EncodeToBufferSmall(buffer);
-	_logMap.at(id).AddToBuffer(buffer, sizeof(buffer));
-}
-
-void ImmediateLogger::Stop() {
-	logInfo("[ImmediateLogger::Stop]: Stopping ImmediateLogger");
-	_dumpBuffer();
-	_initialized = false;
-	f_unmount("");
-	_logMap.clear();
-	_runName = "";
-	logInfo("[ImmediateLogger::Stop]: ImmediateLogger deinitialized");
 }
 

@@ -11,17 +11,6 @@
 #include "helper_funcs.h"
 #include "Config.h"
 
-template <typename T>
-struct FullLog {
-	log_timestamp timestamp;
-	sensor_id sensorID;
-	short measurementCount;
-	T *measurements;
-	
-	FullLog(log_timestamp timestamp, sensor_id sensorID, short measurementCount, T *measurements);
-	~FullLog();
-};
-
 struct Log {
 	log_timestamp timestamp;
 	size_t measurementSize;
@@ -92,7 +81,7 @@ struct Log {
 	 *
 	 * @return size of the buffer
 	 */
-	inline size_t GetMeasurementBufferSizeInBytes();
+	inline size_t GetMeasurementBufferSizeInBytes() const { return GetMeasurementBufferSizeInBytes(measurementSize, measurementCount); }
 
 	/**
 	 * Gets the size of a measurement buffer with the given parameters
@@ -100,14 +89,14 @@ struct Log {
 	 * @param measurementSize Size of each measurement
 	 * @param measurementCount how many measurements are in a log
 	 */
-	static inline size_t GetMeasurementBufferSizeInBytes(size_t measurementSize, short measurementCount);
+	static inline size_t GetMeasurementBufferSizeInBytes(size_t measurementSize, short measurementCount) { return measurementSize * measurementCount; }
 
 	/**
 	 * Get small encode buffer size
 	 *
 	 * return Size of small encode buffer
 	 */
-	inline size_t GetSmallEncodeBufferSize();
+	inline size_t GetSmallEncodeBufferSize() const { return GetSmallEncodeBufferSize(measurementSize, measurementCount); }
 
 	/**
 	 * Get small encode buffer size
@@ -116,14 +105,14 @@ struct Log {
 	 * @param measurementCount How many measurements are in a log
 	 * return Size of small encode buffer
 	 */
-	static inline size_t GetSmallEncodeBufferSize(size_t measurementSize, short measurementCount);
+	static inline size_t GetSmallEncodeBufferSize(size_t measurementSize, short measurementCount) { return sizeof(log_timestamp) + GetMeasurementBufferSizeInBytes(measurementSize, measurementCount); }
 
 	/**
 	 * Get encoded buffer size
 	 *
 	 * return Size of small encode buffer
 	 */
-	inline size_t GetEncodeBufferSize();
+	inline size_t GetEncodeBufferSize() const { return GetEncodeBufferSize(measurementSize, measurementCount); }
 
 	/**
 	 * Get encoded buffer size
@@ -132,21 +121,21 @@ struct Log {
 	 * @param measurementCount How many measurements are in a log
 	 * return Size of small encode buffer
 	 */
-	inline static size_t GetEncodeBufferSize(size_t measurementSize, short measurementCount);
+	inline static size_t GetEncodeBufferSize(size_t measurementSize, short measurementCount) { return sizeof(log_timestamp) + sizeof(size_t) + sizeof(short) + GetMeasurementBufferSizeInBytes(measurementSize, measurementCount); }
 
 	/**
 	 * Encodes this struct to buffer
 	 *
 	 * @param buffer Buffer, to which the data will be encoded
 	 */
-	void EncodeToBuffer(char *buffer);
+	void EncodeToBuffer(char *buffer) const;
 
 	/**
 	 * Encodes this struct to buffer, leaving out sizes (used when the sensor is known)
 	 *
 	 * @param buffer Buffer, to which the data will be encoded
 	 */
-	void EncodeToBufferSmall(char *buffer);
+	void EncodeToBufferSmall(char *buffer) const;
 };
 
 class SDCardBuffer {
@@ -207,22 +196,6 @@ public:
 	 * return Returns the buffer size after discard
 	 */
 	short DiscardBuffer();
-};
-
-class ImmediateLogger {
-	static std::map<sensor_id, SDCardBuffer> _logMap;
-	static bool _initialized;
-	static std::string _runName;
-	static FATFS _sdFs;
-
-	static void _dumpBuffer();
-	static std::string _getFilePath(sensor_id sensorID);
-
-public:
-	static void Init(abs_timestamp absStartTime, Sensor *sensors, short sensorCount);
-	static void InitSensors();
-	static void StoreLog(sensor_id, Log);
-	static void Stop();
 };
 
 #endif

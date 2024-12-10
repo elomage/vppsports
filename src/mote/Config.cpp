@@ -24,7 +24,7 @@ SensorV1::SensorV1(char *buff) {
 	std::memcpy(&measurementCountPerLog, buff, sizeof(measurementCountPerLog));
 }
 
-size_t SensorV1::GetEncodedBufferSize() {
+size_t SensorV1::GetEncodedBufferSize() const {
 	return GetEncodedBufferSizeV1();
 }
 
@@ -39,7 +39,7 @@ size_t SensorV1::GetEncodedBufferSizeV1() {
 		+ sizeof(measurementCountPerLog);
 }
 
-void SensorV1::EncodeToBuffer(char *buff) {
+void SensorV1::EncodeToBuffer(char *buff) const {
 	std::memcpy(buff, &ID, sizeof(ID)); buff += sizeof(ID);
 	std::memcpy(buff, &type, sizeof(type)); buff += sizeof(type);
 	std::memcpy(buff, sensorPins, sizeof(sensorPins)); buff += sizeof(sensorPins);
@@ -50,7 +50,7 @@ void SensorV1::EncodeToBuffer(char *buff) {
 	std::memcpy(buff, &measurementCountPerLog, sizeof(measurementCountPerLog));
 }
 
-ver_id SensorV1::GetVersionID() { return 1; }
+ver_id SensorV1::GetVersionID() const { return 1; }
 
 
 RideConfigV1::RideConfigV1(char *buffer) {
@@ -60,16 +60,16 @@ RideConfigV1::RideConfigV1(char *buffer) {
 	std::memcpy(&startTime, buffer, sizeof(startTime));
 }
 
-ver_id RideConfigV1::GetVersionID() { return 1; }
+ver_id RideConfigV1::GetVersionID() const { return 1; }
 
-void RideConfigV1::EncodeToBuffer(char *buffer) {
+void RideConfigV1::EncodeToBuffer(char *buffer) const {
 	driverID.EncodeToBuffer(buffer); buffer += driverID.GetEncodedBufferSize();
 	startLocationLat.EncodeToBuffer(buffer); buffer += startLocationLat.GetEncodedBufferSize();
 	startLocationLon.EncodeToBuffer(buffer); buffer += startLocationLon.GetEncodedBufferSize();
 	std::memcpy(buffer, &startTime, sizeof(startTime));
 }
 
-size_t RideConfigV1::GetEncodedBufferSize() {
+size_t RideConfigV1::GetEncodedBufferSize() const {
 	return driverID.GetEncodedBufferSize()
 		+ startLocationLat.GetEncodedBufferSize()
 		+ startLocationLon.GetEncodedBufferSize()
@@ -128,18 +128,18 @@ SettingsV1& SettingsV1::operator=(SettingsV1 &&other) {
 	return *this;
 }
 
-void SettingsV1::EncodeToBuffer(char *buffer) {
+void SettingsV1::EncodeToBuffer(char *buffer) const {
 	std::memcpy(buffer, &sensorCount, sizeof(sensorCount)); buffer += sizeof(sensorCount);
 	for (int sensor = 0; sensor < sensorCount; buffer += sensors[sensor++].GetEncodedBufferSize())
 		sensors[sensor].EncodeToBuffer(buffer);
 }
 
-size_t SettingsV1::GetEncodedBufferSize() {
+size_t SettingsV1::GetEncodedBufferSize() const {
 	size_t size = sizeof(sensorCount);
 	for (int sensor = 0; sensor < sensorCount; sensor++)
 		size += sensors[sensor].GetEncodedBufferSize();
 	return size;
 }
 
-ver_id SettingsV1::GetVersionID() { return 1; }
+ver_id SettingsV1::GetVersionID() const { return 1; }
 

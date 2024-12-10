@@ -13,6 +13,8 @@ typedef uint16_t sensor_id;
 #define SENSOR_BUFFER_IN_MEMORY 100
 #define SD_CARD_SECTOR_SIZE 512
 
+#define CONFIG_FILENAME "Settings.bin"
+
 enum MeasurementDataType {
 	int8 = 0,
 	int16 = 1,

@@ -4,12 +4,14 @@ cmake_minimum_required(VERSION 3.13)
 # note: this must happen before project()
 include(pico_sdk_import.cmake)
 
-project(VPP_mote)
+project(VPP_mote C CXX ASM)
 
 # initialize the Raspberry Pi Pico SDK
 pico_sdk_init()
 
 # rest of your project
+
+add_subdirectory(lib/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico/src/ build)
 
 add_executable(mote
 	main.cpp
@@ -18,9 +20,9 @@ add_executable(mote
 	LogKeeper.cpp
 	UnitTests.cpp
 	Config.cpp
+	SDHandler.cpp
+	hw_config.c
 )
-
-add_subdirectory(lib/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico/src/ build)
 
 # Add pico_stdlib library which aggregates commonly used features
 target_link_libraries(mote

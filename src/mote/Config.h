@@ -4,15 +4,17 @@
 #include "constants.h"
 #include "helper_funcs.h"
 
+//Note: Any new version of these data structures should include an upgrade method to allow loading an older config file
+
 struct Sensor {
 	sensor_id ID;
 
 	Sensor(){}
 	Sensor(char *buff);
 
-	virtual size_t GetEncodedBufferSize() = 0;
-	virtual void EncodeToBuffer(char *buff) = 0;
-	virtual ver_id GetVersionID() = 0;
+	virtual size_t GetEncodedBufferSize() const = 0;
+	virtual void EncodeToBuffer(char *buff) const = 0;
+	virtual ver_id GetVersionID() const = 0;
 };
 
 struct SensorV1 : public Sensor {
@@ -29,19 +31,19 @@ struct SensorV1 : public Sensor {
 	SensorV1() : Sensor(){}
 	SensorV1(char *buff);
 
-	size_t GetEncodedBufferSize() override;
+	virtual size_t GetEncodedBufferSize() const override final;
 	static size_t GetEncodedBufferSizeV1();
-	void EncodeToBuffer(char *buff) override;
-	ver_id GetVersionID() override;
+	virtual void EncodeToBuffer(char *buff) const override final;
+	virtual ver_id GetVersionID() const override final;
 };
 
 //Current sensor version
 struct SensorVC : public SensorV1 { using SensorV1::SensorV1; };
 
 struct RideConfig {
-	virtual ver_id GetVersionID() = 0;
-	virtual void EncodeToBuffer(char *buffer) = 0;
-	virtual size_t GetEncodedBufferSize() = 0;
+	virtual ver_id GetVersionID() const = 0;
+	virtual void EncodeToBuffer(char *buffer) const = 0;
+	virtual size_t GetEncodedBufferSize() const = 0;
 };
 
 struct RideConfigV1 : public RideConfig {
@@ -54,18 +56,18 @@ struct RideConfigV1 : public RideConfig {
 		: driverID(driverID), startLocationLat(startLocationLat), startLocationLon(startLocationLon), startTime(startTime) {}
 	RideConfigV1(char *buffer);
 
-	ver_id GetVersionID() override;
-	void EncodeToBuffer(char *buffer) override;
-	size_t GetEncodedBufferSize() override;
+	virtual ver_id GetVersionID() const override final;
+	virtual void EncodeToBuffer(char *buffer) const override final;
+	virtual size_t GetEncodedBufferSize() const override final;
 };
 
 //Current ride config version
 struct RideConfigVC : public RideConfigV1 { using RideConfigV1::RideConfigV1; };
 
 struct Settings {
-	virtual ver_id GetVersionID() = 0;
-	virtual void EncodeToBuffer(char *buffer) = 0;
-	virtual size_t GetEncodedBufferSize() = 0;
+	virtual ver_id GetVersionID() const = 0;
+	virtual void EncodeToBuffer(char *buffer) const = 0;
+	virtual size_t GetEncodedBufferSize() const = 0;
 };
 
 struct SettingsV1 : public Settings {
@@ -80,9 +82,9 @@ struct SettingsV1 : public Settings {
 	SettingsV1(SettingsV1 &&other);
 	SettingsV1& operator=(SettingsV1 &&other);
 
-	ver_id GetVersionID() override;
-	void EncodeToBuffer(char *buffer) override;
-	size_t GetEncodedBufferSize() override;
+	virtual ver_id GetVersionID() const override final;
+	virtual void EncodeToBuffer(char *buffer) const override final;
+	virtual size_t GetEncodedBufferSize() const override final;
 };
 
 //Current setting version

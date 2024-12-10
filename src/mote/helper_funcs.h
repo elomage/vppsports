@@ -76,8 +76,8 @@ struct Nullable{
 
 	Nullable(): isNull(true) {}
 	Nullable(bool isNull, T value): isNull(isNull), value(value) {}
-	operator bool() { return !isNull; }
-	operator T() { return value; }
+	operator bool() const { return !isNull; }
+	operator T() const { return value; }
 	operator std::string() const { return isNull ? "NULL" : std::to_string(value); }
 
 	static size_t GetEncodedBufferSize() { return sizeof(isNull) + sizeof(value); }
@@ -87,7 +87,7 @@ struct Nullable{
 		std::memcpy(&value, buff + sizeof(isNull), sizeof(value));
 	}
 
-	void EncodeToBuffer(char *buff) {
+	void EncodeToBuffer(char *buff) const {
 		std::memcpy(buff, &isNull, sizeof(isNull));
 		std::memcpy(buff + sizeof(isNull), &value, sizeof(value));
 	}
