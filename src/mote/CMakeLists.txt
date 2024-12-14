@@ -17,7 +17,7 @@ add_executable(mote
 	main.cpp
 	helper_funcs.cpp
 	TimeKeeper.cpp
-	LogKeeper.cpp
+	Log.cpp
 	UnitTests.cpp
 	Config.cpp
 	SDHandler.cpp

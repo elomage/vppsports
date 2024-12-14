@@ -4,10 +4,11 @@
 #include <string>
 
 #include "constants.h"
-#include "LogKeeper.h"
+#include "Log.h"
 #include "helper_funcs.h"
 #include "Config.h"
 #include "TimeKeeper.h"
+#include "SDHandler.h"
 
 Assertion::operator std::string() const {
 	if (!_assertionFailed)
@@ -324,6 +325,7 @@ Assertion ConfigTests() {
 
 
 bool runUnitTests() {
+	logInfo("---------------------------------------");
 	logInfo("Running unit tests");
 	bool anyFailed = false;
 	log_timestamp allTestStart = TimeKeeper::GetMsSinceBoot();
@@ -342,6 +344,7 @@ bool runUnitTests() {
 	logInfo("All test run time: %ums", TimeKeeper::GetMsSinceBoot() - allTestStart);
 	if (anyFailed) logWarning("One or more tests failed!");
 	else logInfo("All tests passed!");
+	logInfo("---------------------------------------");
 	return !anyFailed;
 }
 

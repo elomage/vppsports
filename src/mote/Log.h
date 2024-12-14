@@ -1,12 +1,6 @@
 #ifndef __LOGKEEPER_H__
 #define __LOGKEEPER_H__
 
-#include <cstddef>
-#include <map>
-
-#include "hw_config.h"
-#include "ff.h"
-
 #include "constants.h"
 #include "helper_funcs.h"
 #include "Config.h"
@@ -136,66 +130,6 @@ struct Log {
 	 * @param buffer Buffer, to which the data will be encoded
 	 */
 	void EncodeToBufferSmall(char *buffer) const;
-};
-
-class SDCardBuffer {
-	//All positions show the next writable element
-	short _bufferPosition = 0, _bufferOverrunSize = 0, _bufferOverrunPosition = 0;
-	char *_bufferOverrunData = NULL;
-
-	bool _AddToOverrunBuffer(char *data, short size);
-	inline short _GetFreeSpaceInBuffer() const;
-	inline short _GetFreeSpaceInOverrunBuffer() const;
-public:
-	char buffer[SD_CARD_SECTOR_SIZE];
-
-	/**
-	 * Constructor
-	 *
-	 * @param overrunBufferSize Size of the overrun buffer (temporary storage while the main buffer is written out)
-	 */
-	SDCardBuffer(int overrunBufferSize);
-
-	//Copy constructor
-	SDCardBuffer(const SDCardBuffer&);
-	//Copy assignment operator
-	SDCardBuffer& operator=(const SDCardBuffer&);
-	//Move constructor
-	SDCardBuffer(SDCardBuffer&&);
-	//Move assignement operator
-	SDCardBuffer& operator=(SDCardBuffer&&);
-
-	~SDCardBuffer();
-
-	/**
-	 * Gets the current buffer size
-	 *
-	 * return Current buffer size
-	 */
-	short GetBufferSize() const;
-
-	/**
-	 * Appends the given data to the buffer, writing anything that doesn't fit into the overrun buffer, if possible
-	 *
-	 * @param data The data to be written to the buffer
-	 * @param size Size of the data
-	 * return True, if data is appended, false if the apend would cause an overrun
-	 */
-	bool AddToBuffer(char *data, short size);
-
-	/**
-	 * Checks if the buffer is full
-	 *
-	 * return True, if the buffer is full
-	 */
-	bool IsBufferFull() const;
-
-	/**
-	 * Discards the current buffer, and replaces it with overrun data, if any
-	 *
-	 * return Returns the buffer size after discard
-	 */
-	short DiscardBuffer();
 };
 
 #endif
