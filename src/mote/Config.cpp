@@ -1,6 +1,8 @@
 #include "Config.h"
 
 #include <cstring>
+#include <sstream>
+#include <iomanip>
 
 #include "TimeKeeper.h"
 
@@ -22,6 +24,25 @@ SensorV1::SensorV1(char *buff) {
 	std::memcpy(subNodeConPins, buff, sizeof(subNodeConPins)); buff += sizeof(subNodeConPins);
 	std::memcpy(&measurementType, buff, sizeof(measurementType)); buff += sizeof(measurementType);
 	std::memcpy(&measurementCountPerLog, buff, sizeof(measurementCountPerLog));
+}
+
+SensorV1::operator std::string() const {
+	std::stringstream result, initialConf;
+        result << "{ ID: " << ID
+		<< ", type: " << (int)type << ", sensorPins:";
+	initialConf.copyfmt(result);
+	for (short pin = 0; pin < maxPinsInDefinition; pin++)
+		result << " " << std::uppercase << std::setfill('0') << std::setw(2) << std::hex << (int)sensorPins[pin];
+	result.copyfmt(initialConf);
+	result << ", targetedFrequency: " << targetedFrequency
+		<< ", subNodeConType: " << (std::string)subNodeConType << ", subNodeConPins:";
+	initialConf.copyfmt(result);
+	for (short pin = 0; pin < maxPinsInDefinition; pin++)
+		result << " " << std::uppercase << std::setfill('0') << std::setw(2) << std::hex << (int)subNodeConPins[pin];
+	result.copyfmt(initialConf);
+	result << ", measurementType: " << (int)measurementType
+		<< ", measurementCountPerLog: " << (int)measurementCountPerLog << " }";
+	return result.str();
 }
 
 size_t SensorV1::GetEncodedBufferSize() const {
@@ -58,6 +79,13 @@ RideConfigV1::RideConfigV1(char *buffer) {
 	startLocationLat = decltype(startLocationLat)(buffer); buffer += startLocationLat.GetEncodedBufferSize();
 	startLocationLon = decltype(startLocationLon)(buffer); buffer += startLocationLon.GetEncodedBufferSize();
 	std::memcpy(&startTime, buffer, sizeof(startTime));
+}
+
+RideConfigV1::operator std::string() const {
+	return "{ driverID: " + (std::string)driverID
+		+ ", startLocationLat: " + (std::string)startLocationLat
+		+ ", startLocationLon: " + (std::string)startLocationLon
+		+ ", startTime: " + std::to_string(startTime) + " }";
 }
 
 ver_id RideConfigV1::GetVersionID() const { return 1; }
@@ -126,6 +154,13 @@ SettingsV1& SettingsV1::operator=(SettingsV1 &&other) {
 		other.sensors = NULL;
 	}
 	return *this;
+}
+
+SettingsV1::operator std::string() const {
+	std::string result = "{ sensorCount: " + std::to_string(sensorCount) + ", sensors: [ ";
+	for (short sensor = 0; sensor < sensorCount; sensor++)
+		result += (sensor > 0 ? ", " : "") + (std::string)sensors[sensor];
+	return result + " ] }";
 }
 
 void SettingsV1::EncodeToBuffer(char *buffer) const {

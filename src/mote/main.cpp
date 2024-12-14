@@ -22,9 +22,15 @@ int main() {
 
 	SDHandler::Initialize();
 	SDHandler::SaveNewConfig(settings);
+	logInfo("Saved settings: %s", ((std::string)settings).c_str());
 	settings = SDHandler::GetLocalConfig();
-	//SDHandler::InitRun(abs_timestamp runStartTime, Sensor *relevantSensors, short sensorCount, RideConfig &rideConfig);
-	//StoreLog(const sensor_id sensorID, const Log &log);
-	//StopRun();
+	logInfo("Loaded settings: %s", ((std::string)settings).c_str());
+
+	SDHandler::Stop();
+
+#ifdef VPP_DEBUG
+	sleep_ms(5000);//Wait for stdout to be flushed
+#endif
+	return 0;
 }
 

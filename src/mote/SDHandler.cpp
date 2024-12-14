@@ -3,12 +3,9 @@
 #include "helper_funcs.h"
 
 bool SDHandler::_initialized = false;
-
-static FATFS _sdFs;//Linker freaks out, if this is included within the class, keeping it here
-
-inline std::string SDHandler::_getSensorLogFilePath(sensor_id sensorID) {
-	return _currentRunName + "/Log_" + std::to_string(sensorID) + ".bin";
-}
+FATFS SDHandler::_sdFs;
+std::string SDHandler::_currentRunName = "";
+std::map<sensor_id, SDCardBuffer> SDHandler::_rideLogMap = {};
 
 void SDHandler::Initialize() {
 	logInfo("[SDHandler::Initialize]: Mounting SD card's filesystem");
@@ -22,6 +19,7 @@ void SDHandler::Stop() {
 	StopRun();
 	f_unmount("");
 	_initialized = false;
+	logInfo("[SDHandler::Stop]: Unmounted and deinitialized the filesystem");
 }
 
 void SDHandler::InitRun(abs_timestamp runStartTime, Sensor *relevantSensors, short sensorCount, RideConfig &rideConfig) {
@@ -46,7 +44,8 @@ void SDHandler::InitRun(abs_timestamp runStartTime, Sensor *relevantSensors, sho
 		relevantSensors[sensor].EncodeToBuffer(buffer);
 		if (f_write(&file, buffer, sizeof(bufferSize), NULL) != FR_OK)
 			fatalError("[SDHandler::InitRun]: Failed to write to the new sensor log file");
-		f_close(&file);
+		if (f_close(&file) != FR_OK)
+			fatalError("[SDHandler::InitRun]: Failed to close the file");
 	}
 	logInfo("[SDHandler::InitRun]: Run %s initialized", _currentRunName.c_str());
 }
@@ -66,7 +65,8 @@ void SDHandler::_WriteSensorLogBufferToCard(const std::string filename, SDCardBu
 		if (f_write(&file, logBuffer.buffer, logBuffer.GetBufferSize(), NULL) != FR_OK)
 			fatalError("[SDHandler::_WriteSensorLogBufferToCard]: Failed to write");
 	}
-	f_close(&file);
+	if (f_close(&file) != FR_OK)
+		fatalError("[SDHandler::_WriteSensorLogBufferToCard");
 }
 
 void SDHandler::StoreLog(const sensor_id sensorID, const Log &log) {
@@ -116,6 +116,8 @@ SettingsVC SDHandler::GetLocalConfig() {
 
 	logInfo("[SDHandler::GetLocalConfig]: Config version: %d", versionID);
 
+	SettingsVC settings;
+
 	if (versionID == 1) {
 		char buffer[bytesToRead = (fileinfo.fsize - sizeof(ver_id))];
 		if (f_read(&file, buffer, bytesToRead, &bytesRead) != FR_OK)
@@ -124,13 +126,15 @@ SettingsVC SDHandler::GetLocalConfig() {
 			logError("[SDHandler::GetLocalConfig]: Requested bytes: %d | bytes read: %d", bytesToRead, bytesRead);
 			fatalError("[SDHandler::GetLocalConfig]: Read invalid number of bytes");
 		}
-		return SettingsVC(buffer);
+		settings = SettingsVC(buffer);
 	} else logError("[SDHandler::GetLocalConfig]: No valid decoder");
 	
-	return SettingsVC(0, NULL);
+	if (f_close(&file) != FR_OK)
+		fatalError("[SDHandler::GetLocalConfig]: Failed to close the file");
+	return settings;
 }
 
-void SDHandler::SaveNewConfig(const SettingsVC &settings) {
+void SDHandler::SaveNewConfig(const Settings &settings) {
 	if (!_initialized) fatalError("[SDHandler::SaveNewConfig]: SDHandler is not initialized");
 
 	FIL file;
@@ -153,6 +157,8 @@ void SDHandler::SaveNewConfig(const SettingsVC &settings) {
 		logError("[SDHandler::SaveNewConfig]: Requested bytes: %d | bytes written: %d", bytesToWrite, bytesWritten);
 		fatalError("[SDHandler::SaveNewConfig]: Wrote invalid number of bytes");
 	}
+	if (f_close(&file) != FR_OK)
+		fatalError("[SDHandler::SaveNewConfig]: Failed to close the file");
 	logInfo("[SDHandler::SaveNewConfig]: Saved the new config to the SD card");
 }
 

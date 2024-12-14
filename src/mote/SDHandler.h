@@ -12,8 +12,9 @@ class SDHandler {
 	static bool _initialized;
 	static std::string _currentRunName;
 	static std::map<sensor_id, SDCardBuffer> _rideLogMap;
+	static FATFS _sdFs;
 
-	inline static std::string _getSensorLogFilePath(sensor_id sensorID);
+	inline static std::string _getSensorLogFilePath(sensor_id sensorID) { return _currentRunName + "/Log_" + std::to_string(sensorID) + ".bin"; }
 
 	/**
 	 * Dumps all of the unwritten logs from the current ride
@@ -33,7 +34,7 @@ public:
 	/**
 	 * Initializes the handler. Must be called before any operations.
 	 */
-	static void Initialize(/*FATFS *_sdFs*/);
+	static void Initialize();
 
 	/**
 	 * Dumps any unwritten data, unmounts the SD card and deinitializes this class
@@ -77,9 +78,9 @@ public:
 	/**
 	 * Saves new settings localy
 	 *
-	 * @param settings The new SettingsVC object
+	 * @param settings The new Settings object
 	 */
-	static void SaveNewConfig(const SettingsVC &settings);
+	static void SaveNewConfig(const Settings &settings);
 };
 
 #endif

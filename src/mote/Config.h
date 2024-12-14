@@ -11,6 +11,7 @@ struct Sensor {
 
 	Sensor(){}
 	Sensor(char *buff);
+	virtual operator std::string() const = 0;
 
 	virtual size_t GetEncodedBufferSize() const = 0;
 	virtual void EncodeToBuffer(char *buff) const = 0;
@@ -30,6 +31,7 @@ struct SensorV1 : public Sensor {
 
 	SensorV1() : Sensor(){}
 	SensorV1(char *buff);
+	virtual operator std::string() const override;
 
 	virtual size_t GetEncodedBufferSize() const override final;
 	static size_t GetEncodedBufferSizeV1();
@@ -41,6 +43,8 @@ struct SensorV1 : public Sensor {
 struct SensorVC : public SensorV1 { using SensorV1::SensorV1; };
 
 struct RideConfig {
+	virtual operator std::string() const = 0;
+
 	virtual ver_id GetVersionID() const = 0;
 	virtual void EncodeToBuffer(char *buffer) const = 0;
 	virtual size_t GetEncodedBufferSize() const = 0;
@@ -55,6 +59,7 @@ struct RideConfigV1 : public RideConfig {
 	RideConfigV1(Nullable<uint16_t> driverID, Nullable<double> startLocationLat, Nullable<double> startLocationLon, abs_timestamp startTime)
 		: driverID(driverID), startLocationLat(startLocationLat), startLocationLon(startLocationLon), startTime(startTime) {}
 	RideConfigV1(char *buffer);
+	virtual operator std::string() const override;
 
 	virtual ver_id GetVersionID() const override final;
 	virtual void EncodeToBuffer(char *buffer) const override final;
@@ -65,6 +70,8 @@ struct RideConfigV1 : public RideConfig {
 struct RideConfigVC : public RideConfigV1 { using RideConfigV1::RideConfigV1; };
 
 struct Settings {
+	virtual operator std::string() const = 0;
+
 	virtual ver_id GetVersionID() const = 0;
 	virtual void EncodeToBuffer(char *buffer) const = 0;
 	virtual size_t GetEncodedBufferSize() const = 0;
@@ -74,6 +81,7 @@ struct SettingsV1 : public Settings {
 	uint8_t sensorCount;
 	SensorV1 *sensors;
 
+	SettingsV1() : SettingsV1(0, NULL) {}
 	SettingsV1(char *buffer);
 	SettingsV1(uint8_t sensorCount, SensorV1 *sensors);
 	~SettingsV1();
@@ -81,6 +89,7 @@ struct SettingsV1 : public Settings {
 	SettingsV1& operator=(const SettingsV1 &other);
 	SettingsV1(SettingsV1 &&other);
 	SettingsV1& operator=(SettingsV1 &&other);
+	virtual operator std::string() const override;
 
 	virtual ver_id GetVersionID() const override final;
 	virtual void EncodeToBuffer(char *buffer) const override final;
