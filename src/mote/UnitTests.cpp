@@ -290,8 +290,8 @@ Assertion ConfigTests() {
 
 	int sensorCount = 2;
 	SensorV1 sensorsV1[sensorCount];
-	sensorsV1[0].ID=1; sensorsV1[0].type=lcm20600_AK09918_14_I2C; sensorsV1[0].sensorPins[0]=15; sensorsV1[0].targetedFrequency=1000; sensorsV1[0].subNodeConType=Nullable<NodeConType>(false, I2C); sensorsV1[0].subNodeConPins[0]=1; sensorsV1[0].subNodeConPins[1]=3; sensorsV1[0].measurementType=uint16, sensorsV1[0].measurementCountPerLog=3;
-	sensorsV1[1].ID=2; sensorsV1[1].type=lcm20600_AK09918_14_I2C; sensorsV1[1].sensorPins[0]=110; sensorsV1[1].sensorPins[1]=0; sensorsV1[1].targetedFrequency=2050; sensorsV1[1].subNodeConType=Nullable<NodeConType>(true, I2C); sensorsV1[1].measurementType=uint32, sensorsV1[1].measurementCountPerLog=1;
+	sensorsV1[0].ID=1; sensorsV1[0].type=testing_sensor_random; sensorsV1[0].sensorPins[0]=15; sensorsV1[0].targetedFrequency=1000; sensorsV1[0].subNodeConType=Nullable<NodeConType>(false, I2C); sensorsV1[0].subNodeConPins[0]=1; sensorsV1[0].subNodeConPins[1]=3; sensorsV1[0].measurementType=uint16, sensorsV1[0].measurementCountPerLog=3;
+	sensorsV1[1].ID=2; sensorsV1[1].type=testing_sensor_random; sensorsV1[1].sensorPins[0]=110; sensorsV1[1].sensorPins[1]=0; sensorsV1[1].targetedFrequency=2050; sensorsV1[1].subNodeConType=Nullable<NodeConType>(true, I2C); sensorsV1[1].measurementType=uint32, sensorsV1[1].measurementCountPerLog=1;
 	SettingsV1 settingsV1(sensorCount, sensorsV1);
 	char settingsV1Buffer[settingsV1.GetEncodedBufferSize()];
 	settingsV1.EncodeToBuffer(settingsV1Buffer);

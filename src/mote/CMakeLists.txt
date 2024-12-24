@@ -22,12 +22,14 @@ add_executable(mote
 	Config.cpp
 	SDHandler.cpp
 	hw_config.c
+	SensorHandler.cpp
 )
 
 # Add pico_stdlib library which aggregates commonly used features
 target_link_libraries(mote
 	pico_stdlib
 	pico_multicore
+	pico_rand
 	no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
 )
 

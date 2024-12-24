@@ -6,10 +6,12 @@
 #include "Config.h"
 
 struct Log {
-	log_timestamp timestamp;
-	size_t measurementSize;
-	short measurementCount;
+	log_timestamp timestamp = 0;
+	size_t measurementSize = 0;
+	short measurementCount = 0;
 	char *measurements = NULL;
+
+	Log() {}
 
 	/**
 	 * Constructs a struct with the given parameters

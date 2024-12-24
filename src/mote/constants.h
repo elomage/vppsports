@@ -15,6 +15,12 @@ typedef uint16_t sensor_id;
 
 #define CONFIG_FILENAME "Settings.bin"
 
+enum RunState {
+	awaitingStart = 0,
+	started = 1,
+	runFinished = 2
+};
+
 enum MeasurementDataType {
 	int8 = 0,
 	int16 = 1,
@@ -30,9 +36,9 @@ enum MeasurementDataType {
 	bool8 = 11
 };
 
-//Name_ID-from-sensor-sheet_connection-method
+//Name_ID-from-sensor-sheet_connection-method_sub-sensor
 enum SensorType {
-	lcm20600_AK09918_14_I2C = 0
+	testing_sensor_random = 0
 };
 
 enum NodeConType {

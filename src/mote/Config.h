@@ -23,7 +23,7 @@ struct SensorV1 : public Sensor {
 
 	enum SensorType type;
 	uint8_t sensorPins[maxPinsInDefinition];
-	uint16_t targetedFrequency;
+	float targetedFrequency;
 	Nullable<NodeConType> subNodeConType;//null, if the sensor is on this node
 	uint8_t subNodeConPins[maxPinsInDefinition];//Ignore, if subNodeConType is null
 	enum MeasurementDataType measurementType;
@@ -40,7 +40,7 @@ struct SensorV1 : public Sensor {
 };
 
 //Current sensor version
-struct SensorVC : public SensorV1 { using SensorV1::SensorV1; };
+struct SensorVC : public SensorV1 { using SensorV1::SensorV1; SensorVC(const SensorV1 &sensor) : SensorV1(sensor) {} };
 
 struct RideConfig {
 	virtual operator std::string() const = 0;
@@ -67,7 +67,7 @@ struct RideConfigV1 : public RideConfig {
 };
 
 //Current ride config version
-struct RideConfigVC : public RideConfigV1 { using RideConfigV1::RideConfigV1; };
+struct RideConfigVC : public RideConfigV1 { using RideConfigV1::RideConfigV1; RideConfigVC(const RideConfigV1 &rideConfig) : RideConfigV1(rideConfig) {} };
 
 struct Settings {
 	virtual operator std::string() const = 0;
@@ -97,7 +97,10 @@ struct SettingsV1 : public Settings {
 };
 
 //Current setting version
-struct SettingsVC : public SettingsV1 { using SettingsV1::SettingsV1; };
+struct SettingsVC : public SettingsV1 { using SettingsV1::SettingsV1; SettingsVC(const SettingsV1 &settings) : SettingsV1(settings) {} };
+
+
+RideConfigVC GenerateRideConfig();
 
 #endif
 

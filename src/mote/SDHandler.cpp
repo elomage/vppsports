@@ -22,10 +22,10 @@ void SDHandler::Stop() {
 	logInfo("[SDHandler::Stop]: Unmounted and deinitialized the filesystem");
 }
 
-void SDHandler::InitRun(abs_timestamp runStartTime, Sensor *relevantSensors, short sensorCount, RideConfig &rideConfig) {
+void SDHandler::InitRun(std::list<SensorVC> relevantSensors, RideConfigVC &rideConfig) {
 	if (!_initialized) fatalError("[SDHandler::InitRun]: SDHandler isn't initialized");
 
-	_currentRunName = "Run_" + std::to_string(runStartTime);
+	_currentRunName = "Run_" + std::to_string(rideConfig.startTime);
 	logInfo("[SDHandler::InitRun]: Clearing any previous run with the same name");
 	if (!recursivelyDeleteIfExists(_currentRunName.c_str()))
 		fatalError("[SDHandler::InitRun]: Failed to clear identical run from SD card");
@@ -33,15 +33,28 @@ void SDHandler::InitRun(abs_timestamp runStartTime, Sensor *relevantSensors, sho
 	if (f_mkdir(_currentRunName.c_str()) != FR_OK)
 		fatalError("[SDHandler::InitRun]: Failed to initialize this run's directory");
 
-	for (short sensor = 0; sensor < sensorCount; sensor++) {
-		logInfo("[SDHandler::InitRun]: Initializing the new sensor(%d) log file", relevantSensors[sensor].ID);
-		_rideLogMap.emplace(relevantSensors[sensor].ID, SD_CARD_SECTOR_SIZE);
-		FIL file;
-		if (f_open(&file, _getSensorLogFilePath(relevantSensors[sensor].ID).c_str(), FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
+	logInfo("[SDHandler::InitRun]: Writing run info");
+	FIL file;
+	if (f_open(&file, (_currentRunName + "/RunInfo.bin").c_str(), FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
+		fatalError("[SDHandler::InitRun]: Failed to create/open the new run info file");
+	ver_id versionID = rideConfig.GetVersionID();
+	if (f_write(&file, &versionID, sizeof(versionID), NULL) != FR_OK)
+		fatalError("[SDHandler::InitRun]: Failed to write ride config version ID");
+	char rideConfigBuffer[rideConfig.GetEncodedBufferSize()];
+	rideConfig.EncodeToBuffer(rideConfigBuffer);
+	if (f_write(&file, rideConfigBuffer, rideConfig.GetEncodedBufferSize(), NULL) != FR_OK)
+		fatalError("[SDHandler::InitRun]: Failed to write runConfig");
+	if (f_close(&file) != FR_OK)
+		fatalError("[SDHandler::InitRun]: Failed to close the file");
+
+	for (SensorVC sensor : relevantSensors) {
+		logInfo("[SDHandler::InitRun]: Initializing the new sensor(%d) log file", sensor.ID);
+		_rideLogMap.emplace(sensor.ID, SD_CARD_SECTOR_SIZE);
+		if (f_open(&file, _getSensorLogFilePath(sensor.ID).c_str(), FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
 			fatalError("[SDHandler::InitRun]: Failed to create/open the new sensor log file");
-		size_t bufferSize = relevantSensors[sensor].GetEncodedBufferSize();
+		size_t bufferSize = sensor.GetEncodedBufferSize();
 		char buffer[bufferSize];
-		relevantSensors[sensor].EncodeToBuffer(buffer);
+		sensor.EncodeToBuffer(buffer);
 		if (f_write(&file, buffer, sizeof(bufferSize), NULL) != FR_OK)
 			fatalError("[SDHandler::InitRun]: Failed to write to the new sensor log file");
 		if (f_close(&file) != FR_OK)
@@ -62,11 +75,14 @@ void SDHandler::_WriteSensorLogBufferToCard(const std::string filename, SDCardBu
 	if (f_open(&file, filename.c_str(), FA_OPEN_APPEND | FA_WRITE) != FR_OK)
 		fatalError("[SDHandler::_WriteSensorLogBufferToCard]: Failed to open the log file");
 	for (; writeAll ? (logBuffer.GetBufferSize() > 0) : logBuffer.IsBufferFull(); logBuffer.DiscardBuffer()) {
-		if (f_write(&file, logBuffer.buffer, logBuffer.GetBufferSize(), NULL) != FR_OK)
+		UINT bytesWritten, bytesToWrite = logBuffer.GetBufferSize();
+		if (f_write(&file, logBuffer.buffer, logBuffer.GetBufferSize(), &bytesWritten) != FR_OK)
 			fatalError("[SDHandler::_WriteSensorLogBufferToCard]: Failed to write");
+		if (bytesWritten != bytesToWrite)
+			fatalError("[SDHandler::_WriteSensorLogBufferToCard]: Wrote invalid number of bytes");
 	}
 	if (f_close(&file) != FR_OK)
-		fatalError("[SDHandler::_WriteSensorLogBufferToCard");
+		fatalError("[SDHandler::_WriteSensorLogBufferToCard]: Failed to close the file");
 }
 
 void SDHandler::StoreLog(const sensor_id sensorID, const Log &log) {

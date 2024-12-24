@@ -2,6 +2,7 @@
 #define __SDGandler_h__
 
 #include <map>
+#include <list>
 
 #include "f_util.h"
 #include "ff.h"
@@ -106,11 +107,10 @@ public:
 	/**
 	 * Initializes the run file structure
 	 *
-	 * @param runStartTime Run start time
 	 * @param relevantSensors Sensors that exist on this mote
 	 * @param rideConfig Ride configuration
 	 */
-	static void InitRun(abs_timestamp runStartTime, Sensor *relevantSensors, short sensorCount, RideConfig &rideConfig);
+	static void InitRun(std::list<SensorVC> relevantSensors, RideConfigVC &rideConfig);
 
 	/**
 	 * Stores the given log from a sensor to a buffer, then writes out the buffer, if it is full

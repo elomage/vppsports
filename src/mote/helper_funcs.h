@@ -8,6 +8,8 @@
 
 #include "ff.h"
 
+#include "constants.h"
+
 void fatalError(std::string errorMessage);
 void notImplemented();
 void logError(const char *format, ...);
@@ -29,6 +31,14 @@ void setPrintBlock(bool block);
  * return Returns true, if the file/dir doesn't exist, false if an error was encountered
  */
 bool recursivelyDeleteIfExists(const TCHAR *path);
+
+/**
+ * Gets the size of the specified data type
+ *
+ * @param measurementDataType Data type
+ * return Size in bytes
+ */
+size_t getMeasurementDataSize(const enum MeasurementDataType measurementDataType);
 
 template <typename T>
 class LimitedQueue {//Methods implemented here because compiler freaks out when they're not (template stuff)
