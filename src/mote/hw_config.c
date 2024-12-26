@@ -1,6 +1,12 @@
 #include "hw_config.h"
 #include "env.h"
 
+/**
+ * @file hw_config.c
+ *
+ * Defines how to communicate with the SD card
+ */
+
 static spi_t spi = {
     .hw_inst = SPI_SET,
     .miso_gpio = SPI_MISO_GPIO,

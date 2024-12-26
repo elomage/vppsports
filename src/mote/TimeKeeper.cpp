@@ -21,7 +21,7 @@ log_timestamp TimeKeeper::GetRecordingTimeStamp() {
 }
 
 abs_timestamp TimeKeeper::GetCurrentTimeStamp() {
-	//TODO: Implement
+	//TODO: Implement (get it from a local RTC, or add a synchronization with the parent node on Setup())
 	return 1704060000/*2024*/ + GetMsSinceBoot() / 1000;
 }
 

@@ -18,7 +18,7 @@ RideConfigVC GenerateRideConfig() {
 SensorV1::SensorV1(char *buff) {
 	std::memcpy(&ID, buff, sizeof(ID)); buff += sizeof(ID);
 	std::memcpy(&type, buff, sizeof(type)); buff += sizeof(type);
-	std::memcpy(sensorPins, buff, sizeof(sensorPins)); buff += sizeof(sensorPins);//This might cause problems, if compiler doesn't pack arrays
+	std::memcpy(sensorPins, buff, sizeof(sensorPins)); buff += sizeof(sensorPins);
 	std::memcpy(&targetedFrequency, buff, sizeof(targetedFrequency)); buff += sizeof(targetedFrequency);
 	subNodeConType = Nullable<NodeConType>(buff); buff += subNodeConType.GetEncodedBufferSize();
 	std::memcpy(subNodeConPins, buff, sizeof(subNodeConPins)); buff += sizeof(subNodeConPins);

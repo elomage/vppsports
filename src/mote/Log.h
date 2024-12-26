@@ -5,6 +5,10 @@
 #include "helper_funcs.h"
 #include "Config.h"
 
+/**
+ * This data structure stores the measurements aquired from a sensor from a single
+ * measuring instance along with the timestamp
+ */
 struct Log {
 	log_timestamp timestamp = 0;
 	size_t measurementSize = 0;
@@ -90,7 +94,7 @@ struct Log {
 	/**
 	 * Get small encode buffer size
 	 *
-	 * return Size of small encode buffer
+	 * @return Size of small encode buffer
 	 */
 	inline size_t GetSmallEncodeBufferSize() const { return GetSmallEncodeBufferSize(measurementSize, measurementCount); }
 
@@ -99,14 +103,14 @@ struct Log {
 	 *
 	 * @param measurementSize Size of each measurement
 	 * @param measurementCount How many measurements are in a log
-	 * return Size of small encode buffer
+	 * @return Size of small encode buffer
 	 */
 	static inline size_t GetSmallEncodeBufferSize(size_t measurementSize, short measurementCount) { return sizeof(log_timestamp) + GetMeasurementBufferSizeInBytes(measurementSize, measurementCount); }
 
 	/**
 	 * Get encoded buffer size
 	 *
-	 * return Size of small encode buffer
+	 * @return Size of small encode buffer
 	 */
 	inline size_t GetEncodeBufferSize() const { return GetEncodeBufferSize(measurementSize, measurementCount); }
 
@@ -115,7 +119,7 @@ struct Log {
 	 *
 	 * @param measurementSize Size of each measurement
 	 * @param measurementCount How many measurements are in a log
-	 * return Size of small encode buffer
+	 * @return Size of small encode buffer
 	 */
 	inline static size_t GetEncodeBufferSize(size_t measurementSize, short measurementCount) { return sizeof(log_timestamp) + sizeof(size_t) + sizeof(short) + GetMeasurementBufferSizeInBytes(measurementSize, measurementCount); }
 

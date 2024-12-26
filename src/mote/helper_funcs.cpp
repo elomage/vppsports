@@ -16,8 +16,6 @@ void fatalError(std::string errorMessage) {
 	}
 }
 
-void notImplemented() { fatalError("Not implemented!"); }
-
 void setPrintBlock(bool block) { printBlocked = block; }
 
 #define _LOGGER_LOG va_list args; va_start(args, format); vprintf(format, args); va_end(args); printf("\n"); fflush(stdout);
@@ -51,29 +49,6 @@ void logInfo(const char *format, ...) {
 void logInfo(const char *format, ...) {}
 #endif
 
-
-bool recursivelyDeleteIfExists(const TCHAR *path) {
-	logInfo("[recursivelyDeleteIfExists]: Delete called on %s", path);
-	FILINFO fileInfo;
-	if (f_stat(path, &fileInfo) != FR_OK)
-		return true;
-
-	if (fileInfo.fattrib == AM_DIR) {
-		DIR dirObj;
-		if (f_opendir(&dirObj, path) != FR_OK)
-			return false;
-		for (FRESULT result = f_findfirst(&dirObj, &fileInfo, path, "*"); result == FR_OK && fileInfo.fname[0]; result = f_findnext(&dirObj, &fileInfo)) {
-			TCHAR currFilePath[FF_LFN_BUF + 1];
-			snprintf(currFilePath, FF_LFN_BUF + 1, "%s/%s", path, fileInfo.fname);
-			if (!recursivelyDeleteIfExists(currFilePath))
-				return false;
-		}
-		if (f_closedir(&dirObj) != FR_OK)
-			return false;
-		return f_unlink(path) == FR_OK;
-	} else return f_unlink(path) == FR_OK;
-	return false;
-}
 
 size_t getMeasurementDataSize(const enum MeasurementDataType measurementDataType) {
 	switch (measurementDataType) {

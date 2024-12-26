@@ -27,7 +27,7 @@ void SDHandler::InitRun(std::list<SensorVC> relevantSensors, RideConfigVC &rideC
 
 	_currentRunName = "Run_" + std::to_string(rideConfig.startTime);
 	logInfo("[SDHandler::InitRun]: Clearing any previous run with the same name");
-	if (!recursivelyDeleteIfExists(_currentRunName.c_str()))
+	if (!_RecursivelyDeleteIfExists(_currentRunName.c_str()))
 		fatalError("[SDHandler::InitRun]: Failed to clear identical run from SD card");
 	logInfo("[SDHandler::InitRun]: Creating a directory for this run");
 	if (f_mkdir(_currentRunName.c_str()) != FR_OK)
@@ -50,7 +50,7 @@ void SDHandler::InitRun(std::list<SensorVC> relevantSensors, RideConfigVC &rideC
 	for (SensorVC sensor : relevantSensors) {
 		logInfo("[SDHandler::InitRun]: Initializing the new sensor(%d) log file", sensor.ID);
 		_rideLogMap.emplace(sensor.ID, SD_CARD_SECTOR_SIZE);
-		if (f_open(&file, _getSensorLogFilePath(sensor.ID).c_str(), FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
+		if (f_open(&file, _GetSensorLogFilePath(sensor.ID).c_str(), FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
 			fatalError("[SDHandler::InitRun]: Failed to create/open the new sensor log file");
 		size_t bufferSize = sensor.GetEncodedBufferSize();
 		char buffer[bufferSize];
@@ -63,11 +63,34 @@ void SDHandler::InitRun(std::list<SensorVC> relevantSensors, RideConfigVC &rideC
 	logInfo("[SDHandler::InitRun]: Run %s initialized", _currentRunName.c_str());
 }
 
+bool SDHandler::_RecursivelyDeleteIfExists(const TCHAR *path) {
+	logInfo("[SDHandler::_RecursivelyDeleteIfExists]: Delete called on %s", path);
+	FILINFO fileInfo;
+	if (f_stat(path, &fileInfo) != FR_OK)
+		return true;
+
+	if (fileInfo.fattrib == AM_DIR) {
+		DIR dirObj;
+		if (f_opendir(&dirObj, path) != FR_OK)
+			return false;
+		for (FRESULT result = f_findfirst(&dirObj, &fileInfo, path, "*"); result == FR_OK && fileInfo.fname[0]; result = f_findnext(&dirObj, &fileInfo)) {
+			TCHAR currFilePath[FF_LFN_BUF + 1];
+			snprintf(currFilePath, FF_LFN_BUF + 1, "%s/%s", path, fileInfo.fname);
+			if (!_RecursivelyDeleteIfExists(currFilePath))
+				return false;
+		}
+		if (f_closedir(&dirObj) != FR_OK)
+			return false;
+		return f_unlink(path) == FR_OK;
+	} else return f_unlink(path) == FR_OK;
+	return false;
+}
+
 void SDHandler::_DumpSensorLogBuffer() {
 	if (_currentRunName == "") fatalError("[SDHandler::_DumpSensorLogBuffer]: No current active run");
 
 	for (decltype(_rideLogMap)::iterator it = _rideLogMap.begin(); it != _rideLogMap.end(); it++)
-		_WriteSensorLogBufferToCard(_getSensorLogFilePath(it->first), it->second, true);
+		_WriteSensorLogBufferToCard(_GetSensorLogFilePath(it->first), it->second, true);
 }
 
 void SDHandler::_WriteSensorLogBufferToCard(const std::string filename, SDCardBuffer &logBuffer, const bool writeAll) {
@@ -97,7 +120,7 @@ void SDHandler::StoreLog(const sensor_id sensorID, const Log &log) {
 	logBuffer.AddToBuffer(buffer, sizeof(buffer));
 	
 	if (logBuffer.IsBufferFull())
-		_WriteSensorLogBufferToCard(_getSensorLogFilePath(sensorID), logBuffer, false);
+		_WriteSensorLogBufferToCard(_GetSensorLogFilePath(sensorID), logBuffer, false);
 }
 
 void SDHandler::StopRun() {

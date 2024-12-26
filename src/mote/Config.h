@@ -19,14 +19,14 @@ struct Sensor {
 };
 
 struct SensorV1 : public Sensor {
-	static const int maxPinsInDefinition = 20;//The buffer is this large to accommodate addresses, if they are needed
+	static const int maxPinsInDefinition = 20;
 
-	enum SensorType type;
-	uint8_t sensorPins[maxPinsInDefinition];
+	enum SensorType type;//Defines how to handle the sensor
+	uint8_t sensorPins[maxPinsInDefinition];//Connection pins, addresses
 	float targetedFrequency;
 	Nullable<NodeConType> subNodeConType;//null, if the sensor is on this node
 	uint8_t subNodeConPins[maxPinsInDefinition];//Ignore, if subNodeConType is null
-	enum MeasurementDataType measurementType;
+	enum MeasurementDataType measurementType;//The measurement type, which will be used to send the data
 	uint8_t measurementCountPerLog;
 
 	SensorV1() : Sensor(){}
@@ -100,6 +100,12 @@ struct SettingsV1 : public Settings {
 struct SettingsVC : public SettingsV1 { using SettingsV1::SettingsV1; SettingsVC(const SettingsV1 &settings) : SettingsV1(settings) {} };
 
 
+/**
+ * Creates a RideConfigVC object. Parameters that are unknown (required sensor is not on this node)
+ * will be left as null.
+ *
+ * @return The created ride config object
+ */
 RideConfigVC GenerateRideConfig();
 
 #endif

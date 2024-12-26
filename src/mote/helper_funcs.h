@@ -1,6 +1,12 @@
 #ifndef __HELPER_FUNCS_H__
 #define __HELPER_FUNCS_H__
 
+/**
+ * @file helper_funcs.h
+ *
+ * This file mostly includes functions and classes, that can be useful anywhere in code
+ */
+
 #include <string>
 #include <queue>
 #include <stdarg.h>
@@ -11,11 +17,11 @@
 #include "constants.h"
 
 void fatalError(std::string errorMessage);
-void notImplemented();
+inline void notImplemented() { fatalError("Not implemented!"); }
 void logError(const char *format, ...);
 void logWarning(const char *format, ...);
 void logInfo(const char *format, ...);
-void setPrintBlock(bool block);
+void setPrintBlock(bool block);//Used in unit tests to drop warnings
 
 #define TEST1 logWarning("Test 1")
 #define TEST2 logWarning("Test 2")
@@ -23,14 +29,6 @@ void setPrintBlock(bool block);
 #define TEST4 logWarning("Test 4")
 #define TEST5 logWarning("Test 5")
 #define TEST6 logWarning("Test 6")
-
-/**
- * Recursively deletes any files and directories, if the given object exists
- *
- * @param path Path to the file/dir to be deleted
- * return Returns true, if the file/dir doesn't exist, false if an error was encountered
- */
-bool recursivelyDeleteIfExists(const TCHAR *path);
 
 /**
  * Gets the size of the specified data type
@@ -41,7 +39,7 @@ bool recursivelyDeleteIfExists(const TCHAR *path);
 size_t getMeasurementDataSize(const enum MeasurementDataType measurementDataType);
 
 template <typename T>
-class LimitedQueue {//Methods implemented here because compiler freaks out when they're not (template stuff)
+class LimitedQueue {//TODO: Move the implementations outside of this file
 	std::queue<T> _queue;
 	int _maxSize;
 	volatile bool _accessLock = false;//Simple thread safity precaution, might not be enough
@@ -80,7 +78,7 @@ public:
 };
 
 template <typename T>
-struct Nullable{
+struct Nullable{//TODO: Move the implementations outside of this file
 	bool isNull = true;
 	T value;
 

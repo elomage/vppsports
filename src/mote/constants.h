@@ -36,7 +36,11 @@ enum MeasurementDataType {
 	bool8 = 11
 };
 
-//Name_ID-from-sensor-sheet_connection-method_sub-sensor
+/**
+ * List of all known sensor types. Naming convention: Name_ID-from-sensor-sheet_connection-method_sub-sensor.
+ * e.g. ADIS16505_39_SPI_acc
+ * Connection method is included in case there are multiple ways to mount the sensor
+ */
 enum SensorType {
 	testing_sensor_random = 0
 };
