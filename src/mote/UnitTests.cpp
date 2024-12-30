@@ -296,7 +296,7 @@ Assertion ConfigTests() {
 	char settingsV1Buffer[settingsV1.GetEncodedBufferSize()];
 	settingsV1.EncodeToBuffer(settingsV1Buffer);
 	SettingsV1 decodedSettingsV1(settingsV1Buffer);
-	if ((assertion = Assertion("SettingsV1 decode sensor cound check", _testName, __LINE__, settingsV1.sensorCount, decodedSettingsV1.sensorCount)).TestFailed())
+	if ((assertion = Assertion("SettingsV1 decode sensor count check", _testName, __LINE__, settingsV1.sensorCount, decodedSettingsV1.sensorCount)).TestFailed())
 		return assertion;
 
 	for (int sensor = 0; sensor < sensorCount; sensor++) {

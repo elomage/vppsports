@@ -14,7 +14,7 @@
 
 #define API_KEY ""
 
-//Comment these lines out to disable them
+//Comment these lines out to disable them, if needed
 #define VPP_DEBUG
 #define VPP_LOG_ERR
 #define VPP_LOG_WARN

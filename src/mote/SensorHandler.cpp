@@ -8,12 +8,19 @@
 #include "TimeKeeper.h"
 #include "SDHandler.h"
 
+/**
+ * Creates the handler for the provided sensor. If there are any newly defined sensor handlers,
+ * they should be added here
+ *
+ * @param sensor The sensor configuration
+ * @return The dynamically created handler
+ */
 static SensorHandler* createHandler(const SensorVC &sensor) {
 	switch(sensor.type) {
 		case SensorType::testing_sensor_random: return new RandomSensor(sensor);
-		default: fatalError("[SensorHandler::createHandler]: no apropriate handler found");
+		default: fatalError("[SensorHandler::createHandler]: no appropriate handler found");
 	}
-	return new RandomSensor(sensor);
+	return new EmptySensor(sensor);
 }
 
 void runSensorLogger(const SettingsVC &settings, std::function<RunState()> getRunState, RideConfigVC rideConfig) {
@@ -25,6 +32,10 @@ void runSensorLogger(const SettingsVC &settings, std::function<RunState()> getRu
 		sensorHandlers.push_back(createHandler(settings.sensors[sensor]));
 		usedSensors.push_back(settings.sensors[sensor]);
 	}
+
+	for (SensorHandler *sensorHandler : sensorHandlers)
+		if (!sensorHandler->Calibrate())
+			logError("Failed to calibrate sensor(%d)", sensorHandler->GetSensorID());
 
 	logInfo("[runSensorLogger]: Starting run");
 	rideConfig.startTime = TimeKeeper::GetCurrentTimeStamp();

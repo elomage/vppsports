@@ -7,6 +7,13 @@
 #include "Config.h"
 #include "Log.h"
 
+/**
+ * Initializes the sensors, calibrates them, then starts the run
+ *
+ * @param settings The sensor configuration
+ * @param getRunState The function to query, in order to find out the current run state
+ * @param rideConfig The run config
+ */
 void runSensorLogger(const SettingsVC &settings, std::function<RunState()> getRunState, RideConfigVC rideConfig);
 
 /**
@@ -15,8 +22,8 @@ void runSensorLogger(const SettingsVC &settings, std::function<RunState()> getRu
  *
  * Handlers that must use a shared object to communicate with the required sensors, should keep these objects
  * within the scope of the file (static) std::map<used pin hash, communication object>.
- * E.g. a sensor package contains an accelerometer, gyroscope and a magnetometer, and the comunication is handled by a
- * single object, with the apropriate methods (get_acc(), ,,,). As such, the handling logic shall be structured as follows:
+ * E.g. a sensor package contains an accelerometer, gyroscope and a magnetometer, and the communication is handled by a
+ * single object, with the appropriate methods (get_acc(), ,,,). As such, the handling logic shall be structured as follows:
  * 	1) All 3 sensors get a handler class that inherits from this(SensorHandler) class, following the naming convention
  * 		detailed in constants.h
  * 	2) The communication object is created and initialized by the first sensor handler to be initialized
@@ -35,6 +42,13 @@ public:
 	SensorHandler(const SensorVC &sensor) : _msBetweenMeasurements(1000 / sensor.targetedFrequency), _sensorID(sensor.ID) {}
 
 	inline sensor_id GetSensorID() const { return _sensorID; }
+
+	/**
+	 * Calibrates the sensor, if required
+	 *
+	 * @return True, if calibration was successful
+	 */
+	virtual bool Calibrate() = 0;
 
 	/**
 	 * Returns the datatype used to store measurements
@@ -70,6 +84,7 @@ class EmptySensor final : public SensorHandler {
 public:
 	EmptySensor(const SensorVC &sensor) : SensorHandler(sensor) {}
 
+	virtual bool Calibrate() override final { return true; }
 	virtual MeasurementDataType GetMeasurementDataType() const override final { return MeasurementDataType::int8; }
 	virtual SensorType GetSensorType() const override final { return SensorType::testing_sensor_random; }
 	virtual bool GetSensorData(Log &log) override final { return false; }
@@ -83,6 +98,7 @@ class RandomSensor final : public SensorHandler {
 public:
 	RandomSensor(const SensorVC &sensor) : SensorHandler(sensor), _measurementDataType(sensor.measurementType), _measurementCountPerLog(sensor.measurementCountPerLog) {}
 
+	virtual bool Calibrate() override final { return true; }
 	virtual MeasurementDataType GetMeasurementDataType() const override final;
 	virtual SensorType GetSensorType() const override final;
 	virtual bool GetSensorData(Log &log) override final;

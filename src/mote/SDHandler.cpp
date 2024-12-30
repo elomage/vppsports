@@ -8,9 +8,9 @@ std::string SDHandler::_currentRunName = "";
 std::map<sensor_id, SDCardBuffer> SDHandler::_rideLogMap = {};
 
 void SDHandler::Initialize() {
-	logInfo("[SDHandler::Initialize]: Mounting SD card's filesystem");
+	logInfo("[SDHandler::Initialize]: Mounting SD card's file system");
 	if (f_mount(&_sdFs, "", 1) != FR_OK)
-		fatalError("[SDHandler::Initialize]: Failed to mount the SD card's filesystem");
+		fatalError("[SDHandler::Initialize]: Failed to mount the SD card's file system");
 	_initialized = true;
 	logInfo("[SDHandler::Initialize]: SD card initialized");
 }
@@ -19,7 +19,7 @@ void SDHandler::Stop() {
 	StopRun();
 	f_unmount("");
 	_initialized = false;
-	logInfo("[SDHandler::Stop]: Unmounted and deinitialized the filesystem");
+	logInfo("[SDHandler::Stop]: Unmounted and deinitialized the file system");
 }
 
 void SDHandler::InitRun(std::list<SensorVC> relevantSensors, RideConfigVC &rideConfig) {

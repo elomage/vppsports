@@ -4,7 +4,7 @@
 /**
  * @file hw_config.c
  *
- * Defines how to communicate with the SD card
+ * Defines how to communicate with the SD card (see https://github.com/carlk3/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico/tree/6bdb39f96fe8b897aff12bf3416e32515792e318/examples)
  */
 
 static spi_t spi = {

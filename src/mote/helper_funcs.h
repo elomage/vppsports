@@ -42,7 +42,7 @@ template <typename T>
 class LimitedQueue {//TODO: Move the implementations outside of this file
 	std::queue<T> _queue;
 	int _maxSize;
-	volatile bool _accessLock = false;//Simple thread safity precaution, might not be enough
+	volatile bool _accessLock = false;//Simple thread safety precaution, might not be enough
 
 public:
 	LimitedQueue(int maxSize) : _maxSize(maxSize) {}

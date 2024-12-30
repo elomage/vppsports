@@ -6,6 +6,9 @@
 
 //Note: Any new version of these data structures should include an upgrade method to allow loading an older config file
 
+/**
+ * Holds all of the required config information about a sensor, as received from the server
+ */
 struct Sensor {
 	sensor_id ID;
 
@@ -42,6 +45,9 @@ struct SensorV1 : public Sensor {
 //Current sensor version
 struct SensorVC : public SensorV1 { using SensorV1::SensorV1; SensorVC(const SensorV1 &sensor) : SensorV1(sensor) {} };
 
+/**
+ * Holds all of the known information about the current run
+ */
 struct RideConfig {
 	virtual operator std::string() const = 0;
 
@@ -69,6 +75,9 @@ struct RideConfigV1 : public RideConfig {
 //Current ride config version
 struct RideConfigVC : public RideConfigV1 { using RideConfigV1::RideConfigV1; RideConfigVC(const RideConfigV1 &rideConfig) : RideConfigV1(rideConfig) {} };
 
+/**
+ * Holds the current configuration, as received from the server
+ */
 struct Settings {
 	virtual operator std::string() const = 0;
 

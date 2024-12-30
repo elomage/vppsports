@@ -6,7 +6,7 @@
 #include "Config.h"
 
 /**
- * This data structure stores the measurements aquired from a sensor from a single
+ * This data structure stores the measurements acquired from a sensor from a single
  * measuring instance along with the timestamp
  */
 struct Log {
@@ -65,7 +65,7 @@ struct Log {
 	Log(Log&& log);
 
 	/**
-	 * Move assignement operator
+	 * Move assignment operator
 	 *
 	 * @param log Log object from which the data is moved
 	 */
