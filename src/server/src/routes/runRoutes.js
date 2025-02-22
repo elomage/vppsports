@@ -7,8 +7,14 @@ const { parseApiDataObject } = require("../controllers/sensorDataController");
 
 router.get("/", async (req, res) => {
   try {
-    const runs = await runController.getAllRuns();
-    res.json(runs);
+    const { "date-from": dateFrom, "date-to": dateTo } = req.body;
+    if (dateFrom || dateTo) {
+      const runs = await runController.filterRunsByDate(dateFrom, dateTo);
+      res.json(runs);
+    } else {
+      const runs = await runController.getAllRuns();
+      res.json(runs);
+    }
   } catch (error) {
     res
       .status(500)
@@ -59,6 +65,25 @@ router.post("/", async (req, res) => {
     res
       .status(500)
       .json({ message: "Error creating run", error: error.message });
+  }
+});
+
+router.post("/filter-runs", async (req, res) => {
+  try {
+    const { "date-from": dateFrom, "date-to": dateTo } = req.body;
+    const filteredRuns = await runController.filterRunsByDate(dateFrom, dateTo);
+    // res.render("dashboard", {
+    //   title: "Runs",
+    //   runs: filteredRuns,
+    //   selectedRun: null,
+    //   dateFrom: dateFrom,
+    //   dateTo: dateTo,
+    // });
+    return res.json(filteredRuns);
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Error filtering runs", error: error.message });
   }
 });
 
