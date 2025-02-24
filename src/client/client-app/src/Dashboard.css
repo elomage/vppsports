@@ -1,0 +1,16 @@
+#dashboard-wrapper {
+    margin: 10px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    margin-left: 200px;
+    margin-bottom: 100px;
+}
+#dashboard-wrapper > h1 > a {
+    text-decoration: none;
+    color: black;
+}
+#dashboard-wrapper > h1 > a:hover {
+    text-decoration: none;
+    color: black;   
+}

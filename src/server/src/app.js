@@ -5,23 +5,25 @@ const app = express();
 const cors = require("cors");
 
 // Configure CORS middleware
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(",")
-  : [];
+// const allowedOrigins = process.env.ALLOWED_ORIGINS
+//   ? process.env.ALLOWED_ORIGINS.split(",")
+//   : [];
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      } else {
-        return callback(new Error("Not allowed by CORS"));
-      }
-    },
-    methods: ["GET", "POST"],
-  })
-);
+// app.use(
+//   cors({
+//     origin: (origin, callback) => {
+//       if (!origin) return callback(null, true);
+//       if (allowedOrigins.includes(origin)) {
+//         return callback(null, true);
+//       } else {
+//         return callback(new Error("Not allowed by CORS"));
+//       }
+//     },
+//     methods: ["GET", "POST"],
+//   })
+// );
+
+app.use(cors());
 
 app.use(express.static(path.join(__dirname, "public")));
 

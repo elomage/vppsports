@@ -7,7 +7,7 @@ const { parseApiDataObject } = require("../controllers/sensorDataController");
 
 router.get("/", async (req, res) => {
   try {
-    const { "date-from": dateFrom, "date-to": dateTo } = req.body;
+    const { dateFrom: dateFrom, dateTo: dateTo } = req.query;
     if (dateFrom || dateTo) {
       const runs = await runController.filterRunsByDate(dateFrom, dateTo);
       res.json(runs);

@@ -47,10 +47,10 @@ const getSingleRun = async (runid) => {
 
 const filterRunsByDate = async (dateFrom, dateTo) => {
   try {
-    if (dateTo === undefined) {
+    if (dateTo === undefined || dateTo === "") {
       dateTo = new Date();
     }
-    if (dateFrom === undefined) {
+    if (dateFrom === undefined || dateFrom === "") {
       dateFrom = new Date(0);
     }
     var includeDateTo = new Date(dateTo);

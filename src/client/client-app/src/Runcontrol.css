@@ -1,0 +1,6 @@
+form > * {
+    margin: 5px 2px 5px 2px;   
+}
+select {
+    max-width: 446px;
+}
