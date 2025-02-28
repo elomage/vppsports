@@ -55,6 +55,19 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
         }
     }, [sliderValue, isPlaying, selectedRun.orientationData]);
 
+    function convertNanosecondsToTime(nanoseconds) {
+        const msInNano = 1e6;
+        const ms = Math.floor(nanoseconds / msInNano);
+  
+        const hours = Math.floor(ms / 3600000);
+        const minutes = Math.floor((ms % 3600000) / 60000);
+        const seconds = Math.floor((ms % 60000) / 1000);
+        const milliseconds = ms % 1000;
+  
+        const formatTime = (unit) => String(unit).padStart(2, '0');
+        return `${formatTime(hours)}:${formatTime(minutes)}:${formatTime(seconds)}:${String(milliseconds).padStart(3, '0')}`;
+    }
+
     return (
         <div className="playback-controls d-flex">
             <input
@@ -78,7 +91,7 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
                 </button>
             </div>
             <h3 id="run-time">
-                {currentTime}s
+                {convertNanosecondsToTime(currentTime)}
             </h3>
         </div>
     );

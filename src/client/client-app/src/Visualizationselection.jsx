@@ -4,13 +4,16 @@ import './Visualizationselection.css';
 const componentsMap = {
     info: React.lazy(() => import('./Infovisualizer')),
     graph: React.lazy(() => import('./Graphvisualizer')),
+    model: React.lazy(() => import('./Modelvisualizer')),
 };
 
 export default function ComponentSelector({ selectedRun, sliderValue }) {
     const [selectedComponent, setSelectedComponent] = useState([
         { id: 1, type: 'info' },
         { id: 2, type: 'graph' },
+        { id: 3, type: 'model' },
     ]);
+    const [containerSize, setContainerSize] = useState({ width: window.innerWidth, height: window.innerHeight });
 
     const addComponent = (value) => {
         const newComponents = [...selectedComponent, { id: Date.now(), type: value }];
@@ -21,14 +24,29 @@ export default function ComponentSelector({ selectedRun, sliderValue }) {
         setSelectedComponent(selectedComponent.filter((component) => component.id !== id));
     };
 
+    useEffect(() => {
+        const handleResize = () => {
+            const sidebarWidth = document.getElementById('sidebar').offsetWidth;
+            setContainerSize({ width: window.innerWidth - sidebarWidth - 100, height: window.innerHeight});
+        };
+
+        window.addEventListener('resize', handleResize);
+        handleResize();
+
+        return () => {
+            window.removeEventListener('resize', handleResize);
+        };
+    }, []);
+
     return (
-        <div className='flex flex-col items-center p-6' id='visualization-component-wrapper'>
+        <div className='flex flex-col items-center p-6' id='visualization-component-wrapper' style={{ width: containerSize.width, height: containerSize.height}}>
             <h1 className='text-2xl font-bold mb-4'>Visualization Selection</h1>
             <div className='flex gap-4'>
                 <button className='btn btn-primary' onClick={() => addComponent('info')}>Add Info</button>
                 <button className='btn btn-primary' onClick={() => addComponent('graph')}>Add Graph</button>
+                <button className='btn btn-primary' onClick={() => addComponent('model')}>Add Model</button>
             </div>
-            <div className='flex flex-col gap-4 mt-4'>
+            <div className='flex flex-row gap-4 mt-4'>
                 {selectedComponent.map((component) => {
                     const Component = componentsMap[component.type];
                     return (
@@ -41,6 +59,9 @@ export default function ComponentSelector({ selectedRun, sliderValue }) {
                     );
                 })}
             </div>
+            <div style={{ height: '100px' }}>
+            </div>
+
         </div>
     );
 }

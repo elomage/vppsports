@@ -10,9 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@shadcn/ui": "^0.0.4",
+    "@react-three/fiber": "^9.0.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "three": "^0.173.0",
+    "three.js": "^0.77.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.19.0",

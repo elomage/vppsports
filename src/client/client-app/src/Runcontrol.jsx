@@ -9,10 +9,10 @@ const RunControl = ({ setSelectedRun }) => {
   const [dateTo, setDateTo] = useState('');
 
 
-  //// Uncomment the following to fetch runs on date change
-  // useEffect(() => {
-  //   fetchRuns(dateFrom, dateTo).then(setRuns);
-  // }, [dateFrom, dateTo]);
+  //// Comment the following to fetch runs on filter button click
+  useEffect(() => {
+    fetchRuns(dateFrom, dateTo).then(setRuns);
+  }, [dateFrom, dateTo]);
 
   const handleRunChange = async (event) => {
     const runId = event.target.value;
@@ -34,7 +34,7 @@ const RunControl = ({ setSelectedRun }) => {
         <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
         <label>To:</label>
         <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-        <button type="submit">Filter Runs</button>
+        {/* <button type="submit">Filter Runs</button> */}
       </form>
       <select onChange={handleRunChange}>
         <option value="null">Select Run</option>

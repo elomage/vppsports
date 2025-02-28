@@ -10,6 +10,7 @@ const Dashboard = () => {
 
     useEffect(() => {
       console.log(selectedRun);
+      
     }, [selectedRun]);
 
     return (
