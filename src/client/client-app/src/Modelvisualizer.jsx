@@ -102,7 +102,7 @@ const ModelVisualizer = ({ selectedRun, sliderValue }) => {
     return (
         <>
         <h1>Model Visualizer</h1>
-        <div id="rotation-visualizer" ref={containerRef} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center'}}>
+        <div id="rotation-visualizer" ref={containerRef} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', maxHeight: '60vh'}}>
             <div style={{ width: '100%', height: '50%' }}>
                 <canvas id="bg" style={{ width: '100%', height: '100%' }}></canvas>
             </div>

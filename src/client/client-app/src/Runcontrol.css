@@ -1,6 +1,16 @@
-form > * {
-    margin: 5px 2px 5px 2px;   
-}
-select {
-    max-width: 446px;
-}
+.run-control-container {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  
+  .run-control-form {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  
+  .run-control-form > * {
+    margin: 0;
+  }
