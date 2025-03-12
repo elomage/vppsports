@@ -34,13 +34,13 @@ router.get("/:runid", async (req, res) => {
     }
     const selectedRun = await runController.getSingleRun(runid);
 
-    const runTrack = await trackController.getSingleTrack(selectedRun.trackid);
-    const runDriver = await driverController.getSingleDriver(
-      selectedRun.driverid
-    );
+    // const runTrack = await trackController.getSingleTrack(selectedRun.trackid);
+    // const runDriver = await driverController.getSingleDriver(
+    //   selectedRun.driverid
+    // );
 
-    selectedRun.Track = runTrack;
-    selectedRun.Driver = runDriver;
+    // selectedRun.Track = runTrack;
+    // selectedRun.Driver = runDriver;
 
     res.json(selectedRun);
   } catch (error) {

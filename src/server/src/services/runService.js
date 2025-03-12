@@ -2,38 +2,31 @@ const { connectDB, getCollection } = require("../config/db");
 const { ObjectId } = require("mongodb");
 const { MongoClient } = require("mongodb");
 
-/**
- * Retrieves all runs from the 'Run' collection in the database.
- *
- * This function connects to the database, accesses the 'Run' collection,
- * and retrieves all documents.
- *
- * @async
- * @returns {Promise<Array>} A promise that resolves to an array of run documents.
- */
+const fs = require("fs").promises;
+const path = require("path");
+const folderPath = "C:/Users/Reinis/Documents/VPPSport/Code/SensorTextFiles";
+
 const getAllRuns = async () => {
-  const db = await connectDB();
-  const coll = await getCollection(db, "Run");
-  const result = await coll
-    .find({}, { projection: { _id: 1, date: 1 } })
-    .sort({ date: -1 })
-    .toArray();
-  return result;
+  try {
+    const files = await fs.readdir(folderPath);
+    const result = files.map((file) => ({ _id: file }));
+    return result;
+  } catch (error) {
+    console.error("Error reading folder:", error);
+    throw error;
+  }
 };
 
-/**
- * Retrieves a single run document from the database by its ID.
- *
- * @param {string} runid - The ID of the run to retrieve.
- * @returns {Promise<Object|null>} A promise that resolves to the run document if found, or null if not found.
- */
 const getSingleRun = async (runid) => {
-  const db = await connectDB();
-  const coll = await getCollection(db, "Run");
-  const objectId = new ObjectId(String(runid));
-  const result = await coll.findOne({ _id: objectId });
+  const filePath = path.join(folderPath, `${runid}`);
 
-  return result;
+  try {
+    const fileContents = await fs.readFile(filePath, "utf-8");
+    return fileContents;
+  } catch (error) {
+    console.error("Error reading file:", error);
+    throw error;
+  }
 };
 
 /**

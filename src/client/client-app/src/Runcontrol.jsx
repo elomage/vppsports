@@ -36,7 +36,7 @@ const RunControl = ({ setSelectedRun }) => {
       <select onChange={handleRunChange} style={{ width: formRef.current ? formRef.current.offsetWidth : 'auto' }}>
         <option value="null">Select Run</option>
         {runs.map((run) => (
-          <option key={run._id} value={run._id}>{run.date}</option>
+          <option key={run._id} value={run._id}>{run._id}</option>
         ))}
       </select>
     </div>
