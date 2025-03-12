@@ -1,5 +1,14 @@
 .graph-container{
     height: 100%;
-    min-height: 500px;
+    min-height: 350px;
     width: 100%;
+}
+
+.btn-reset-zoom {
+    display: inline-block;
+    text-align: center;
+    white-space: nowrap;
+    width: auto;
+    height: auto;
+    margin: 5px auto;
 }

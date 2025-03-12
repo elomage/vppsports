@@ -79,7 +79,6 @@ const ModelVisualizer = ({ selectedRun, sliderValue }) => {
 
         window.addEventListener('resize', handleResize);
 
-        // Cleanup on component unmount
         return () => {
             window.removeEventListener('resize', handleResize);
             renderer.dispose();
@@ -101,14 +100,14 @@ const ModelVisualizer = ({ selectedRun, sliderValue }) => {
 
     return (
         <>
-        <h1>Model Visualizer</h1>
+        {/* <h1>Model</h1> */}
+        <button id="reset-imu-zoom-button" onClick={resetIMUZoom} className="btn-reset-zoom">
+            Reset Zoom
+        </button>
         <div id="rotation-visualizer" ref={containerRef} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', maxHeight: '60vh'}}>
             <div style={{ width: '100%', height: '50%' }}>
-                <canvas id="bg" style={{ width: '100%', height: '100%' }}></canvas>
+                <canvas id="bg" style={{ width: '100%', height: '100%', maxHeight: '300px' }}></canvas>
             </div>
-            <button id="reset-imu-zoom-button" onClick={resetIMUZoom}>
-                Reset IMU Zoom
-            </button>
         </div>
         </>
     );

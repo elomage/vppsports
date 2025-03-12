@@ -64,7 +64,7 @@ const GraphVisualizer = ({ selectedRun, sliderValue }) => {
       var dataArrayY = [];
       var dataArrayZ = [];
 
-      chartData.labels = sensors.readings.map(item => convertNanosecondsToTime(item.timestamp).toString());
+      chartData.labels = sensors.readings.map(item => convertNanosecondsToTime(item.timestamp - selectedRun.orientationData[0][0]).toString());
 
       sensors.readings.forEach((item, index) => {
         dataArrayX.push(item.data[0]);
@@ -255,8 +255,8 @@ const GraphVisualizer = ({ selectedRun, sliderValue }) => {
 
   return (
     <>
-      <h1>Graph Visualizer</h1>
-      <button onClick={handleResetZoom}>Reset Zoom</button>
+      {/* <h1>Graph</h1> */}
+      <button className="btn-reset-zoom" onClick={handleResetZoom}>Reset Zoom</button>
       <div className="graph-container">
         <canvas ref={canvasRef}></canvas>
       </div>

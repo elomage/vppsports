@@ -2,7 +2,7 @@ import React from 'react';
 
 const InfoVisualizer = ({ selectedRun }) => (
   <>
-    <h1>Info Visualizer</h1>
+    {/* <h1>Info</h1> */}
     <figure id="run-info">
       <b>
         <figcaption id="run-info-title">Selected run: {selectedRun._id}</figcaption>

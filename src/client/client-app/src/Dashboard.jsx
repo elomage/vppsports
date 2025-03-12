@@ -22,7 +22,7 @@ const Dashboard = () => {
                    
           {selectedRun && (
             <>
-              <h1>Selected Run ID: {selectedRun._id}</h1>
+              {/* <h1>Selected Run ID: {selectedRun._id}</h1> */}
               <VisualizationSelection selectedRun={selectedRun} sliderValue={sliderValue} />
             </>
           )}

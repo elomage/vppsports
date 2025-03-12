@@ -4,15 +4,15 @@ import './PlaybackControl.css';
 const PlaybackControl = ({ selectedRun, setSliderValue }) => {
     const [sliderValue, setLocalSliderValue] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
-    const [currentTime, setCurrentTime] = useState(selectedRun.orientationData[0][0]);
+    const [currentTime, setCurrentTime] = useState(selectedRun.orientationData[0][0] - selectedRun.orientationData[0][0]);
 
     const handleInput = (event) => {
         const value = parseInt(event.target.value, 10);
         console.log('Input event:', value);
         setLocalSliderValue(value);
         setSliderValue(value);
-        setIsPlaying(false); // Stop playback when the slider is moved manually
-        setCurrentTime(selectedRun.orientationData[value][0]);
+        setIsPlaying(false);
+        setCurrentTime(selectedRun.orientationData[value][0] - selectedRun.orientationData[0][0]);
     };
 
     const pausePlayback = () => {
@@ -28,7 +28,7 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
         setLocalSliderValue(0);
         setSliderValue(0);
         setIsPlaying(false);
-        setCurrentTime(selectedRun.orientationData[0][0]);
+        setCurrentTime(selectedRun.orientationData[0][0] - selectedRun.orientationData[0][0]);
     };
 
     useEffect(() => {
@@ -38,7 +38,7 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
                 setLocalSliderValue((prevValue) => {
                     const newValue = Math.min(prevValue + 1, selectedRun.orientationData.length - 1);
                     setSliderValue(newValue);
-                    setCurrentTime(selectedRun.orientationData[newValue][0]);
+                    setCurrentTime(selectedRun.orientationData[newValue][0] - selectedRun.orientationData[0][0]);
                     return newValue;
                 });
             }, 100);
@@ -51,7 +51,7 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
     useEffect(() => {
         if (!isPlaying) {
             setLocalSliderValue(sliderValue);
-            setCurrentTime(selectedRun.orientationData[sliderValue][0]);
+            setCurrentTime(selectedRun.orientationData[sliderValue][0] - selectedRun.orientationData[0][0]);
         }
     }, [sliderValue, isPlaying, selectedRun.orientationData]);
 
