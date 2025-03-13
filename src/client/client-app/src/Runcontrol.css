@@ -14,3 +14,8 @@
   .run-control-form > * {
     margin: 0;
   }
+
+  .run-select {
+    width: 100%;
+    min-width: 200px;
+  }

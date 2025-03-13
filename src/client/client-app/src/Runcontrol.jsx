@@ -27,13 +27,13 @@ const RunControl = ({ setSelectedRun }) => {
 
   return (
     <div className="run-control-container">
-      <form ref={formRef} method='get' action='/run' onSubmit={handleSubmit} className="run-control-form">
+      {/* <form ref={formRef} method='get' action='/run' onSubmit={handleSubmit} className="run-control-form">
         <label>From:</label>
         <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
         <label>To:</label>
         <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-      </form>
-      <select onChange={handleRunChange} style={{ width: formRef.current ? formRef.current.offsetWidth : 'auto' }}>
+      </form> */}
+      <select className='run-select' onChange={handleRunChange} style={{ width: formRef.current ? formRef.current.offsetWidth : 'auto' }}>
         <option value="null">Select Run</option>
         {runs.map((run) => (
           <option key={run._id} value={run._id}>{run._id}</option>

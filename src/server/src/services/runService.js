@@ -17,12 +17,57 @@ const getAllRuns = async () => {
   }
 };
 
+// const getSingleRun = async (runid) => {
+//   const filePath = path.join(folderPath, `${runid}`);
+
+//   try {
+//     const fileContents = await fs.readFile(filePath, "utf-8");
+//     return fileContents;
+//   } catch (error) {
+//     console.error("Error reading file:", error);
+//     throw error;
+//   }
+// };
+
 const getSingleRun = async (runid) => {
   const filePath = path.join(folderPath, `${runid}`);
 
   try {
     const fileContents = await fs.readFile(filePath, "utf-8");
-    return fileContents;
+    const fileStats = await fs.stat(filePath);
+    const lines = fileContents.split("\n").filter((line) => line.trim() !== "");
+
+    const data = lines.map((line) => {
+      const [timestamp, ...values] = line.split(",").map(Number);
+      return {
+        sensorId: 3,
+        timestamp,
+        data: values,
+        sensorDetails: {
+          _id: "66f54a206e1033335199a3b7",
+          type: "accelerometer",
+          location: "body",
+          vehicleId: null,
+          dataAxis: 3,
+          id: 3,
+        },
+      };
+    });
+
+    const result = {
+      _id: runid,
+      // date: new Date(), // Assuming the date is the current date, you can modify this as needed
+      date: fileStats.birthtime,
+      data: [
+        {
+          _id: "accelerometer",
+          dataAxis: 3,
+          readings: data,
+        },
+      ],
+    };
+
+    return result;
   } catch (error) {
     console.error("Error reading file:", error);
     throw error;

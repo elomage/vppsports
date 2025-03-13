@@ -9,7 +9,7 @@ const Sidebar = () => (
         <div className="collapse d-md-block" id="sidebarContent">
             <ul>
               <li><a href="/">Dashboard</a></li>
-              <li><a href="/config">Configuration</a></li>
+              {/* <li><a href="/config">Configuration</a></li> */}
             </ul>
         </div>
     </nav>

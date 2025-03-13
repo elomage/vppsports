@@ -1,6 +1,6 @@
 export async function fetchRuns(dateFrom, dateTo) {
   const response = await fetch(
-    `http://localhost:8080/run?dateFrom=${dateFrom}&dateTo=${dateTo}`,
+    `http://localhost:8081/run?dateFrom=${dateFrom}&dateTo=${dateTo}`,
     {
       method: "GET",
       headers: {
@@ -13,6 +13,6 @@ export async function fetchRuns(dateFrom, dateTo) {
 }
 
 export async function fetchSelectedRun(runId) {
-  const response = await fetch(`http://localhost:8080/run/${runId}`);
+  const response = await fetch(`http://localhost:8081/run/${runId}`);
   return response.json();
 }
