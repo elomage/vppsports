@@ -1,5 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { debounce } from 'lodash';
+
+import Chart from 'chart.js/auto';
+import Hammer from 'hammerjs';
+import zoomPlugin from 'chartjs-plugin-zoom';
+import moment from 'moment';
+import annotationPlugin from 'chartjs-plugin-annotation';
+import 'chartjs-adapter-moment';
+
 import './Graphvisualizer.css';
 
 const GraphVisualizer = ({ selectedRun, sliderValue }) => {
