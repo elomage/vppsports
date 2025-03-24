@@ -1,6 +1,31 @@
+const KalmanFilter = require("kalmanjs");
 const runService = require("../services/runService");
 const sensorService = require("../services/sensorService");
 const { toRadians } = require("../utils/units");
+
+const sensitivity = 19.5;
+
+const convertToG = (raw_reading, sensitivity) => {
+  return (raw_reading * sensitivity) / 1000000.0;
+};
+
+const convertSensorData = (sensorData, conversionFunction) => {
+  sensorData.forEach((sensorData) => {
+    if (sensorData.readings) {
+      sensorData.readings.forEach((reading) => {
+        if (reading.data && Array.isArray(reading.data)) {
+          reading.data = reading.data.map((rawReading) => {
+            return conversionFunction(rawReading, sensitivity);
+          });
+
+          //FIXME
+          reading.data[2] = reading.data[2] * -1;
+        }
+      });
+    }
+  });
+  return sensorData;
+};
 
 const getAllRuns = async () => {
   try {
@@ -21,23 +46,51 @@ const getSingleRun = async (runid) => {
   try {
     const run = await runService.getSingleRun(runid);
 
-    // const sensorData = await runService.getRunSensorReadings(runid);
-    // run.orientationData = [];
+    convertSensorData(run.data, convertToG);
 
-    // var pitch = 0;
-    // var roll = 0;
-    // var yaw = 0;
+    return run;
+  } catch (error) {
+    throw new Error(error.message);
+  }
+};
 
-    // sensorData
-    //   .find((item) => item._id === "gyroscope")
-    //   .readings.forEach((element) => {
-    //     pitch += element.data[1] / 6;
-    //     roll += element.data[0] / 6;
-    //     yaw += element.data[2] / 6;
+const getSingleRunKalmanFilter = async (runid) => {
+  try {
+    const run = await runService.getSingleRun(runid);
 
-    //     run.orientationData.push([element.timestamp, roll, yaw, pitch]);
-    //   });
-    // run.data = sensorData;
+    if (!run || !run.data || !run.data[0]?.readings) {
+      throw new Error("Invalid run data structure");
+    }
+
+    convertSensorData(run.data, convertToG);
+
+    // Apply Kalman filter to accelerometer data
+
+    run.data.forEach((sensorData) => {
+      if (sensorData._id === "accelerometer" && sensorData.readings) {
+        // const kfX = new KalmanFilter({ R: 0.01, Q: 1 });
+        // const kfY = new KalmanFilter({ R: 0.01, Q: 1 });
+        // const kfZ = new KalmanFilter({ R: 0.01, Q: 1 });
+
+        const kfX = new KalmanFilter({ R: 0.01, Q: 2 });
+        const kfY = new KalmanFilter({ R: 0.01, Q: 2 });
+        const kfZ = new KalmanFilter({ R: 0.01, Q: 2 });
+
+        sensorData.readings.forEach((reading) => {
+          if (reading.data && Array.isArray(reading.data)) {
+            // Apply Kalman filter
+            let filteredX = kfX.filter(reading.data[0]);
+            let filteredY = kfY.filter(reading.data[1]);
+            let filteredZ = kfZ.filter(reading.data[2]);
+
+            // Update reading data with filtered values
+            reading.data[0] = filteredX;
+            reading.data[1] = filteredY;
+            reading.data[2] = filteredZ;
+          }
+        });
+      }
+    });
 
     return run;
   } catch (error) {
@@ -79,4 +132,5 @@ module.exports = {
   getSingleRun,
   filterRunsByDate,
   createRun,
+  getSingleRunKalmanFilter,
 };

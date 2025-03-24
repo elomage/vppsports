@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { fetchRuns, fetchSelectedRun } from './api';
+import { fetchRuns, fetchSelectedRun, fetchSelectedRunFiltered } from './api';
 import './Runcontrol.css';
 
 const RunControl = ({ setSelectedRun }) => {
@@ -16,6 +16,10 @@ const RunControl = ({ setSelectedRun }) => {
     const runId = event.target.value;
     if (runId !== 'null') {
       const runData = await fetchSelectedRun(runId);
+
+      //FIXME
+      runData.filteredRunData = await fetchSelectedRunFiltered(runId);
+      
       setSelectedRun(runData);
     }
   };

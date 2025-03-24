@@ -16,3 +16,10 @@ export async function fetchSelectedRun(runId) {
   const response = await fetch(`http://localhost:8081/run/${runId}`);
   return response.json();
 }
+
+export async function fetchSelectedRunFiltered(runId) {
+  const response = await fetch(
+    `http://localhost:8081/run/${runId}?filterData=true`
+  );
+  return response.json();
+}

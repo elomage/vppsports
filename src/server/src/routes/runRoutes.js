@@ -25,6 +25,8 @@ router.get("/", async (req, res) => {
 router.get("/:runid", async (req, res) => {
   try {
     const { dateFrom, dateTo } = req.query;
+
+    const { filterData } = req.query;
     const runid = req.params.runid;
     var runs = null;
     if (dateFrom && dateTo) {
@@ -32,8 +34,15 @@ router.get("/:runid", async (req, res) => {
     } else {
       runs = await runController.getAllRuns();
     }
-    const selectedRun = await runController.getSingleRun(runid);
 
+    var selectedRun = null;
+    if (filterData == "true") {
+      selectedRun = await runController.getSingleRunKalmanFilter(runid);
+    } else {
+      selectedRun = await runController.getSingleRun(runid);
+    }
+
+    // const selectedRun = await runController.getSingleRun(runid);
     // const runTrack = await trackController.getSingleTrack(selectedRun.trackid);
     // const runDriver = await driverController.getSingleDriver(
     //   selectedRun.driverid

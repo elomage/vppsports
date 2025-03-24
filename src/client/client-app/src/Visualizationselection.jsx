@@ -3,14 +3,14 @@ import './Visualizationselection.css';
 
 const componentsMap = {
     info: React.lazy(() => import('./Infovisualizer')),
-    graph: React.lazy(() => import('./Graphvisualizer')),
+    graph: React.lazy(() => import('./Graphvisualizer'))
     // model: React.lazy(() => import('./Modelvisualizer')),
 };
 
 export default function ComponentSelector({ selectedRun, sliderValue }) {
     const [selectedComponent, setSelectedComponent] = useState([
-        { id: 1, type: 'info' },
-        { id: 2, type: 'graph' },
+        // { id: 1, type: 'info' },
+        { id: 1, type: 'graph' },
         // { id: 3, type: 'model' },
     ]);
     const [containerSize, setContainerSize] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -54,7 +54,7 @@ export default function ComponentSelector({ selectedRun, sliderValue }) {
         <>
                     <h1 className='text-2xl font-bold mb-4'>Visualization</h1>
             <div className='flex gap-4'>
-                <button className='btn btn-primary' onClick={() => addComponent('info')} style={{margin: '5px'}}>Add Info</button>
+                {/* <button className='btn btn-primary' onClick={() => addComponent('info')} style={{margin: '5px'}}>Add Info</button> */}
                 <button className='btn btn-primary' onClick={() => addComponent('graph')} style={{margin: '5px'}}>Add Graph</button>
                 {/* <button className='btn btn-primary' onClick={() => addComponent('model')} style={{margin: '5px'}}>Add Model</button> */}
             </div>

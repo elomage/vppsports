@@ -33,7 +33,7 @@ function App() {
 
 
       <div className="d-flex" id="main-wrapper">
-      <Sidebar />
+      {/* <Sidebar /> */}
       <Dashboard />
       </div>
     </>
