@@ -3,7 +3,7 @@ import './Visualizationselection.css';
 
 const componentsMap = {
     info: React.lazy(() => import('./Infovisualizer')),
-    graph: React.lazy(() => import('./Graphvisualizer'))
+    graph: React.lazy(() => import('./PlotlyGraphvisualizer'))
     // model: React.lazy(() => import('./Modelvisualizer')),
 };
 
@@ -23,6 +23,8 @@ export default function ComponentSelector({ selectedRun, sliderValue }) {
     const removeComponent = (id) => {
         setSelectedComponent(selectedComponent.filter((component) => component.id !== id));
     };
+
+    const graphCount = selectedComponent.filter(component => component.type === 'graph').length || 1;
 
     useEffect(() => {
         const handleResize = () => {
@@ -58,18 +60,19 @@ export default function ComponentSelector({ selectedRun, sliderValue }) {
                 <button className='btn btn-primary' onClick={() => addComponent('graph')} style={{margin: '5px'}}>Add Graph</button>
                 {/* <button className='btn btn-primary' onClick={() => addComponent('model')} style={{margin: '5px'}}>Add Model</button> */}
             </div>
-        <div className='flex flex-col items-center p-6' id='visualization-component-wrapper' style={{ width: containerSize.width, height: containerSize.height }}>
+        {/* <div className='flex flex-col items-center p-6' id='visualization-component-wrapper' style={{ width: containerSize.width, height: containerSize.height }}> */}
+        <div className='flex flex-col items-center p-6' id='visualization-component-wrapper' style={{ '--graph-count': graphCount }}>
 
             <div className='flex flex-wrap gap-4 mt-4' style={{ flex: 1 }}>
                 {selectedComponent.map((component) => {
                     const Component = componentsMap[component.type];
                     const wrapperClass = component.type === 'graph' ? 'graph-wrapper' : component.type === 'model' ? 'model-wrapper' : 'component-wrapper';
                     return (
-                        <div key={component.id} className={wrapperClass} style={{ flex: '1 1 auto' }}>
+                        <div key={component.id} className={wrapperClass} style={{ flex: '1 1 auto', width: containerSize.width, height: containerSize.height }}>
                             <React.Suspense fallback={<div>Loading...</div>}>
-                                <Component selectedRun={selectedRun} sliderValue={sliderValue} />
+                                <Component selectedRun={selectedRun} sliderValue={sliderValue}                     removeFunction={() => removeComponent(component.id)} style={{width: containerSize.width, height: containerSize.height }}/>
                             </React.Suspense>
-                            <button className='btn btn-danger' onClick={() => removeComponent(component.id)}>Remove</button>
+                            {/* <button className='btn btn-danger' onClick={() => removeComponent(component.id)}>Remove</button> */}
                         </div>
                     );
                 })}

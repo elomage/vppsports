@@ -8,7 +8,6 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
 
     const handleInput = (event) => {
         const value = parseInt(event.target.value, 10);
-        console.log('Input event:', value);
         setLocalSliderValue(value);
         setSliderValue(value);
         setIsPlaying(false);
@@ -31,12 +30,31 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
         setCurrentTime(selectedRun.data[0].readings[0].timestamp);
     };
 
+    const prevFrame = () => {
+        setLocalSliderValue((prevValue) => {
+            const newValue = Math.max(prevValue - 1, 0);
+            setSliderValue(newValue);
+            setCurrentTime(selectedRun.data[0].readings[newValue].timestamp);
+            return newValue;
+        });
+    };
+
+    const nextFrame = () => {
+        setLocalSliderValue((prevValue) => {
+            const newValue = Math.min(prevValue + 1, selectedRun.data[0].readings.length - 1);
+            setSliderValue(newValue);
+            setCurrentTime(selectedRun.data[0].readings[newValue].timestamp);
+            return newValue;
+        });
+    };
+
     useEffect(() => {
         let interval;
         if (isPlaying) {
+            const speed = 1;
             interval = setInterval(() => {
                 setLocalSliderValue((prevValue) => {
-                    const newValue = Math.min(prevValue + 1, selectedRun.data[0].readings.length - 1);
+                    const newValue = Math.min(prevValue + speed, selectedRun.data[0].readings.length - 1);
                     setSliderValue(newValue);
                     setCurrentTime(selectedRun.data[0].readings[newValue].timestamp);
                     return newValue;
@@ -54,20 +72,6 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
             setCurrentTime(selectedRun.data[0].readings[sliderValue].timestamp);
         }
     }, [sliderValue, isPlaying, selectedRun.orientationData]);
-
-    function convertNanosecondsToTime(nanoseconds) {
-        const msInNano = 1e6;
-        const ms = Math.floor(nanoseconds / msInNano);
-  
-        const hours = Math.floor(ms / 3600000);
-        const minutes = Math.floor((ms % 3600000) / 60000);
-        const seconds = Math.floor((ms % 60000) / 1000);
-        const milliseconds = ms % 1000;
-  
-        const formatTime = (unit) => String(unit).padStart(2, '0');
-        return `${formatTime(hours)}:${formatTime(minutes)}:${formatTime(seconds)}:${String(milliseconds).padStart(3, '0')}`;
-    }
-
 
     const formatTime = (timeInSeconds) => {
         const ms = Math.floor(timeInSeconds * 1000);
@@ -92,11 +96,17 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
                 onInput={handleInput}
             />
             <div className="btn-group">
+                <button id="prev-frame-button" type="button" className="btn btn-outline-success" onClick={prevFrame}>
+                    <i className="fas fa-step-backward"></i>
+                </button>
                 <button id="start-button" type="button" className="btn btn-success" onClick={startPlayback}>
                     <i className="fas fa-play"></i>
                 </button>
                 <button id="pause-button" type="button" className="btn btn-outline-success" onClick={pausePlayback}>
                     <i className="fas fa-pause"></i>
+                </button>
+                <button id="next-frame-button" type="button" className="btn btn-outline-success" onClick={nextFrame}>
+                    <i className="fas fa-step-forward"></i>
                 </button>
                 <button id="reset-button" type="button" className="btn btn-outline-danger" onClick={resetPlayback}>
                     <i className="fas fa-undo"></i>
