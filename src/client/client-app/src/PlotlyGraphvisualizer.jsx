@@ -10,8 +10,8 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
         autosize: true,
         dragmode: 'pan',
         margin: { l: 0, r: 10, t: 30, b: 0 },
-        xaxis: { title: 'Timestamp', showticklabels: false },
-        yaxis: { title: 'Sensor Reading' },
+        xaxis: { title: 'Timestamp', showticklabels: false, fixedrange: false },
+        yaxis: { title: 'Sensor Reading', fixedrange: true },
         uirevision: UIREVISION_VALUE,
         shapes: [
           {
