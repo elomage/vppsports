@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import RunControl from './Runcontrol';
 import './Dashboard.css';
 import VisualizationSelection from './Visualizationselection';
-import PlaybackControl from './Playbackcontrol';
+import PlaybackControl from './PlaybackControl';
 
 const Dashboard = () => {
     const [selectedRun, setSelectedRun] = useState(null);
@@ -12,6 +12,10 @@ const Dashboard = () => {
       console.log(selectedRun);
       
     }, [selectedRun]);
+
+    useEffect(() => {
+      // console.log(sliderValue);
+    }, [sliderValue]);
 
     return (
       <div className="d-flex w-100">
@@ -23,7 +27,7 @@ const Dashboard = () => {
           {selectedRun && (
             <>
               {/* <h1>Selected Run ID: {selectedRun._id}</h1> */}
-              <VisualizationSelection selectedRun={selectedRun} sliderValue={sliderValue} />
+              <VisualizationSelection selectedRun={selectedRun} sliderValue={sliderValue} setSliderValue={setSliderValue} />
             </>
           )}
         </div>

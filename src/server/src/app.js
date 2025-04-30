@@ -37,9 +37,11 @@ app.set("views", path.join(__dirname, "views"));
 const apiRoutes = require("./routes/api");
 const runRoutes = require("./routes/runRoutes");
 const sensorRoutes = require("./routes/sensorRoutes");
+const videoRoutes = require("./routes/videoRoutes");
 
 app.use("/api", apiRoutes);
 app.use("/run", runRoutes);
 app.use("/sensor", sensorRoutes);
+app.use("/video", videoRoutes);
 
 module.exports = app;

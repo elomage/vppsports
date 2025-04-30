@@ -12,6 +12,7 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
         setSliderValue(value);
         setIsPlaying(false);
         setCurrentTime(selectedRun.data[0].readings[value].timestamp);
+
     };
 
     const pausePlayback = () => {
@@ -19,7 +20,6 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
     };
     
     const startPlayback = () => {
-        console.log(sliderValue);
         setIsPlaying(true);
     };
 
@@ -37,6 +37,7 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
             setCurrentTime(selectedRun.data[0].readings[newValue].timestamp);
             return newValue;
         });
+
     };
 
     const nextFrame = () => {
@@ -46,12 +47,13 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
             setCurrentTime(selectedRun.data[0].readings[newValue].timestamp);
             return newValue;
         });
+
     };
 
     useEffect(() => {
         let interval;
         if (isPlaying) {
-            const speed = 1;
+            const speed = 100; //This needs to be propotional to the sample rate
             interval = setInterval(() => {
                 setLocalSliderValue((prevValue) => {
                     const newValue = Math.min(prevValue + speed, selectedRun.data[0].readings.length - 1);

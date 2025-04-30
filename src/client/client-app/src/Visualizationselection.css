@@ -34,6 +34,22 @@
     gap: 4px;
 }
 
+/* .video-wrapper {
+    flex: 1 1 400px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    min-width: 700px;
+    max-height: calc(95% / var(--graph-count, 1));
+    max-height: 200px;
+    gap: 4px;
+} */
+
+.video-visualizer > video{
+
+    max-height:250px;
+}
+
 .model-wrapper {
     flex: 1 1 400px;
     box-sizing: border-box;
