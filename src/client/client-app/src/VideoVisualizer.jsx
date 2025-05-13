@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { fetchRunVideo } from './api'; // Adjust the path as needed
 import throttle from 'lodash/throttle';
 
@@ -10,8 +10,10 @@ const VideoVisualizer = ({ selectedRun, sliderValue, setSliderValue }) => {
 
   const startOffset = 89; // Start offset in seconds
 
-  const frameRate = 25; // Frames per second (assumed)
+  const frameRate = 24; // Frames per second (assumed)
   const frameDuration = 1 / frameRate; // Duration of one frame in seconds
+
+  const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
 
   useEffect(() => {
     async function getVideo() {
@@ -27,15 +29,25 @@ const VideoVisualizer = ({ selectedRun, sliderValue, setSliderValue }) => {
     getVideo();
   }, [videoName]);
 
-  // Update video position based on sliderValue and sampleRate.
-//   useEffect(() => {
-//     if (videoRef.current && typeof sliderValue === 'number') {
-//       const videoTime = sliderValue / sampleRate;
-//       if (Math.abs(videoRef.current.currentTime - videoTime) > 0.01) {
-//         videoRef.current.currentTime = videoTime;
-//       }
-//     }
-//   }, [sliderValue, sampleRate]);
+  //Update video position based on sliderValue and sampleRate.
+
+  // useEffect(() => {
+  //   if (videoRef.current && typeof sliderValue === 'number') {
+  //     const videoTime = sliderValue / sampleRate;
+  //     if (Math.abs(videoRef.current.currentTime - videoTime) > 0.1) {
+  //       videoRef.current.currentTime = videoTime;
+  //     }
+  //   }
+  // }, [sliderValue, sampleRate]);
+
+  //   // Throttle slider updates from video playback.
+  // const throttledUpdate = useCallback(
+  //   throttle((currentTime) => {
+  //     setSliderValue(Math.ceil(currentTime * sampleRate));
+  //   }, 100),
+  //   [sampleRate, setSliderValue]
+  // );
+
 
   // Update slider value during video playback using timeupdate event.
 useEffect(() => {
@@ -49,6 +61,12 @@ useEffect(() => {
         return () => videoEl.removeEventListener('timeupdate', handleTimeUpdate);
     }
 }, [videoUrl, sampleRate, setSliderValue]);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.playbackRate = playbackSpeed;
+    }
+  }, [playbackSpeed]);
 
   // Function to move one frame back.
   const moveOneFrameBack = () => {
@@ -68,14 +86,23 @@ useEffect(() => {
     }
   };
 
+  const decreaseSpeed = () => {
+  setPlaybackSpeed((prevSpeed) => Math.max(0.25, prevSpeed - 0.25));
+  };
+
+  const increaseSpeed = () => {
+  setPlaybackSpeed((prevSpeed) => prevSpeed + 0.25);
+  };
+
   return (
-    <div className="video-visualizer">
+    <>
       {videoUrl ? (
         <>
           <video ref={videoRef} controls width="100%" src={videoUrl}>
             Your browser does not support the video tag.
           </video>
-          <div style={{ marginTop: '10px' }}>
+          <div className="control-wrapper" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', marginTop: '10px' }}>
+          <div style={{ marginTop: '10px'}}>
             <button className="btn btn-outline-primary" onClick={moveOneFrameBack}>
               Previous Frame
             </button>
@@ -83,11 +110,21 @@ useEffect(() => {
               Next Frame
             </button>
           </div>
+          <div style={{ marginTop: '10px' }}>
+            <button className="btn btn-outline-secondary" onClick={decreaseSpeed}>
+              Slower
+            </button>
+            <span style={{ margin: '0 10px' }}>Speed: {playbackSpeed.toFixed(2)}x</span>
+            <button className="btn btn-outline-secondary" onClick={increaseSpeed}>
+              Faster
+            </button>
+            </div>
+          </div>
         </>
       ) : (
         <p>Loading video...</p>
       )}
-    </div>
+      </>
   );
 };
 

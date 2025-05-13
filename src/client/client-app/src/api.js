@@ -1,4 +1,5 @@
-const SERVER_URL = "http://192.168.88.3:8081";
+// const SERVER_URL = "http://192.168.88.3:8081";
+const SERVER_URL = "http://localhost:8081";
 
 export async function fetchRuns(dateFrom, dateTo) {
   const response = await fetch(

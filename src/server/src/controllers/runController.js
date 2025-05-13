@@ -68,13 +68,13 @@ const getSingleRunKalmanFilter = async (runid) => {
 
     run.data.forEach((sensorData) => {
       if (sensorData._id === "accelerometer" && sensorData.readings) {
-        // const kfX = new KalmanFilter({ R: 0.01, Q: 1 });
-        // const kfY = new KalmanFilter({ R: 0.01, Q: 1 });
-        // const kfZ = new KalmanFilter({ R: 0.01, Q: 1 });
+        const kfX = new KalmanFilter({ R: 0.01, Q: 1 });
+        const kfY = new KalmanFilter({ R: 0.01, Q: 1 });
+        const kfZ = new KalmanFilter({ R: 0.01, Q: 1 });
 
-        const kfX = new KalmanFilter({ R: 0.01, Q: 2 });
-        const kfY = new KalmanFilter({ R: 0.01, Q: 2 });
-        const kfZ = new KalmanFilter({ R: 0.01, Q: 2 });
+        // const kfX = new KalmanFilter({ R: 0.0001, Q: 1 });
+        // const kfY = new KalmanFilter({ R: 0.0001, Q: 1 });
+        // const kfZ = new KalmanFilter({ R: 0.0001, Q: 1 });
 
         sensorData.readings.forEach((reading) => {
           if (reading.data && Array.isArray(reading.data)) {
@@ -87,6 +87,57 @@ const getSingleRunKalmanFilter = async (runid) => {
             reading.data[0] = filteredX;
             reading.data[1] = filteredY;
             reading.data[2] = filteredZ;
+          }
+        });
+      }
+    });
+
+    return run;
+  } catch (error) {
+    throw new Error(error.message);
+  }
+};
+
+const movingAverage = (data, windowSize) => {
+  return data.map((_, i, arr) => {
+    const start = Math.max(i - windowSize + 1, 0);
+    const subset = arr.slice(start, i + 1);
+    const avg = subset.reduce((a, b) => a + b, 0) / subset.length;
+    return avg;
+  });
+};
+
+const getSingleRunMovingAverage = async (runid) => {
+  try {
+    const run = await runService.getSingleRun(runid);
+
+    if (!run || !run.data || !run.data[0]?.readings) {
+      throw new Error("Invalid run data structure");
+    }
+
+    convertSensorData(run.data, convertToG);
+
+    // Apply moving average to accelerometer data
+    run.data.forEach((sensorData) => {
+      if (sensorData._id === "accelerometer" && sensorData.readings) {
+        const windowSize = 40; // adjust this value if needed
+
+        // Extract axis time series arrays
+        const xValues = sensorData.readings.map((r) => r.data[0]);
+        const yValues = sensorData.readings.map((r) => r.data[1]);
+        const zValues = sensorData.readings.map((r) => r.data[2]);
+
+        // Calculate moving averages for each axis
+        const smoothX = movingAverage(xValues, windowSize);
+        const smoothY = movingAverage(yValues, windowSize);
+        const smoothZ = movingAverage(zValues, windowSize);
+
+        // Update each reading with the smoothed values
+        sensorData.readings.forEach((reading, idx) => {
+          if (reading.data && Array.isArray(reading.data)) {
+            reading.data[0] = smoothX[idx];
+            reading.data[1] = smoothY[idx];
+            reading.data[2] = smoothZ[idx];
           }
         });
       }
@@ -133,4 +184,5 @@ module.exports = {
   filterRunsByDate,
   createRun,
   getSingleRunKalmanFilter,
+  getSingleRunMovingAverage,
 };

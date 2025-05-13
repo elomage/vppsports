@@ -37,7 +37,8 @@ router.get("/:runid", async (req, res) => {
 
     var selectedRun = null;
     if (filterData == "true") {
-      selectedRun = await runController.getSingleRunKalmanFilter(runid);
+      // selectedRun = await runController.getSingleRunKalmanFilter(runid);
+      selectedRun = await runController.getSingleRunMovingAverage(runid);
     } else {
       selectedRun = await runController.getSingleRun(runid);
     }

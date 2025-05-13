@@ -66,7 +66,7 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
         {/* <div className='flex flex-col items-center p-6' id='visualization-component-wrapper' style={{ width: containerSize.width, height: containerSize.height }}> */}
         <div className='flex flex-col items-center p-6' id='visualization-component-wrapper' style={{ '--graph-count': graphCount }}>
 
-            <div className='flex flex-wrap gap-4 mt-4' style={{ flex: 1 }}>
+            <div className='flex flex-wrap' style={{ flex: 1 }}>
                 {selectedComponent.map((component) => {
                     const Component = componentsMap[component.type];
                     const wrapperClass = component.type === 'graph' ? 'graph-wrapper' : component.type === 'model' ? 'model-wrapper' : component.type === 'video' ? 'video-wrapper' : 'component-wrapper';
@@ -75,7 +75,7 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
                             <React.Suspense fallback={<div>Loading...</div>}>
                                 <Component selectedRun={selectedRun} sliderValue={sliderValue} removeFunction={() => removeComponent(component.id)} style={{width: containerSize.width, height: containerSize.height }} setSliderValue={setSliderValue}/>
                             </React.Suspense>
-                            <button className='btn btn-danger' onClick={() => removeComponent(component.id)}>Remove</button>
+                            <button className='btn btn-danger' style={{margin: 0}} onClick={() => removeComponent(component.id)}>Remove</button>
                         </div>
                     );
                 })}
