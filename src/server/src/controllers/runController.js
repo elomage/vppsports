@@ -64,8 +64,6 @@ const getSingleRunKalmanFilter = async (runid) => {
 
     convertSensorData(run.data, convertToG);
 
-    // Apply Kalman filter to accelerometer data
-
     run.data.forEach((sensorData) => {
       if (sensorData._id === "accelerometer" && sensorData.readings) {
         const kfX = new KalmanFilter({ R: 0.01, Q: 1 });

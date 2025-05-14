@@ -25,38 +25,51 @@ const ModelVisualizer = ({ selectedRun, sliderValue }) => {
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(container.clientWidth, container.clientHeight);
 
-        camera.position.setZ(20);
-        camera.position.setY(10);
-        camera.position.setX(10);
+        camera.position.setZ(1);
+        camera.position.setY(2);
+        camera.position.setX(2);
 
+
+        //LOAD BOX OBJECT
         const geometry = new THREE.BoxGeometry(10, 3, 16, 100);
         const material = new THREE.MeshStandardMaterial({ color: 0xFF6347 });
         const torus = new THREE.Mesh(geometry, material);
+        torus.scale.set(0.05, 0.05, 0.05); 
+        torus.rotation.y = Math.PI / 2;
+        scene.add(torus);
+        objectRef.current = torus;
 
-        // scene.add(torus);
 
-        const objLoader = new OBJLoader();
-        objLoader.load(
-            './public/model.obj',
-            function (object) {
-                object.rotation.x = -(Math.PI / 2);
-                object.scale.set(0.25, 0.25, 0.25);
-                scene.add(object);
-                objectRef.current = object;
-            },
-            function (xhr) {
-                console.log((xhr.loaded / xhr.total * 100) + '% loaded');
-            },
-            function (error) {
-                console.error('An error happened', error);
-            }
-        );
+        ////LOAD MODEL OBJECT
+        //
+        // const objLoader = new OBJLoader();
+        // objLoader.load(
+        //     './public/model.obj',
+        //     function (object) {
+        //         object.rotation.x = -(Math.PI / 2);
+        //         object.scale.set(0.25, 0.25, 0.25);
+        //         scene.add(object);
+        //         objectRef.current = object;
+        //     },
+        //     function (xhr) {
+        //         console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+        //     },
+        //     function (error) {
+        //         console.error('An error happened', error);
+        //     }
+        // );
 
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // soft white light
         scene.add(ambientLight);
 
-        const gridHelper = new THREE.GridHelper(200, 50);
-        const axesHelper = new THREE.AxesHelper(5);
+        const gridHelper = new THREE.GridHelper(10, 1);
+        const axesHelper = new THREE.AxesHelper(2);
+        // axesHelper.material.linewidth = 5;
+        axesHelper.setColors(
+            new THREE.Color(0x75ecef),
+            new THREE.Color(0x00ff00),
+            new THREE.Color(0xf2ba55)
+        );
         scene.add(gridHelper, axesHelper);
 
         const controls = new OrbitControls(camera, renderer.domElement);
@@ -87,7 +100,7 @@ const ModelVisualizer = ({ selectedRun, sliderValue }) => {
     }, []);
 
     useEffect(() => {
-        if (objectRef.current && selectedRun) {
+        if (objectRef.current && selectedRun && selectedRun.orientationData) {
             const orientation = selectedRun.orientationData[sliderValue];
             if (orientation) {
                 const [time, roll, yaw, pitch] = orientation;
@@ -98,9 +111,58 @@ const ModelVisualizer = ({ selectedRun, sliderValue }) => {
         }
     }, [sliderValue, selectedRun]);
 
+    useEffect(() => {
+        let arrowHelper;
+        const scaleFactor = 2; // Scale factor to make the vector bigger
+
+        if (objectRef.current && selectedRun && selectedRun.data) {
+            const accelerometer = selectedRun.filteredRunData.data.find(d => d._id === "accelerometer");
+            if (accelerometer && accelerometer.readings) {
+                const updateVector = () => {
+                    const reading = accelerometer.readings[sliderValue];
+                    console.log("Reading: ", reading);
+                    if (reading) {
+                        const gravity = 1; // Earth's gravity in m/s^2
+                        const [rawX, rawY, rawZ] = reading.data;
+                        const x = rawX;
+                        const y = rawY;
+                        const z = rawZ - gravity; // Remove gravity from the Z-axis
+
+                        const forceVector = new THREE.Vector3(x, z, y).multiplyScalar(scaleFactor); // Scale the vector
+
+                        const length = forceVector.length();
+
+                        if (!arrowHelper) {
+                            arrowHelper = new THREE.ArrowHelper(
+                                forceVector.clone().normalize(), // Direction
+                                objectRef.current.position,      // Origin
+                                length,                          // Length
+                                0xff0000,                        // Color
+                                undefined,                       // Head length (default)
+                                0.1                              // Head width (increased thickness)
+                            );
+                            objectRef.current.parent.add(arrowHelper);
+                        } else {
+                            arrowHelper.setDirection(forceVector.clone().normalize());
+                            arrowHelper.setLength(length);
+                        }
+                    }
+                };
+
+                updateVector();
+            }
+        }
+
+        return () => {
+            if (arrowHelper) {
+                objectRef.current.parent.remove(arrowHelper);
+                arrowHelper = null;
+            }
+        };
+    }, [sliderValue, selectedRun]);
+
     return (
         <>
-        {/* <h1>Model</h1> */}
         <button id="reset-imu-zoom-button" onClick={resetIMUZoom} className="btn-reset-zoom">
             Reset Zoom
         </button>

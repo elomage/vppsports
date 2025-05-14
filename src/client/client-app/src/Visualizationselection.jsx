@@ -4,16 +4,16 @@ import './Visualizationselection.css';
 const componentsMap = {
     info: React.lazy(() => import('./Infovisualizer')),
     graph: React.lazy(() => import('./PlotlyGraphvisualizer')),
-    video: React.lazy(() => import('./VideoVisualizer'))
-    // model: React.lazy(() => import('./Modelvisualizer')),
+    video: React.lazy(() => import('./VideoVisualizer')),
+    model: React.lazy(() => import('./Modelvisualizer')),
 };
 
 export default function ComponentSelector({ selectedRun, sliderValue, setSliderValue }) {
     const [selectedComponent, setSelectedComponent] = useState([
         // { id: 1, type: 'info' },
         { id: 1, type: 'graph' },
-        // { id: 3, type: 'model' },
         { id: 2, type: 'video' },
+        { id: 3, type: 'model' },
     ]);
     const [containerSize, setContainerSize] = useState({ width: window.innerWidth, height: window.innerHeight });
 
@@ -61,7 +61,7 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
                 {/* <button className='btn btn-primary' onClick={() => addComponent('info')} style={{margin: '5px'}}>Add Info</button> */}
                 <button className='btn btn-primary' onClick={() => addComponent('graph')} style={{margin: '5px'}}>Add Graph</button>
                 <button className='btn btn-primary' onClick={() => addComponent('video')} style={{margin: '5px'}}>Add Video</button>
-                {/* <button className='btn btn-primary' onClick={() => addComponent('model')} style={{margin: '5px'}}>Add Model</button> */}
+                <button className='btn btn-primary' onClick={() => addComponent('model')} style={{margin: '5px'}}>Add Model</button>
             </div>
         {/* <div className='flex flex-col items-center p-6' id='visualization-component-wrapper' style={{ width: containerSize.width, height: containerSize.height }}> */}
         <div className='flex flex-col items-center p-6' id='visualization-component-wrapper' style={{ '--graph-count': graphCount }}>
