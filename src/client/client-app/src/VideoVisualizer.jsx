@@ -6,14 +6,20 @@ const VideoVisualizer = ({ selectedRun, sliderValue, setSliderValue }) => {
   const [videoUrl, setVideoUrl] = useState('');
   const videoName = 'sample.mp4'; // Change this to your desired video file name
   const videoRef = useRef(null);
-  const sampleRate = 504; // Sensor samples per second
 
-  const startOffset = 89; // Start offset in seconds
+  // const sampleRate = 504; // Sensor samples per second
+  const sampleRate = 555; // Sensor samples per second
+
+  // const startOffset = 89; // Start offset in seconds
+  const startOffset = 80; // Start offset in seconds
 
   const frameRate = 24; // Frames per second (assumed)
   const frameDuration = 1 / frameRate; // Duration of one frame in seconds
 
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
+
+  // console.log("reading timestamp: ",selectedRun.filteredRunData.data[0].readings[sliderValue].timestamp);
+  // console.log("Video timestamp:" , videoRef.current.currentTime);
 
   useEffect(() => {
     async function getVideo() {
@@ -52,6 +58,7 @@ const VideoVisualizer = ({ selectedRun, sliderValue, setSliderValue }) => {
   // Update slider value during video playback using timeupdate event.
 useEffect(() => {
     const videoEl = videoRef.current;
+
     if (videoEl) {
         const handleTimeUpdate = () => {
             setSliderValue(Math.ceil((videoEl.currentTime + startOffset) * sampleRate));
@@ -93,6 +100,34 @@ useEffect(() => {
   const increaseSpeed = () => {
   setPlaybackSpeed((prevSpeed) => prevSpeed + 0.25);
   };
+
+  useEffect(() => {
+    if (videoRef.current && selectedRun && selectedRun.filteredRunData) {
+      const sensorData = selectedRun.filteredRunData.data[0]?.readings;
+      if (!sensorData || sensorData.length === 0) return;
+
+      const sensorStartTimestamp = sensorData[0].timestamp;
+      const sensorEndTimestamp = sensorData[sensorData.length - 1].timestamp;
+
+      const videoStartTime = startOffset;
+      const videoEndTime = startOffset + (videoRef.current?.duration || 0);
+
+      const interpolateSensorToVideo = (sensorTimestamp) => {
+        return (
+          ((sensorTimestamp - sensorStartTimestamp) / (sensorEndTimestamp - sensorStartTimestamp)) *
+          (videoEndTime - videoStartTime)
+        ) + videoStartTime;
+      };
+
+      const videoTime = interpolateSensorToVideo(sensorData[sliderValue]?.timestamp);
+
+      if (videoTime !== undefined && Math.abs(videoRef.current.currentTime - videoTime) > 0.1) {
+        videoRef.current.currentTime = videoTime;
+      }
+
+      console.log("Interpolated Video Time:", videoTime);
+    }
+  }, [sliderValue, selectedRun, startOffset]);
 
   return (
     <>

@@ -120,7 +120,6 @@ const ModelVisualizer = ({ selectedRun, sliderValue }) => {
             if (accelerometer && accelerometer.readings) {
                 const updateVector = () => {
                     const reading = accelerometer.readings[sliderValue];
-                    console.log("Reading: ", reading);
                     if (reading) {
                         const gravity = 1; // Earth's gravity in m/s^2
                         const [rawX, rawY, rawZ] = reading.data;
