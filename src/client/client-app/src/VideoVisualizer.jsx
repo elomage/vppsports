@@ -103,14 +103,16 @@ useEffect(() => {
 
   useEffect(() => {
     if (videoRef.current && selectedRun && selectedRun.filteredRunData) {
-      const sensorData = selectedRun.filteredRunData.data[0]?.readings;
+      const sensorData = selectedRun.filteredRunData.data[sliderValue]?.readings;
       if (!sensorData || sensorData.length === 0) return;
 
       const sensorStartTimestamp = sensorData[0].timestamp;
       const sensorEndTimestamp = sensorData[sensorData.length - 1].timestamp;
 
-      const videoStartTime = startOffset;
-      const videoEndTime = startOffset + (videoRef.current?.duration || 0);
+      // const videoStartTime = startOffset;
+      const videoStartTime = 0;
+      // const videoEndTime = startOffset + (videoRef.current?.duration || 0);
+      const videoEndTime = 0 + (videoRef.current?.duration || 0);
 
       const interpolateSensorToVideo = (sensorTimestamp) => {
         return (
