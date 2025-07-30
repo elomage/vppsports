@@ -1,0 +1,1 @@
+Code for ADXL357 accelerometer for Raspberry Pi Pico with external SD card module.
