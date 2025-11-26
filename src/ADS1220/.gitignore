@@ -1,0 +1,4 @@
+build
+!.vscode/*
+lib/no-OS-FatFS-SD-SPI-RPi-Pico/.git
+.vscode
