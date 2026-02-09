@@ -1,0 +1,271 @@
+/* PlotlyGraphvisualizer2 Styles */
+.graph-container {
+    height: 100%;
+    min-height: 200px;
+    width: 100%;
+    flex: 1;
+    position: relative;
+}
+
+.graph-container canvas {
+    max-height: 100% !important;
+}
+
+/* Filter Controls - Compact Design */
+.filter-controls {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-radius: 8px;
+    border: 1px solid #dee2e6;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    flex-wrap: wrap;
+}
+
+.filter-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: auto;
+}
+
+.filter-title {
+    font-weight: 600;
+    color: #495057;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.filter-title::before {
+    content: "🔧";
+    font-size: 14px;
+}
+
+.filter-status {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: #6c757d;
+}
+
+.filter-status-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+}
+
+.filter-status-indicator.active {
+    background-color: #28a745;
+    box-shadow: 0 0 6px rgba(40, 167, 69, 0.4);
+}
+
+.filter-status-indicator.inactive {
+    background-color: #dc3545;
+}
+
+/* Filter Options */
+.filter-options {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.filter-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: white;
+    border: 1px solid #e9ecef;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 11px;
+    font-weight: 500;
+    color: #495057;
+    user-select: none;
+    position: relative;
+    overflow: hidden;
+}
+
+.filter-toggle:hover {
+    border-color: #007bff;
+    box-shadow: 0 4px 8px rgba(0,123,255,0.15);
+    transform: translateY(-1px);
+}
+
+.filter-toggle.active {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border-color: #007bff;
+    color: white;
+    box-shadow: 0 4px 12px rgba(0,123,255,0.25);
+}
+
+.filter-toggle.active::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% {
+        left: -100%;
+    }
+    100% {
+        left: 100%;
+    }
+}
+
+.filter-checkbox {
+    width: 12px;
+    height: 12px;
+    border: 1px solid currentColor;
+    border-radius: 3px;
+    position: relative;
+    transition: all 0.3s ease;
+    flex-shrink: 0;
+}
+
+.filter-toggle.active .filter-checkbox {
+    border-color: white;
+    background: white;
+}
+
+.filter-checkbox::after {
+    content: "✓";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0);
+    color: #007bff;
+    font-size: 12px;
+    font-weight: bold;
+    transition: transform 0.2s ease;
+}
+
+.filter-toggle.active .filter-checkbox::after {
+    transform: translate(-50%, -50%) scale(1);
+    color: #007bff;
+}
+
+.filter-label {
+    font-weight: 500;
+    letter-spacing: 0.3px;
+}
+
+/* Active Filters Display */
+.active-filters-display {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px;
+    background: rgba(40, 167, 69, 0.1);
+    border-radius: 12px;
+    border: 1px solid rgba(40, 167, 69, 0.2);
+    font-size: 10px;
+    color: #155724;
+}
+
+.active-filters-display::before {
+    content: "✓";
+    color: #28a745;
+    font-weight: bold;
+    font-size: 10px;
+}
+
+.active-filters-list {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.active-filter-tag {
+    background: rgba(40, 167, 69, 0.15);
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-weight: 500;
+    border: 1px solid rgba(40, 167, 69, 0.3);
+}
+
+/* Loading State */
+.filter-loading {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px;
+    background: rgba(0, 123, 255, 0.1);
+    border-radius: 12px;
+    border: 1px solid rgba(0, 123, 255, 0.2);
+    font-size: 10px;
+    color: #004085;
+}
+
+.filter-loading-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(0, 123, 255, 0.3);
+    border-top: 2px solid #007bff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .filter-controls {
+        padding: 12px;
+    }
+    
+    .filter-options {
+        gap: 8px;
+    }
+    
+    .filter-toggle {
+        padding: 6px 12px;
+        font-size: 12px;
+    }
+    
+    .filter-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+}
+
+/* Accessibility */
+.filter-toggle:focus {
+    outline: 2px solid #007bff;
+    outline-offset: 2px;
+}
+
+.filter-toggle:focus:not(:focus-visible) {
+    outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .filter-toggle,
+    .filter-checkbox,
+    .filter-status-indicator,
+    .filter-loading-spinner {
+        transition: none;
+        animation: none;
+    }
+}

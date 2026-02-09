@@ -10,8 +10,6 @@ export async function fetchRuns(dateFrom, dateTo) {
       },
     }
   );
-  console.log(`${SERVER_URL}/run?dateFrom=${dateFrom}&dateTo=${dateTo}`);
-  console.log(response);
   return response.json();
 }
 
@@ -28,4 +26,21 @@ export async function fetchSelectedRunFiltered(runId) {
 export async function fetchRunVideo(videoName) {
   const response = await fetch(`${SERVER_URL}/video/${videoName}`);
   return response;
+}
+
+export async function uploadSensorDataBin(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${SERVER_URL}/sensor-data/upload`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || "Upload failed");
+  }
+
+  return response.json();
 }

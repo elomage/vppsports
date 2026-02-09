@@ -4,22 +4,39 @@ import throttle from 'lodash/throttle';
 
 const VideoVisualizer = ({ selectedRun, sliderValue, setSliderValue }) => {
   const [videoUrl, setVideoUrl] = useState('');
-  const videoName = 'sample.mp4'; // Change this to your desired video file name
+
+  // const videoName = 'sample.mp4'; // Change this to your desired video file name
+  // const videoName = 'VijoleSample.mp4'; // Change this to your desired video file name
+
+
+  const videoName = selectedRun._id; // Change this to your desired video file name
+
   const videoRef = useRef(null);
 
-  // const sampleRate = 504; // Sensor samples per second
-  const sampleRate = 555; // Sensor samples per second
+  const sampleRate = 504; // Sensor samples per second
+  // const sampleRate = 555; // Sensor samples per second
 
   // const startOffset = 89; // Start offset in seconds
-  const startOffset = 80; // Start offset in seconds
+  // const startOffset = 80; // Start offset in seconds
+
+  const startOffset = 97.5; // Start offset in seconds Luge
+  // const startOffset = 26.5; // Start offset in seconds ViolinTest
+
+  // const startOffset = 15; // Start offset in seconds Violin Rebeka2
+  // const startOffset = 22; // Start offset in seconds Violin Rebeka1
+
+  // const startOffset = 1013.5; // Start offset in seconds Violin ReinisPareizi
+
+  // const startOffset = 12.5; // Start offset violin ReinisNepareizi
+
+  // const startOffset = 86; // Start offset in seconds Violin ReinisPareizi 2
+
+  // const startOffset = 0; // Start offset in seconds Violin ReinisNepareizi 2
 
   const frameRate = 24; // Frames per second (assumed)
   const frameDuration = 1 / frameRate; // Duration of one frame in seconds
 
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
-
-  // console.log("reading timestamp: ",selectedRun.filteredRunData.data[0].readings[sliderValue].timestamp);
-  // console.log("Video timestamp:" , videoRef.current.currentTime);
 
   useEffect(() => {
     async function getVideo() {
@@ -61,13 +78,36 @@ useEffect(() => {
 
     if (videoEl) {
         const handleTimeUpdate = () => {
-            setSliderValue(Math.ceil((videoEl.currentTime + startOffset) * sampleRate));
+            if (
+              selectedRun &&
+              selectedRun.filteredRunData &&
+              selectedRun.filteredRunData.data &&
+              selectedRun.filteredRunData.data.length > 0
+            ) {
+              // Assuming sensor readings are available in the first data element.
+              //FIXME: get the concurrent readings from the selectedRun.
+              // const sensorReadings = selectedRun.filteredRunData.data[0].readings;
+              const sensorReadings = selectedRun.totalTimestamps;
+              if (sensorReadings && sensorReadings.length > 0) {
+                const videoTargetTime = videoEl.currentTime + startOffset;
+                let closestIndex = 0;
+                let smallestDiff = Math.abs(sensorReadings[0] - videoTargetTime);
+                for (let i = 1; i < sensorReadings.length; i++) {
+                  const diff = Math.abs(sensorReadings[i] - videoTargetTime);
+                  if (diff < smallestDiff) {
+                    smallestDiff = diff;
+                    closestIndex = i;
+                  }
+                }
+                setSliderValue(closestIndex);
+              }
+            }
         };
 
         videoEl.addEventListener('timeupdate', handleTimeUpdate);
         return () => videoEl.removeEventListener('timeupdate', handleTimeUpdate);
     }
-}, [videoUrl, sampleRate, setSliderValue]);
+}, [videoUrl, sampleRate, setSliderValue, selectedRun, startOffset]);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -101,45 +141,15 @@ useEffect(() => {
   setPlaybackSpeed((prevSpeed) => prevSpeed + 0.25);
   };
 
-  useEffect(() => {
-    if (videoRef.current && selectedRun && selectedRun.filteredRunData) {
-      const sensorData = selectedRun.filteredRunData.data[sliderValue]?.readings;
-      if (!sensorData || sensorData.length === 0) return;
-
-      const sensorStartTimestamp = sensorData[0].timestamp;
-      const sensorEndTimestamp = sensorData[sensorData.length - 1].timestamp;
-
-      // const videoStartTime = startOffset;
-      const videoStartTime = 0;
-      // const videoEndTime = startOffset + (videoRef.current?.duration || 0);
-      const videoEndTime = 0 + (videoRef.current?.duration || 0);
-
-      const interpolateSensorToVideo = (sensorTimestamp) => {
-        return (
-          ((sensorTimestamp - sensorStartTimestamp) / (sensorEndTimestamp - sensorStartTimestamp)) *
-          (videoEndTime - videoStartTime)
-        ) + videoStartTime;
-      };
-
-      const videoTime = interpolateSensorToVideo(sensorData[sliderValue]?.timestamp);
-
-      if (videoTime !== undefined && Math.abs(videoRef.current.currentTime - videoTime) > 0.1) {
-        videoRef.current.currentTime = videoTime;
-      }
-
-      console.log("Interpolated Video Time:", videoTime);
-    }
-  }, [sliderValue, selectedRun, startOffset]);
-
   return (
     <>
       {videoUrl ? (
         <>
-          <video ref={videoRef} controls width="100%" src={videoUrl}>
+          <video ref={videoRef} controls src={videoUrl}>
             Your browser does not support the video tag.
           </video>
-          <div className="control-wrapper" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', marginTop: '10px' }}>
-          <div style={{ marginTop: '10px'}}>
+          <div className="control-wrapper" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginTop: '10px' }}>
+          <div style={{ marginTop: '10px', marginBottom: '10px'}}>
             <button className="btn btn-outline-primary" onClick={moveOneFrameBack}>
               Previous Frame
             </button>
@@ -147,8 +157,8 @@ useEffect(() => {
               Next Frame
             </button>
           </div>
-          <div style={{ marginTop: '10px' }}>
-            <button className="btn btn-outline-secondary" onClick={decreaseSpeed}>
+          <div style={{ marginTop: '10px', marginBottom: '10px' }}>
+            <button className="btn btn-outline-secondary" onClick={decreaseSpeed} style={{marginLeft: '10px'}}>
               Slower
             </button>
             <span style={{ margin: '0 10px' }}>Speed: {playbackSpeed.toFixed(2)}x</span>

@@ -4,7 +4,9 @@
   "description": "Here goes the code for the server that hosts database, collects data from the hub and servers data to the client.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "seed": "node src/seed.js",
+    "start": "nodemon src/index.js"
   },
   "author": "",
   "license": "ISC",
@@ -13,6 +15,10 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "kalmanjs": "^1.1.0",
-    "mongodb": "^6.12.0"
+    "ml-savitzky-golay": "^5.0.0",
+    "mongo-seeding": "^4.0.2",
+    "mongodb": "^6.12.0",
+    "mongoose": "^8.17.1",
+    "nodemon": "^3.1.10"
   }
 }

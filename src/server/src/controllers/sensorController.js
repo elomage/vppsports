@@ -1,4 +1,4 @@
-const sensorService = require('../services/sensorService');
+const sensorService = require("../services/sensorService");
 
 const getSensor = async (sensorId) => {
   try {
@@ -15,27 +15,26 @@ const getSensor = async (sensorId) => {
  * @returns {Object} - The sensor data object with orientation data
  */
 const calculateOrientationData = async (sensorData) => {
-    try {
-        sensorData.orientationData = [];
-    
-        var pitch = 0;
-        var roll = 0;
-        var yaw = 0;
-        
-        sensorData.data.forEach(element => {
-            pitch += toRadians((element.gyro[0]+1)/100);
-            roll += toRadians((element.gyro[1]+1)/100);
-            yaw += toRadians((element.gyro[2]+1)/100);
-          
-            response.orientationData.push([element.time, roll, yaw, pitch]);
-        });
+  try {
+    sensorData.orientationData = [];
 
-        return sensorData;
+    var pitch = 0;
+    var roll = 0;
+    var yaw = 0;
 
-    } catch (err) {
-        throw new Error(err.message);
-    }
+    sensorData.data.forEach((element) => {
+      pitch += toRadians((element.gyro[0] + 1) / 100);
+      roll += toRadians((element.gyro[1] + 1) / 100);
+      yaw += toRadians((element.gyro[2] + 1) / 100);
 
+      response.orientationData.push([element.time, roll, yaw, pitch]);
+    });
+
+    return sensorData;
+    s;
+  } catch (err) {
+    throw new Error(err.message);
+  }
 };
 
 module.exports = {

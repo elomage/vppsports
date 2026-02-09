@@ -121,7 +121,6 @@ const GraphVisualizer = ({ selectedRun, sliderValue }) => {
 
         colorCounter++;
       }
-      console.log(dataArrayX);
     });
 
 
@@ -200,7 +199,6 @@ const GraphVisualizer = ({ selectedRun, sliderValue }) => {
               let hasVisibleDataset = false;
               
 
-              console.log(ci.data.datasets);
               
               ci.data.datasets.forEach((dataset, datasetIndex) => {
                 if (!ci.isDatasetVisible(datasetIndex)) return;

@@ -1,0 +1,21 @@
+.graph-container {
+    height: 100%;
+    min-height: 200px;
+    width: 100%;
+    flex: 1;
+    position: relative;
+}
+
+.graph-container canvas {
+    max-height: 100% !important;
+}
+
+.btn-reset-zoom {
+    display: inline-block;
+    text-align: center;
+    white-space: nowrap;
+    width: auto;
+    height: auto;
+    margin: 5px auto;
+    flex-shrink: 0;
+}

@@ -26,7 +26,7 @@ class ApiDataObject {
 const measurementTypes = {
     0: (buffer, offset) => buffer.readInt8(offset),
     1: (buffer, offset) => buffer.readInt16LE(offset),
-    2: (buffer, offset) => buffer.readInt32LE(offset),
+    2: (buffer, offset) => buffer.readint32le(offset),
     3: (buffer, offset) => buffer.readBigInt64LE(offset), // int64
     4: (buffer, offset) => buffer.readUInt8(offset),
     5: (buffer, offset) => buffer.readUInt16LE(offset),
@@ -58,7 +58,7 @@ function getSizeOfType(type) {
     }
 };
 
-function bytesToMacString(bytes) {
+function bytesToMacString(testing) {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(':');
 }
 

@@ -3,6 +3,9 @@ const path = require("path");
 const bodyParser = require("body-parser");
 const app = express();
 const cors = require("cors");
+const mongoose = require("mongoose");
+
+mongoose.connect(process.env.MONGODB_URI);
 
 // Configure CORS middleware
 // const allowedOrigins = process.env.ALLOWED_ORIGINS
