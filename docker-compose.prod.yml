@@ -1,16 +1,12 @@
 services:
   backend:
-    build:
-      context: ./src/server
-      dockerfile: Dockerfile
+    image: your-dockerhub-username/vppsport-backend:latest
     container_name: vppsport-backend
     restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
       - PORT=8080
-      - HOST=${HOST}
-      - SERVER_PUBLIC_URL=${SERVER_PUBLIC_URL}
       - MONGODB_URI=${MONGODB_URI}
       - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
@@ -22,15 +18,11 @@ services:
       - vppsport-network
 
   frontend:
-    build:
-      context: ./src/client
-      dockerfile: Dockerfile
-      args:
-        - VITE_SERVER_URL=${VITE_SERVER_URL}
+    image: your-dockerhub-username/vppsport-frontend:latest
     container_name: vppsport-frontend
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "80:80"
     depends_on:
       - backend
     networks:

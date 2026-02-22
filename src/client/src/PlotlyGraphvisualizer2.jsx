@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import Plot from 'react-plotly.js'
 import './PlotlyGraphvisualizer2.css'
 
-const SERVER_URL = "http://localhost:8080";
+const SERVER_URL = import.meta.env.VITE_SERVER_URL;
 const ACCESS_TOKEN_STORAGE_KEY = "vppsports_access_token";
 
 const getAuthHeaders = () => {

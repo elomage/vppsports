@@ -4,7 +4,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Accept build argument for backend URL
-ARG VITE_SERVER_URL=http://localhost:8080
+ARG VITE_SERVER_URL
 
 COPY package*.json ./
 
