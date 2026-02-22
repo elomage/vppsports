@@ -1,8 +1,9 @@
-const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:8081";
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:8080";
 const ACCESS_TOKEN_STORAGE_KEY = "vppsports_access_token";
 
 let accessToken = null;
 let onAuthFailure = null;
+let refreshInFlight = null;
 
 export class UnauthorizedError extends Error {
   constructor(message = "Unauthorized") {
@@ -42,23 +43,35 @@ async function parseResponse(response) {
 }
 
 async function refreshAccessToken() {
-  const response = await fetch(`${SERVER_URL}/auth/refresh`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    credentials: "include",
-    body: JSON.stringify({}),
-  });
-
-  if (!response.ok) {
-    accessToken = null;
-    throw new UnauthorizedError("Session expired");
+  if (refreshInFlight) {
+    return refreshInFlight;
   }
 
-  const data = await response.json();
-  setAccessToken(data.accessToken);
-  return data.accessToken;
+  refreshInFlight = (async () => {
+    const response = await fetch(`${SERVER_URL}/auth/refresh`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({}),
+    });
+
+    if (!response.ok) {
+      setAccessToken(null);
+      throw new UnauthorizedError("Session expired");
+    }
+
+    const data = await response.json();
+    setAccessToken(data.accessToken);
+    return data.accessToken;
+  })();
+
+  try {
+    return await refreshInFlight;
+  } finally {
+    refreshInFlight = null;
+  }
 }
 
 async function request(path, options = {}, retry = true) {

@@ -3,11 +3,20 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader';
 
-const SERVER_URL = "http://localhost:8081";
+const SERVER_URL = "http://localhost:8080";
+const ACCESS_TOKEN_STORAGE_KEY = "vppsports_access_token";
+
+const getAuthHeaders = () => {
+    const token = window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+    return token ? { Authorization: `Bearer ${token}` } : {};
+};
 
 const fetchRunSensorOrientation = async (runid, accelerometerid, gyroscopeid, magnetometerid) => {
     try {
-        const response = await fetch(`${SERVER_URL}/run/${runid}/sensor/orientation?accelerometerid=${accelerometerid}&gyroscopeid=${gyroscopeid}&magnetometerid=${magnetometerid}`);
+        const response = await fetch(`${SERVER_URL}/run/${runid}/sensor/orientation?accelerometerid=${accelerometerid}&gyroscopeid=${gyroscopeid}&magnetometerid=${magnetometerid}`, {
+            headers: getAuthHeaders(),
+            credentials: 'include',
+        });
         if (!response.ok) throw new Error('Network response was not ok');
         const data = await response.json();
         return data;

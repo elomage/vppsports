@@ -2,12 +2,21 @@ import { useState, useEffect, useMemo } from 'react'
 import Plot from 'react-plotly.js'
 import './PlotlyGraphvisualizer2.css'
 
-const SERVER_URL = "http://localhost:8081";
+const SERVER_URL = "http://localhost:8080";
+const ACCESS_TOKEN_STORAGE_KEY = "vppsports_access_token";
+
+const getAuthHeaders = () => {
+    const token = window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+    return token ? { Authorization: `Bearer ${token}` } : {};
+};
 
 const fetchSensorData = async (runid, sensorid) => {
     try {
         // console.log('fetching data for run:', runid, 'sensor:', sensorid);
-        const response = await fetch(`${SERVER_URL}/run/${runid}/sensor/${sensorid}/data`);
+        const response = await fetch(`${SERVER_URL}/run/${runid}/sensor/${sensorid}/data`, {
+            headers: getAuthHeaders(),
+            credentials: 'include',
+        });
         if (!response.ok) throw new Error('Network response was not ok');
         const data = await response.json();
         return data;
@@ -19,7 +28,10 @@ const fetchSensorData = async (runid, sensorid) => {
 const fetchFilteredSensorData = async (runid, sensorid, filters) => {
   try{
     // filters should be a comma-separated string, e.g. "kalman,movingaverage"
-    const response = await fetch(`${SERVER_URL}/run/${runid}/sensor/${sensorid}/data?filters=${encodeURIComponent(filters)}`)
+    const response = await fetch(`${SERVER_URL}/run/${runid}/sensor/${sensorid}/data?filters=${encodeURIComponent(filters)}`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    })
     if (!response.ok) throw new Error('Network response was not ok');
     const data = await response.json();
     return data;
@@ -30,7 +42,10 @@ const fetchFilteredSensorData = async (runid, sensorid, filters) => {
 
 const fetchRunSensors = async (runid) => {
     try {
-        const response = await fetch(`${SERVER_URL}/run/${runid}/sensor`);
+        const response = await fetch(`${SERVER_URL}/run/${runid}/sensor`, {
+            headers: getAuthHeaders(),
+            credentials: 'include',
+        });
         if (!response.ok) throw new Error('Network response was not ok');
         const data = await response.json();
         return data;

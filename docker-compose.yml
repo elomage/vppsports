@@ -1,0 +1,39 @@
+services:
+  backend:
+    build:
+      context: ./src/server
+      dockerfile: Dockerfile
+    container_name: vppsport-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - MONGODB_URI=${MONGODB_URI}
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080,http://127.0.0.1:3000
+      - NODE_ENV=production
+    networks:
+      - vppsport-network
+
+  frontend:
+    build:
+      context: ./src/client
+      dockerfile: Dockerfile
+      args:
+        - VITE_SERVER_URL=http://localhost:8080
+    container_name: vppsport-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - vppsport-network
+
+networks:
+  vppsport-network:
+    driver: bridge
