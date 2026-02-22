@@ -30,7 +30,7 @@ app.use(cors());
 
 app.use(express.static(path.join(__dirname, "public")));
 
-app.use(bodyParser.raw({ type: "application/octet-stream" }));
+app.use(bodyParser.raw({ type: "application/octet-stream", limit: "50mb" }));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

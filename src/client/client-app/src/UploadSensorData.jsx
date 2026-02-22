@@ -55,7 +55,7 @@ const UploadSensorData = () => {
       <div className="upload-card">
         <h2>Upload Sensor Data</h2>
         <p className="upload-hint">
-          Upload a sensor export in .BIN format. The backend endpoint is not ready yet, so you may see a temporary error.
+          Upload a sensor export in .BIN format to create a new run.
         </p>
         <form className="upload-form" onSubmit={handleUpload}>
           <input

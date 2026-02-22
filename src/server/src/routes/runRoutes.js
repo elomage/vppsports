@@ -7,6 +7,22 @@ const runController = require("../controllers/runController");
 const trackController = require("../controllers/trackController");
 const driverController = require("../controllers/driverController");
 const { parseApiDataObject } = require("../controllers/sensorDataController");
+const { connectDB, getCollection } = require("../config/db");
+const { ObjectId } = require("mongodb");
+
+const RECORD_SIZE_BYTES = 16;
+const DEFAULT_SENSITIVITY = 19.5;
+const DEFAULT_SENSOR_ID = 3;
+
+const parseNumber = (value, fallback) => {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const parseInteger = (value, fallback) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
 
 runRouter.use("/:runid/sensor", sensorRouter);
 sensorRouter.use("/:sensorid", sensorDataRouter);
@@ -67,6 +83,185 @@ runRouter.get("/:runid", async (req, res) => {
     res
       .status(500)
       .json({ message: "Error fetching run", error: error.message });
+  }
+});
+
+runRouter.post("/upload", async (req, res) => {
+  try {
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({
+        message: "Upload requires application/octet-stream body with .BIN data.",
+      });
+    }
+
+    if (req.body.length % RECORD_SIZE_BYTES !== 0) {
+      return res.status(400).json({
+        message: `Invalid .BIN length (${req.body.length}). Expected multiple of ${RECORD_SIZE_BYTES}.`,
+      });
+    }
+
+    const {
+      driverName,
+      driverAge,
+      licenseNumber,
+      trackName,
+      trackLocation,
+      trackLength,
+      driverId,
+      trackId,
+      runDate,
+      runTime,
+      sensorId,
+      sensX,
+      sensY,
+      sensZ,
+    } = req.query;
+
+    const db = await connectDB();
+    const runsColl = await getCollection(db, "runs");
+    const driversColl = await getCollection(db, "drivers");
+    const tracksColl = await getCollection(db, "tracks");
+    const sensorReadingsColl = await getCollection(db, "sensor_readings");
+
+    let resolvedDriverId = null;
+    if (driverId) {
+      try {
+        resolvedDriverId = new ObjectId(driverId);
+      } catch (err) {
+        return res.status(400).json({ message: "Invalid driverId." });
+      }
+      const existingDriver = await driversColl.findOne({
+        _id: resolvedDriverId,
+      });
+      if (!existingDriver) {
+        return res.status(400).json({ message: "driverId not found." });
+      }
+    } else {
+      const resolvedLicense =
+        (licenseNumber && String(licenseNumber).trim()) || "UNKNOWN";
+      let driver = await driversColl.findOne({
+        licenseNumber: resolvedLicense,
+      });
+      if (!driver) {
+        const driverResult = await driversColl.insertOne({
+          name: (driverName && String(driverName).trim()) || "Unknown Driver",
+          age: parseInteger(driverAge, 0),
+          licenseNumber: resolvedLicense,
+        });
+        driver = { _id: driverResult.insertedId };
+      }
+      resolvedDriverId = driver._id;
+    }
+
+    let resolvedTrackId = null;
+    if (trackId) {
+      try {
+        resolvedTrackId = new ObjectId(trackId);
+      } catch (err) {
+        return res.status(400).json({ message: "Invalid trackId." });
+      }
+      const existingTrack = await tracksColl.findOne({
+        _id: resolvedTrackId,
+      });
+      if (!existingTrack) {
+        return res.status(400).json({ message: "trackId not found." });
+      }
+    } else {
+      const resolvedTrackName =
+        (trackName && String(trackName).trim()) || "Unknown Track";
+      let track = await tracksColl.findOne({ name: resolvedTrackName });
+      if (!track) {
+        const trackResult = await tracksColl.insertOne({
+          name: resolvedTrackName,
+          length: parseInteger(trackLength, 0),
+          location:
+            (trackLocation && String(trackLocation).trim()) || "Unknown",
+        });
+        track = { _id: trackResult.insertedId };
+      }
+      resolvedTrackId = track._id;
+    }
+
+    const parsedRunDate = runDate ? new Date(runDate) : new Date();
+    if (Number.isNaN(parsedRunDate.getTime())) {
+      return res.status(400).json({ message: "Invalid runDate." });
+    }
+
+    const timeOverride = runTime !== undefined ? parseInteger(runTime, 0) : null;
+    const runId = new ObjectId();
+
+    await runsColl.insertOne({
+      _id: runId,
+      date: parsedRunDate,
+      driverId: resolvedDriverId,
+      trackId: resolvedTrackId,
+      time: timeOverride ?? 0,
+    });
+
+    const sensitivityX = parseNumber(sensX, DEFAULT_SENSITIVITY);
+    const sensitivityY = parseNumber(sensY, DEFAULT_SENSITIVITY);
+    const sensitivityZ = parseNumber(sensZ, DEFAULT_SENSITIVITY);
+    const resolvedSensorId = parseInteger(sensorId, DEFAULT_SENSOR_ID);
+
+    let firstTimestamp = null;
+    let lastTimestamp = null;
+    const batch = [];
+    const batchSize = 1000;
+
+    const flushBatch = async () => {
+      if (batch.length === 0) return;
+      await sensorReadingsColl.insertMany(batch);
+      batch.length = 0;
+    };
+
+    for (let offset = 0; offset < req.body.length; offset += RECORD_SIZE_BYTES) {
+      const tsUs = req.body.readUInt32LE(offset);
+      const x = req.body.readInt32LE(offset + 4);
+      const y = req.body.readInt32LE(offset + 8);
+      const z = req.body.readInt32LE(offset + 12);
+
+      const timestampSeconds = tsUs / 1_000_000.0;
+      if (firstTimestamp === null) firstTimestamp = timestampSeconds;
+      lastTimestamp = timestampSeconds;
+
+      const xG = (x * sensitivityX) / 1_000_000.0;
+      const yG = (y * sensitivityY) / 1_000_000.0;
+      const zG = (z * sensitivityZ) / 1_000_000.0;
+
+      batch.push({
+        runId: runId,
+        sensorId: resolvedSensorId,
+        timestamp: timestampSeconds,
+        data: [xG, yG, zG],
+      });
+
+      if (batch.length >= batchSize) {
+        await flushBatch();
+      }
+    }
+
+    await flushBatch();
+
+    if (timeOverride === null && firstTimestamp !== null) {
+      const derivedSeconds = Math.max(
+        0,
+        Math.round(lastTimestamp - firstTimestamp)
+      );
+      await runsColl.updateOne(
+        { _id: runId },
+        { $set: { time: derivedSeconds } }
+      );
+    }
+
+    return res.status(201).json({
+      message: "Run uploaded successfully.",
+      runId,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Error uploading run.",
+      error: error.message,
+    });
   }
 });
 

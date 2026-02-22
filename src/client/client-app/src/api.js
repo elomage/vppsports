@@ -28,13 +28,23 @@ export async function fetchRunVideo(videoName) {
   return response;
 }
 
-export async function uploadSensorDataBin(file) {
-  const formData = new FormData();
-  formData.append("file", file);
+export async function uploadSensorDataBin(file, options = {}) {
+  const params = new URLSearchParams();
+  Object.entries(options).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      params.append(key, value);
+    }
+  });
 
-  const response = await fetch(`${SERVER_URL}/sensor-data/upload`, {
+  const query = params.toString();
+  const uploadUrl = `${SERVER_URL}/run/upload${query ? `?${query}` : ""}`;
+
+  const response = await fetch(uploadUrl, {
     method: "POST",
-    body: formData,
+    headers: {
+      "Content-Type": "application/octet-stream",
+    },
+    body: await file.arrayBuffer(),
   });
 
   if (!response.ok) {
