@@ -3,8 +3,11 @@ import './App.css'
 import Dashboard from './Dashboard'
 import RunControl from './Runcontrol'
 import UploadSensorData from './UploadSensorData'
+import AuthPage from './AuthPage'
+import { initializeSession, logout, setAuthFailureHandler } from './api'
 
 function App() {
+  const [authState, setAuthState] = useState('checking');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [dashboards, setDashboards] = useState([{ id: 1, flexGrow: 1 }]);
   const [dashboardRuns, setDashboardRuns] = useState({}); // Track selectedRun per dashboard
@@ -46,6 +49,41 @@ function App() {
     }));
   };
 
+  useEffect(() => {
+    const boot = async () => {
+      const ok = await initializeSession();
+      setAuthState(ok ? 'authenticated' : 'unauthenticated');
+    };
+
+    boot();
+    setAuthFailureHandler(() => setAuthState('unauthenticated'));
+    return () => setAuthFailureHandler(null);
+  }, []);
+
+  const handleAuthenticated = () => {
+    setAuthState('authenticated');
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    setDashboards([{ id: 1, flexGrow: 1 }]);
+    setDashboardRuns({});
+    setActiveTab('dashboard');
+    setAuthState('unauthenticated');
+  };
+
+  if (authState === 'checking') {
+    return (
+      <div className="auth-loading">
+        Checking authentication...
+      </div>
+    );
+  }
+
+  if (authState !== 'authenticated') {
+    return <AuthPage onAuthenticated={handleAuthenticated} />;
+  }
+
   return (
     <>
       <div className="top-bar">
@@ -71,6 +109,16 @@ function App() {
               disabled={dashboards.length >= MAX_DASHBOARDS}
             >
               Add Run {dashboards.length >= MAX_DASHBOARDS && '(Max reached)'}
+            </button>
+            <button className="btn btn-outline-danger" onClick={handleLogout}>
+              Logout
+            </button>
+          </div>
+        )}
+        {activeTab !== 'dashboard' && (
+          <div className="top-bar__actions">
+            <button className="btn btn-outline-danger" onClick={handleLogout}>
+              Logout
             </button>
           </div>
         )}

@@ -10,7 +10,12 @@ const RunControl = ({ setSelectedRun }) => {
   const [loadingRun, setLoadingRun] = useState(false); // add
 
   useEffect(() => {
-    fetchRuns(dateFrom, dateTo).then(setRuns);
+    fetchRuns(dateFrom, dateTo)
+      .then(setRuns)
+      .catch((err) => {
+        console.error('Failed to fetch runs', err);
+        setRuns([]);
+      });
   }, [dateFrom, dateTo]);
 
   const handleRunChange = async (event) => {
@@ -36,7 +41,12 @@ const RunControl = ({ setSelectedRun }) => {
 
   const handleSubmit = (event) => {
     event.preventDefault();
-    fetchRuns(dateFrom, dateTo).then(setRuns);
+    fetchRuns(dateFrom, dateTo)
+      .then(setRuns)
+      .catch((err) => {
+        console.error('Failed to fetch runs', err);
+        setRuns([]);
+      });
   };
 
   return (

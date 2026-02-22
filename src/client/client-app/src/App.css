@@ -49,6 +49,16 @@
   overflow: hidden;
 }
 
+.auth-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  color: #2a4a68;
+  background: #edf4fb;
+}
+
 .top-bar {
   padding: 10px 20px;
   background-color: #f8f9fa;
