@@ -228,6 +228,51 @@ export async function fetchRunVideo(videoName, retry = true) {
   return response;
 }
 
+export async function checkRunVideoExists(videoName, retry = true) {
+  if (!videoName) return false;
+
+  const headers = {};
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+
+  const response = await fetch(`${SERVER_URL}/video/${videoName}`, {
+    method: "HEAD",
+    headers,
+    credentials: "include",
+  });
+
+  if (response.status === 401 && retry) {
+    try {
+      await refreshAccessToken();
+      return checkRunVideoExists(videoName, false);
+    } catch (error) {
+      notifyAuthFailure();
+      throw error;
+    }
+  }
+
+  if (response.status === 401) {
+    notifyAuthFailure();
+    throw new UnauthorizedError();
+  }
+
+  if (response.status === 404) {
+    return false;
+  }
+
+  if (!response.ok) {
+    const payload = await parseResponse(response);
+    const message =
+      typeof payload === "string"
+        ? payload
+        : payload?.message || "Failed to check video availability";
+    throw new Error(message);
+  }
+
+  return true;
+}
+
 export async function uploadSensorDataBin(file, options = {}) {
   const params = new URLSearchParams();
   Object.entries(options).forEach(([key, value]) => {

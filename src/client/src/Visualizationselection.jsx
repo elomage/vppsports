@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './Visualizationselection.css';
+import { checkRunVideoExists } from './api';
 
 const componentsMap = {
     info: React.lazy(() => import('./Infovisualizer')),
@@ -15,6 +16,7 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
         { id: 2, type: 'video', flexGrow: 1 },
         { id: 3, type: 'model', flexGrow: 1 },
     ]);
+    const [hasVideoForRun, setHasVideoForRun] = useState(true);
     const [containerSize, setContainerSize] = useState({ width: window.innerWidth, height: window.innerHeight });
 
     const addComponent = (value) => {
@@ -35,6 +37,48 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
     };
 
     const graphCount = selectedComponent.filter(component => component.type === 'graph').length || 1;
+
+    useEffect(() => {
+        let isCancelled = false;
+
+        const updateVideoAvailability = async () => {
+            if (!selectedRun?._id) {
+                if (!isCancelled) {
+                    setHasVideoForRun(false);
+                    setSelectedComponent((prev) => prev.filter((component) => component.type !== 'video'));
+                }
+                return;
+            }
+
+            try {
+                const hasVideo = await checkRunVideoExists(selectedRun._id);
+                if (isCancelled) return;
+
+                setHasVideoForRun(hasVideo);
+                if (!hasVideo) {
+                    setSelectedComponent((prev) => prev.filter((component) => component.type !== 'video'));
+                } else {
+                    setSelectedComponent((prev) => {
+                        const hasVideoComponent = prev.some((component) => component.type === 'video');
+                        if (hasVideoComponent) return prev;
+                        return [...prev, { id: Date.now(), type: 'video', flexGrow: 1 }];
+                    });
+                }
+            } catch (error) {
+                if (isCancelled) return;
+
+                // Fail closed: hide video component if availability check fails.
+                setHasVideoForRun(false);
+                setSelectedComponent((prev) => prev.filter((component) => component.type !== 'video'));
+            }
+        };
+
+        updateVideoAvailability();
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [selectedRun?._id]);
 
     useEffect(() => {
         const handleResize = () => {
@@ -68,15 +112,17 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
             <div className='flex gap-4'>
                 {/* <button className='btn btn-primary' onClick={() => addComponent('info')} style={{margin: '5px'}}>Add Info</button> */}
                 <button className='btn btn-primary' onClick={() => addComponent('graph')} style={{margin: '5px'}}>Add Graph</button>
-                <button className='btn btn-primary' onClick={() => addComponent('video')} style={{margin: '5px'}}>Add Video</button>
+                {hasVideoForRun && (
+                    <button className='btn btn-primary' onClick={() => addComponent('video')} style={{margin: '5px'}}>Add Video</button>
+                )}
                 <button className='btn btn-primary' onClick={() => addComponent('model')} style={{margin: '5px'}}>Add Model</button>
             </div>
             <div className='flex flex-col items-center p-6' id='visualization-component-wrapper' style={{ '--graph-count': graphCount }}>
                 <div className='flex flex-wrap' style={{ flex: 1, width: '100%' }}>
-                    {selectedComponent.map((component, index) => {
+                    {selectedComponent.filter((component) => component.type !== 'video' || hasVideoForRun).map((component, index, visibleComponents) => {
                         const Component = componentsMap[component.type];
                         const wrapperClass = component.type === 'graph' ? 'graph-wrapper' : component.type === 'model' ? 'model-wrapper' : component.type === 'video' ? 'video-wrapper' : 'component-wrapper';
-                        const isLastComponent = index === selectedComponent.length - 1;
+                        const isLastComponent = index === visibleComponents.length - 1;
                         
                         return (
                             <React.Fragment key={component.id}>
@@ -109,14 +155,14 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
                                     </button>
                                 </div>
                                 {!isLastComponent && (
-                                    <ResizeHandle
-                                        leftComponent={component}
-                                        rightComponent={selectedComponent[index + 1]}
-                                        onResize={(leftGrow, rightGrow) => {
-                                            updateFlexGrow(component.id, leftGrow);
-                                            updateFlexGrow(selectedComponent[index + 1].id, rightGrow);
-                                        }}
-                                    />
+                                        <ResizeHandle
+                                            leftComponent={component}
+                                            rightComponent={visibleComponents[index + 1]}
+                                            onResize={(leftGrow, rightGrow) => {
+                                                updateFlexGrow(component.id, leftGrow);
+                                            updateFlexGrow(visibleComponents[index + 1].id, rightGrow);
+                                            }}
+                                        />
                                 )}
                             </React.Fragment>
                         );

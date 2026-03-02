@@ -1,15 +1,15 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { fetchRunVideo } from './api'; // Adjust the path as needed
-import throttle from 'lodash/throttle';
 
 const VideoVisualizer = ({ selectedRun, sliderValue, setSliderValue }) => {
   const [videoUrl, setVideoUrl] = useState('');
+  const [videoError, setVideoError] = useState(null);
 
   // const videoName = 'sample.mp4'; // Change this to your desired video file name
   // const videoName = 'VijoleSample.mp4'; // Change this to your desired video file name
 
 
-  const videoName = selectedRun._id; // Change this to your desired video file name
+  const videoName = selectedRun?._id; // Change this to your desired video file name
 
   const videoRef = useRef(null);
 
@@ -39,17 +39,39 @@ const VideoVisualizer = ({ selectedRun, sliderValue, setSliderValue }) => {
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
 
   useEffect(() => {
+    if (!videoName) {
+      setVideoUrl('');
+      setVideoError('No video available for this run');
+      return undefined;
+    }
+
+    let objectUrl = null;
+    let isCancelled = false;
+
     async function getVideo() {
       try {
+        setVideoError(null);
         const response = await fetchRunVideo(videoName);
         const videoBlob = await response.blob();
-        const url = URL.createObjectURL(videoBlob);
-        setVideoUrl(url);
+        objectUrl = URL.createObjectURL(videoBlob);
+        if (!isCancelled) {
+          setVideoUrl(objectUrl);
+        }
       } catch (error) {
+        if (isCancelled) return;
         console.error('Error fetching video:', error);
+        setVideoUrl('');
+        setVideoError(error.message);
       }
     }
     getVideo();
+
+    return () => {
+      isCancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
   }, [videoName]);
 
   //Update video position based on sliderValue and sampleRate.
@@ -143,7 +165,7 @@ useEffect(() => {
 
   return (
     <>
-      {videoUrl ? (
+      {videoUrl && !videoError ? (
         <>
           <video ref={videoRef} controls src={videoUrl}>
             Your browser does not support the video tag.
@@ -169,7 +191,7 @@ useEffect(() => {
           </div>
         </>
       ) : (
-        <p>Loading video...</p>
+        <p>{videoError ? `Error loading video: ${videoError}` : "Loading video..."}</p>
       )}
       </>
   );
