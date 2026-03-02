@@ -65,7 +65,9 @@ const RunControl = ({ setSelectedRun }) => {
       >
         <option value="null">Select Run</option>
         {runs.map((run) => (
-          <option key={run._id} value={run._id}>{run._id}</option>
+          <option key={run._id} value={run._id}>
+            {run.name || `Run ${run._id}`}
+          </option>
         ))}
       </select>
 

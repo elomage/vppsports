@@ -6,6 +6,16 @@ const savitzkyGolay = require("ml-savitzky-golay").default;
 
 const sensitivity = 19.5;
 
+const ensureRunName = (run) => {
+  if (!run) return run;
+  const fallbackId = run._id ? String(run._id) : "Unknown";
+  run.name =
+    run.name && String(run.name).trim()
+      ? String(run.name).trim()
+      : `Run ${fallbackId}`;
+  return run;
+};
+
 const convertToG = (raw_reading, sensitivity) => {
   return (raw_reading * sensitivity) / 1000000.0;
 };
@@ -33,6 +43,7 @@ const getAllRuns = async () => {
     // const runs = await runService.getAllRuns();
     const runs = await runService.getAllRunsDB();
     runs.forEach((run) => {
+      ensureRunName(run);
       if (run.date) {
         run.date = run.date.toGMTString();
       } else {
@@ -93,6 +104,7 @@ const getSingleRun = async (runid) => {
 const getSingleRunDB = async (runid) => {
   try {
     let run = await runService.getSingleRunDB(runid);
+    run = ensureRunName(run);
 
     const sensorData = await runService.getRunSensorReadingsAll(runid);
 
@@ -144,8 +156,11 @@ const getSingleRunDB = async (runid) => {
     //     .readings.map((r) => r.timestamp)
     // )
 
+    const runObject =
+      run && typeof run.toObject === "function" ? run.toObject() : run;
+
     const response = {
-      ...run.toObject(), // Convert mongoose document to plain object
+      ...runObject,
       data: sensorData,
       orientationData: orientationData,
       totalTimestamps: totalTimestamps,
@@ -517,6 +532,7 @@ const filterRunsByDate = async (dateFrom, dateTo) => {
     includeDateTo.setDate(includeDateTo.getDate() + 1);
     const runs = await runService.filterRunsByDate(dateFrom, includeDateTo);
     runs.forEach((run) => {
+      ensureRunName(run);
       run.date = run.date.toGMTString();
     });
     return runs;

@@ -57,6 +57,7 @@ const collections = [
     documents: [
       {
         _id: run1Id,
+        name: "Run 1",
         driverId: driver1Id,
         trackId: track1Id,
         time: 120,
@@ -64,6 +65,7 @@ const collections = [
       },
       {
         _id: run2Id,
+        name: "Run 2",
         driverId: driver2Id,
         trackId: track2Id,
         time: 150,

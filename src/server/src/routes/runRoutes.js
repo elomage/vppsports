@@ -86,6 +86,51 @@ runRouter.get("/:runid", async (req, res) => {
   }
 });
 
+runRouter.delete("/:runid", async (req, res) => {
+  try {
+    const runid = req.params.runid;
+    let runObjectId;
+
+    try {
+      runObjectId = new ObjectId(runid);
+    } catch (err) {
+      return res.status(400).json({ message: "Invalid run id." });
+    }
+
+    const db = await connectDB();
+    const runsColl = await getCollection(db, "runs");
+    const sensorReadingsColl = await getCollection(db, "sensor_readings");
+
+    const existingRun = await runsColl.findOne({ _id: runObjectId });
+    if (!existingRun) {
+      return res.status(404).json({ message: "Run not found." });
+    }
+
+    const sensorDeleteResult = await sensorReadingsColl.deleteMany({
+      runId: runObjectId,
+    });
+    const runDeleteResult = await runsColl.deleteOne({ _id: runObjectId });
+
+    if (runDeleteResult.deletedCount !== 1) {
+      return res.status(500).json({
+        message: "Failed to delete run record.",
+      });
+    }
+
+    return res.status(200).json({
+      message: "Run and related sensor readings deleted successfully.",
+      runId: runid,
+      deletedRuns: runDeleteResult.deletedCount,
+      deletedSensorReadings: sensorDeleteResult.deletedCount,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Error deleting run.",
+      error: error.message,
+    });
+  }
+});
+
 runRouter.post("/upload", async (req, res) => {
   try {
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
@@ -101,6 +146,8 @@ runRouter.post("/upload", async (req, res) => {
     }
 
     const {
+      name,
+      runName,
       driverName,
       driverAge,
       licenseNumber,
@@ -188,10 +235,12 @@ runRouter.post("/upload", async (req, res) => {
     }
 
     const timeOverride = runTime !== undefined ? parseInteger(runTime, 0) : null;
+    const resolvedRunName = String(name || runName || "").trim();
     const runId = new ObjectId();
 
     await runsColl.insertOne({
       _id: runId,
+      name: resolvedRunName || `Run ${runId.toString()}`,
       date: parsedRunDate,
       driverId: resolvedDriverId,
       trackId: resolvedTrackId,
@@ -256,6 +305,7 @@ runRouter.post("/upload", async (req, res) => {
     return res.status(201).json({
       message: "Run uploaded successfully.",
       runId,
+      name: resolvedRunName || `Run ${runId.toString()}`,
     });
   } catch (error) {
     return res.status(500).json({

@@ -4,6 +4,7 @@ import { uploadSensorDataBin } from './api';
 
 const UploadSensorData = () => {
   const [selectedFile, setSelectedFile] = useState(null);
+  const [runName, setRunName] = useState('');
   const [status, setStatus] = useState({ type: 'idle', message: '' });
   const [isUploading, setIsUploading] = useState(false);
   const [inputKey, setInputKey] = useState(0);
@@ -33,14 +34,20 @@ const UploadSensorData = () => {
       setStatus({ type: 'error', message: 'Choose a .BIN file before uploading.' });
       return;
     }
+    const trimmedRunName = runName.trim();
+    if (!trimmedRunName) {
+      setStatus({ type: 'error', message: 'Enter a run name before uploading.' });
+      return;
+    }
 
     setIsUploading(true);
     setStatus({ type: 'info', message: 'Uploading file...' });
 
     try {
-      await uploadSensorDataBin(selectedFile);
+      await uploadSensorDataBin(selectedFile, { name: trimmedRunName });
       setStatus({ type: 'success', message: 'Upload complete. The backend will ingest the data when available.' });
       setSelectedFile(null);
+      setRunName('');
       setInputKey((prev) => prev + 1);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Upload failed. Please try again.';
@@ -59,6 +66,14 @@ const UploadSensorData = () => {
         </p>
         <form className="upload-form" onSubmit={handleUpload}>
           <input
+            className="form-control"
+            type="text"
+            value={runName}
+            maxLength={120}
+            onChange={(event) => setRunName(event.target.value)}
+            placeholder="Run name"
+          />
+          <input
             key={inputKey}
             className="form-control"
             type="file"
@@ -71,7 +86,11 @@ const UploadSensorData = () => {
             </div>
           )}
           <div className="upload-actions">
-            <button className="btn btn-primary" type="submit" disabled={!selectedFile || isUploading}>
+            <button
+              className="btn btn-primary"
+              type="submit"
+              disabled={!selectedFile || !runName.trim() || isUploading}
+            >
               {isUploading ? 'Uploading...' : 'Upload'}
             </button>
             <button
@@ -79,6 +98,7 @@ const UploadSensorData = () => {
               type="button"
               onClick={() => {
                 setSelectedFile(null);
+                setRunName('');
                 setStatus({ type: 'idle', message: '' });
                 setInputKey((prev) => prev + 1);
               }}

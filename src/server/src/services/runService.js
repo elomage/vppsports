@@ -4,6 +4,7 @@ const { MongoClient } = require("mongodb");
 const { default: mongoose } = require("mongoose");
 
 const runSchema = new mongoose.Schema({
+  name: { type: String, required: true, default: "" },
   date: { type: Date, required: true, default: Date.now },
   sensorCount: { type: Number, default: 0 },
   description: { type: String, default: "" },
@@ -334,7 +335,10 @@ const getAllRunsDB = async () => {
   // return result;
 
   // return await Run.find({});
-  return await Run.find({}, { _id: 1, date: 1 }).sort({ date: -1 });
+  const runs = await Run.find({}, { _id: 1, date: 1, name: 1 }).sort({
+    date: -1,
+  });
+  return runs.map(withRunName);
 };
 
 /**
@@ -349,7 +353,8 @@ const getSingleRunDB = async (runid) => {
   // const objectId = new ObjectId(String(runid));
   // const result = await coll.findOne({ _id: objectId });
 
-  return await Run.findById(runid);
+  const run = await Run.findById(runid);
+  return withRunName(run);
 };
 
 /**
@@ -361,7 +366,7 @@ const getSingleRunDB = async (runid) => {
  */
 const filterRunsByDateDB = async (dateFrom, dateTo) => {
   const db = await connectDB();
-  const coll = await getCollection(db, "Run");
+  const coll = await getCollection(db, "runs");
   const result = await coll
     .find(
       {
@@ -370,10 +375,11 @@ const filterRunsByDateDB = async (dateFrom, dateTo) => {
           $lte: new Date(dateTo),
         },
       },
-      { projection: { _id: 1, date: 1 } }
+      { projection: { _id: 1, date: 1, name: 1 } }
     )
+    .sort({ date: -1 })
     .toArray();
-  return result;
+  return result.map(withRunName);
 };
 
 /**
@@ -384,20 +390,7 @@ const filterRunsByDateDB = async (dateFrom, dateTo) => {
  * @returns {Promise<Array>} A promise that resolves to an array of runs within the specified date range.
  */
 const filterRunsByDate = async (dateFrom, dateTo) => {
-  const db = await connectDB();
-  const coll = await getCollection(db, "Run");
-  const result = await coll
-    .find(
-      {
-        date: {
-          $gte: new Date(dateFrom),
-          $lte: new Date(dateTo),
-        },
-      },
-      { projection: { _id: 1, date: 1 } }
-    )
-    .toArray();
-  return result;
+  return filterRunsByDateDB(dateFrom, dateTo);
 };
 
 const getRunSensorReadingsAll = async (runid) => {
@@ -581,7 +574,7 @@ const createRun = async (run) => {
     session.startTransaction();
 
     try {
-      const runDocument = { date: new Date() };
+      const runDocument = { name: "Unnamed Run", date: new Date() };
       const runResult = await runColl.insertOne(runDocument);
       const runId = runResult.insertedId;
 
@@ -635,4 +628,16 @@ module.exports = {
   getRunSensorReadings,
   getRunSensorReadingsAll,
   getRunSensors,
+};
+const withRunName = (run) => {
+  if (!run) return run;
+  const normalized =
+    typeof run.toObject === "function" ? run.toObject() : { ...run };
+  const fallbackId =
+    normalized && normalized._id ? String(normalized._id) : "Unknown";
+  normalized.name =
+    normalized.name && String(normalized.name).trim()
+      ? String(normalized.name).trim()
+      : `Run ${fallbackId}`;
+  return normalized;
 };
