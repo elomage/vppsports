@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './PlaybackControl.css';
 
 const PlaybackControl = ({ selectedRun, setSliderValue }) => {
@@ -6,11 +6,24 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
     const [isPlaying, setIsPlaying] = useState(false);
     // const [currentTime, setCurrentTime] = useState(selectedRun.data[0].readings[0].timestamp);
     const [currentTime, setCurrentTime] = useState(selectedRun.totalTimestamps[0]);
+    const animationFrameRef = useRef(null);
+    const pendingSliderValueRef = useRef(0);
+
+    const flushSliderValue = useCallback(() => {
+        animationFrameRef.current = null;
+        setSliderValue(pendingSliderValueRef.current);
+    }, [setSliderValue]);
+
+    const scheduleSliderUpdate = useCallback((value) => {
+        pendingSliderValueRef.current = value;
+        if (animationFrameRef.current !== null) return;
+        animationFrameRef.current = requestAnimationFrame(flushSliderValue);
+    }, [flushSliderValue]);
 
     const handleInput = (event) => {
         const value = parseInt(event.target.value, 10);
         setLocalSliderValue(value);
-        setSliderValue(value);
+        scheduleSliderUpdate(value);
         setIsPlaying(false);
         setCurrentTime(selectedRun.totalTimestamps[value]);
 
@@ -26,7 +39,7 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
 
     const resetPlayback = () => {
         setLocalSliderValue(0);
-        setSliderValue(0);
+        scheduleSliderUpdate(0);
         setIsPlaying(false);
         setCurrentTime(selectedRun.totalTimestamps[0]);
     };
@@ -34,7 +47,7 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
     const prevFrame = () => {
         setLocalSliderValue((prevValue) => {
             const newValue = Math.max(prevValue - 1, 0);
-            setSliderValue(newValue);
+            scheduleSliderUpdate(newValue);
             // setCurrentTime(selectedRun.data[0].readings[newValue].timestamp);
             setCurrentTime(selectedRun.totalTimestamps[newValue]);
             return newValue;
@@ -45,7 +58,7 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
     const nextFrame = () => {
         setLocalSliderValue((prevValue) => {
             const newValue = Math.min(prevValue + 1, selectedRun.totalTimestamps.length - 1);
-            setSliderValue(newValue);
+            scheduleSliderUpdate(newValue);
             setCurrentTime(selectedRun.totalTimestamps[newValue]);
             return newValue;
         });
@@ -59,7 +72,7 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
             interval = setInterval(() => {
                 setLocalSliderValue((prevValue) => {
                     const newValue = Math.min(prevValue + speed, selectedRun.totalTimestamps.length - 1);
-                    setSliderValue(newValue);
+                    scheduleSliderUpdate(newValue);
                     setCurrentTime(selectedRun.totalTimestamps[newValue]);
                     return newValue;
                 });
@@ -68,7 +81,7 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
             clearInterval(interval);
         }
         return () => clearInterval(interval);
-    }, [isPlaying, selectedRun.totalTimestamps.length, setSliderValue]);
+    }, [isPlaying, selectedRun.totalTimestamps.length, scheduleSliderUpdate]);
 
     useEffect(() => {
         if (!isPlaying) {
@@ -76,6 +89,12 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
             setCurrentTime(selectedRun.totalTimestamps[sliderValue]);
         }
     }, [sliderValue, isPlaying, selectedRun.orientationData]);
+
+    useEffect(() => () => {
+        if (animationFrameRef.current !== null) {
+            cancelAnimationFrame(animationFrameRef.current);
+        }
+    }, []);
 
     // const formatTime = (timeInSeconds) => {
     //     const ms = Math.floor(timeInSeconds * 1000);

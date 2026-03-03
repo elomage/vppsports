@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import Plot from 'react-plotly.js'
 import './PlotlyGraphvisualizer2.css'
 
@@ -183,8 +183,8 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
   };
 
   const UIREVISION_VALUE = "keep"
-
-  const [graphLayout, setGraphLayout] = useState({
+  const plotRef = useRef(null);
+  const graphLayout = useMemo(() => ({
       autosize: true,
       dragmode: 'pan',
       margin: { l: 0, r: 10, t: 30, b: 0 },
@@ -196,24 +196,9 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
           }
       },
       uirevision: UIREVISION_VALUE,
-      shapes: [
-          {
-              type: 'line',
-              x0: '',
-              x1: '',
-              y0: 0,
-              y1: 1,
-              xref: 'x',
-              yref: 'paper',
-              line: {
-                  color: 'red',
-                  width: 2,
-                  dash: 'dashdot'
-              }
-          },
-      ],
+      shapes: [],
       annotations: [] 
-  })
+  }), [])
 
   const formatTime = (timeInNanoseconds) => {
       // Convert nanoseconds to milliseconds
@@ -340,21 +325,18 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
     };
 
     fetchData();
-  }, [selectedRun?._id, useFilteredData, selectedFilters, selectedSensors, sensorDataCache]); // Added sensorDataCache dependency
+  }, [selectedRun?._id, useFilteredData, selectedFilters, selectedSensors, sensorDataCache.raw, sensorDataCache.filtered]); // Added sensorDataCache dependency
 
   // Recompute traces when toggle changes
   const plotData = useMemo(() => {
-    if (!selectedRun || !sensorReadings.length || !Array.isArray(selectedRun.totalTimestamps)) return [];
+    if (!selectedRun || !Array.isArray(selectedRun.totalTimestamps)) return [];
+    if (!selectedSensors.length || Object.keys(sensorAlignedData).length === 0) return [];
 
     const sensorTraces = [];
-    const baseTs = selectedRun.totalTimestamps;
 
-    sensorReadings.forEach((sensorData, index) => {
-      if (!Array.isArray(sensorData) || sensorData.length === 0) return;
-      const aligned = alignReadingsToTimeline(baseTs, sensorData);
-      
-      // Use the actual sensor ID for the label
-      const sensorId = selectedSensors[index];
+    selectedSensors.forEach((sensorId) => {
+      const aligned = sensorAlignedData[sensorId];
+      if (!aligned) return;
 
       sensorTraces.push(
         {
@@ -391,7 +373,7 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
     });
 
     return sensorTraces;
-  }, [selectedRun, sensorReadings, useFilteredData, selectedSensors])
+  }, [selectedRun, sensorAlignedData, useFilteredData, selectedSensors])
 
   // Modify the layout update effect to use aligned sensor data
   useEffect(() => {
@@ -478,11 +460,12 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
         });
     });
 
-    setGraphLayout(prev => ({
-        ...prev,
+    if (plotRef.current) {
+      window.Plotly?.relayout(plotRef.current, {
         shapes: newShapes,
         annotations: newAnnotations
-    }));
+      });
+    }
   }, [sliderValue, run, plotData, sensorAlignedData]);
 
   // LUGE HIGHLIGHTS
@@ -853,6 +836,8 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
                     data={plotData}
                     layout={graphLayout}
                     style={{ width: '100%', height: '100%' }}
+                    onInitialized={(_, graphDiv) => { plotRef.current = graphDiv; }}
+                    onUpdate={(_, graphDiv) => { plotRef.current = graphDiv; }}
                     config={{       
                         responsive: true,
                         scrollZoom: true,
