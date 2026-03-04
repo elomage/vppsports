@@ -375,17 +375,131 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
     return sensorTraces;
   }, [selectedRun, sensorAlignedData, useFilteredData, selectedSensors])
 
+  const highlightSectionShapes = useMemo(() => {
+    if (!selectedSensors.length) return [];
+
+    // Use the exact series loaded for the graph from /run/:id/sensor/:sensorId/data(+filters).
+    const sensorId = selectedSensors[0];
+    const readings = sensorSpecificData[sensorId];
+
+    if (!Array.isArray(readings) || readings.length === 0) return [];
+
+    const highlightSections = [];
+    let isInSection = false;
+    let sectionStart = null;
+
+    readings.forEach((reading, idx) => {
+      const zValue = reading?.data?.[2];
+      if (typeof zValue !== 'number') return;
+
+      if (zValue > 1.2 && !isInSection) {
+        isInSection = true;
+        sectionStart = idx;
+      } else if (zValue < 1.1 && isInSection) {
+        isInSection = false;
+        const sectionEnd = idx;
+
+        if (sectionStart !== null && sectionEnd !== null) {
+          // Extract X values to check max X threshold
+          const xValues = readings
+            .slice(sectionStart, sectionEnd + 1)
+            .map(r => r?.data?.[0])
+            .filter(v => typeof v === 'number');
+          
+          const maxX = Math.max(...xValues);
+          
+          // Skip this segment if max X is not greater than 0.2
+          if (maxX <= 0.2) {
+            return;
+          }
+
+          // Extract Z values to find max
+          const zValues = readings
+            .slice(sectionStart, sectionEnd + 1)
+            .map(r => r?.data?.[2])
+            .filter(v => typeof v === 'number');
+          
+          const maxZ = Math.max(...zValues);
+          
+          // Dynamic window size based on max Z value
+          // Adjust these thresholds and window sizes to fit your data
+          let windowSize;
+          if (maxZ > 3.0) {
+            windowSize = 100;  // Very large Z, use big window
+          } else if (maxZ > 2.1) {
+            windowSize = 150;   // Large Z, use medium-large window
+          } else if (maxZ > 1.5) {
+            windowSize = 50;   // Medium Z, use medium window
+          } else {
+            windowSize = 10;   // Small Z, use smaller window
+          }
+
+          const yValues = readings
+            .slice(sectionStart, sectionEnd + 1)
+            .map(r => r?.data?.[1])
+            .filter(v => typeof v === 'number');
+
+          let firstExtreme = null;
+          for (let i = windowSize; i < yValues.length - windowSize; i++) {
+            // Check if current value is a maximum in the window
+            const isMaximum = yValues.slice(i - windowSize, i + windowSize + 1).every((v, idx) => idx === windowSize || yValues[i] >= v);
+            // Check if current value is a minimum in the window
+            const isMinimum = yValues.slice(i - windowSize, i + windowSize + 1).every((v, idx) => idx === windowSize || yValues[i] <= v);
+            
+            if (isMaximum || isMinimum) {
+              firstExtreme = yValues[i];
+              break;
+            }
+          }
+
+          // Skip this segment if no extreme was found
+          if (firstExtreme === null) {
+            return;
+          }
+
+          // Determine color: green if very close to zero, otherwise based on sign
+          let color;
+          if (Math.abs(firstExtreme) < 0.1) {
+            color = 'rgba(0, 255, 0, 0.54)'; // Green for values close to zero
+          } else {
+            color = firstExtreme > 0 ? 'rgba(0, 255, 0, 0.54)' : 'rgba(255, 0, 0, 0.54)';
+          }
+          const x0 = readings[sectionStart]?.timestamp;
+          const x1 = readings[sectionEnd]?.timestamp;
+
+          if (typeof x0 === 'number' && typeof x1 === 'number') {
+            highlightSections.push({ x0, x1, color });
+          }
+        }
+      }
+    });
+
+    return highlightSections.map(({ x0, x1, color }) => ({
+      type: 'rect',
+      x0,
+      x1,
+      y0: 0,
+      y1: 1,
+      xref: 'x',
+      yref: 'paper',
+      fillcolor: color,
+      opacity: 0.2,
+      line: { width: 0 }
+    }));
+  }, [selectedSensors, sensorSpecificData]);
+
   // Modify the layout update effect to use aligned sensor data
   useEffect(() => {
     if (!run || !plotData.length || Object.keys(sensorAlignedData).length === 0) return;
     if (!Array.isArray(run.totalTimestamps) || run.totalTimestamps.length === 0) return;
     if (sliderValue < 0 || sliderValue >= run.totalTimestamps.length) return;
 
-    const sensorList = [
-        { id: 2, label: 2, color: "red" },
-        { id: 1, label: 1, color: "blue" },
-        { id: 3, label: 3, color: "green" },
-    ];
+    const sensorColors = ['blue', 'red', 'green', 'orange', 'purple', 'teal'];
+    const sensorList = selectedSensors.map((id, index) => ({
+      id,
+      label: id,
+      color: sensorColors[index % sensorColors.length]
+    }));
 
     const ts = run.totalTimestamps[sliderValue];
     const newShapes = [];
@@ -462,11 +576,11 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
 
     if (plotRef.current) {
       window.Plotly?.relayout(plotRef.current, {
-        shapes: newShapes,
+        shapes: [...highlightSectionShapes, ...newShapes],
         annotations: newAnnotations
       });
     }
-  }, [sliderValue, run, plotData, sensorAlignedData]);
+  }, [sliderValue, run, plotData, sensorAlignedData, highlightSectionShapes, selectedSensors]);
 
   // LUGE HIGHLIGHTS
 

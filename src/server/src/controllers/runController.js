@@ -60,7 +60,7 @@ const getSingleRun = async (runid) => {
     const run = await runService.getSingleRun(runid);
     // const run = await runService.getSingleRunDB(runid);
 
-    convertSensorData(run.data, convertToG);
+    // convertSensorData(run.data, convertToG);
 
     const accelerometerData = run.data.find((d) => d._id === "accelerometer");
     const gyroscopeData = run.data.find((d) => d._id === "gyroscope");
@@ -444,7 +444,7 @@ const getSingleRunMovingAverage = async (runid) => {
       throw new Error("Invalid run data structure");
     }
 
-    // convertSensorData(run.data, convertToG);
+    convertSensorData(run.data, convertToG);
 
     // Apply moving average to accelerometer data
     run.data.forEach((sensorData) => {
@@ -599,7 +599,21 @@ const getSingleRunSavitzkyGolayFilter = async (runid) => {
 
 const getRunSensorData = async (runid, sensorid) => {
   try {
-    const sensorData = await runService.getRunSensorReadings(runid, sensorid);
+    let sensorData = await runService.getRunSensorReadings(runid, sensorid);
+
+    //Convert raw readings to G for accelerometer data
+    if (sensorData && Array.isArray(sensorData)) {
+      sensorData = sensorData.map((entry) => {
+            if (entry && Array.isArray(entry.data)) {
+              entry.data = entry.data.map((rawReading) => {
+                return convertToG(rawReading, sensitivity);
+              });
+              entry.data[2] = entry.data[2] * -1;
+            }
+        return entry;
+      });
+    }
+
     return sensorData;
   } catch (error) {
     throw new Error(error.message);
@@ -745,7 +759,7 @@ const filterSensorData = (sensorData, filters) => {
         applyKalmanFilter(sensorData);
         break;
       case "movingaverage":
-        const windowSize = 200;
+        const windowSize = 300;
         const xValues = sensorData.map((r) => r.data[0]);
         const yValues = sensorData.map((r) => r.data[1]);
         const zValues = sensorData.map((r) => r.data[2]);
