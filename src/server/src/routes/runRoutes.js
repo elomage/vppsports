@@ -12,7 +12,12 @@ const { ObjectId } = require("mongodb");
 
 const RECORD_SIZE_BYTES = 16;
 const DEFAULT_SENSITIVITY = 19.5;
-const DEFAULT_SENSOR_ID = 3;
+const SENSOR_TYPE_TO_ID = Object.freeze({
+  accelerometer: 3,
+  strainGauge: 5,
+  gps: 6,
+});
+const DEFAULT_SENSOR_TYPE = "accelerometer";
 
 const parseNumber = (value, fallback) => {
   const parsed = Number.parseFloat(value);
@@ -22,6 +27,21 @@ const parseNumber = (value, fallback) => {
 const parseInteger = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const normalizeSensorType = (value) => {
+  if (!value) return DEFAULT_SENSOR_TYPE;
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === "accelerometer") return "accelerometer";
+  if (
+    normalized === "straingauge" ||
+    normalized === "strain_gauge" ||
+    normalized === "strain-gauge"
+  ) {
+    return "strainGauge";
+  }
+  if (normalized === "gps") return "gps";
+  return null;
 };
 
 runRouter.use("/:runid/sensor", sensorRouter);
@@ -146,6 +166,7 @@ runRouter.post("/upload", async (req, res) => {
     }
 
     const {
+      runId,
       name,
       runName,
       driverName,
@@ -158,6 +179,7 @@ runRouter.post("/upload", async (req, res) => {
       trackId,
       runDate,
       runTime,
+      sensorType,
       sensorId,
       sensX,
       sensY,
@@ -170,87 +192,141 @@ runRouter.post("/upload", async (req, res) => {
     const tracksColl = await getCollection(db, "tracks");
     const sensorReadingsColl = await getCollection(db, "sensor_readings");
 
-    let resolvedDriverId = null;
-    if (driverId) {
+    let resolvedRunId = null;
+    let runCreated = false;
+    let timeOverride = runTime !== undefined ? parseInteger(runTime, 0) : null;
+    let resolvedRunName = String(name || runName || "").trim();
+
+    if (runId) {
       try {
-        resolvedDriverId = new ObjectId(driverId);
+        resolvedRunId = new ObjectId(runId);
       } catch (err) {
-        return res.status(400).json({ message: "Invalid driverId." });
+        return res.status(400).json({ message: "Invalid runId." });
       }
-      const existingDriver = await driversColl.findOne({
-        _id: resolvedDriverId,
-      });
-      if (!existingDriver) {
-        return res.status(400).json({ message: "driverId not found." });
+
+      const existingRun = await runsColl.findOne({ _id: resolvedRunId });
+      if (!existingRun) {
+        return res.status(404).json({ message: "runId not found." });
       }
+
+      resolvedRunName =
+        resolvedRunName ||
+        (existingRun.name && String(existingRun.name).trim()) ||
+        `Run ${resolvedRunId.toString()}`;
     } else {
-      const resolvedLicense =
-        (licenseNumber && String(licenseNumber).trim()) || "UNKNOWN";
-      let driver = await driversColl.findOne({
-        licenseNumber: resolvedLicense,
-      });
-      if (!driver) {
-        const driverResult = await driversColl.insertOne({
-          name: (driverName && String(driverName).trim()) || "Unknown Driver",
-          age: parseInteger(driverAge, 0),
+      let resolvedDriverId = null;
+      if (driverId) {
+        try {
+          resolvedDriverId = new ObjectId(driverId);
+        } catch (err) {
+          return res.status(400).json({ message: "Invalid driverId." });
+        }
+        const existingDriver = await driversColl.findOne({
+          _id: resolvedDriverId,
+        });
+        if (!existingDriver) {
+          return res.status(400).json({ message: "driverId not found." });
+        }
+      } else {
+        const resolvedLicense =
+          (licenseNumber && String(licenseNumber).trim()) || "UNKNOWN";
+        let driver = await driversColl.findOne({
           licenseNumber: resolvedLicense,
         });
-        driver = { _id: driverResult.insertedId };
+        if (!driver) {
+          const driverResult = await driversColl.insertOne({
+            name: (driverName && String(driverName).trim()) || "Unknown Driver",
+            age: parseInteger(driverAge, 0),
+            licenseNumber: resolvedLicense,
+          });
+          driver = { _id: driverResult.insertedId };
+        }
+        resolvedDriverId = driver._id;
       }
-      resolvedDriverId = driver._id;
-    }
 
-    let resolvedTrackId = null;
-    if (trackId) {
-      try {
-        resolvedTrackId = new ObjectId(trackId);
-      } catch (err) {
-        return res.status(400).json({ message: "Invalid trackId." });
-      }
-      const existingTrack = await tracksColl.findOne({
-        _id: resolvedTrackId,
-      });
-      if (!existingTrack) {
-        return res.status(400).json({ message: "trackId not found." });
-      }
-    } else {
-      const resolvedTrackName =
-        (trackName && String(trackName).trim()) || "Unknown Track";
-      let track = await tracksColl.findOne({ name: resolvedTrackName });
-      if (!track) {
-        const trackResult = await tracksColl.insertOne({
-          name: resolvedTrackName,
-          length: parseInteger(trackLength, 0),
-          location:
-            (trackLocation && String(trackLocation).trim()) || "Unknown",
+      let resolvedTrackId = null;
+      if (trackId) {
+        try {
+          resolvedTrackId = new ObjectId(trackId);
+        } catch (err) {
+          return res.status(400).json({ message: "Invalid trackId." });
+        }
+        const existingTrack = await tracksColl.findOne({
+          _id: resolvedTrackId,
         });
-        track = { _id: trackResult.insertedId };
+        if (!existingTrack) {
+          return res.status(400).json({ message: "trackId not found." });
+        }
+      } else {
+        const resolvedTrackName =
+          (trackName && String(trackName).trim()) || "Unknown Track";
+        let track = await tracksColl.findOne({ name: resolvedTrackName });
+        if (!track) {
+          const trackResult = await tracksColl.insertOne({
+            name: resolvedTrackName,
+            length: parseInteger(trackLength, 0),
+            location:
+              (trackLocation && String(trackLocation).trim()) || "Unknown",
+          });
+          track = { _id: trackResult.insertedId };
+        }
+        resolvedTrackId = track._id;
       }
-      resolvedTrackId = track._id;
+
+      const parsedRunDate = runDate ? new Date(runDate) : new Date();
+      if (Number.isNaN(parsedRunDate.getTime())) {
+        return res.status(400).json({ message: "Invalid runDate." });
+      }
+
+      resolvedRunId = new ObjectId();
+      await runsColl.insertOne({
+        _id: resolvedRunId,
+        name: resolvedRunName || `Run ${resolvedRunId.toString()}`,
+        date: parsedRunDate,
+        driverId: resolvedDriverId,
+        trackId: resolvedTrackId,
+        time: timeOverride ?? 0,
+      });
+      runCreated = true;
     }
 
-    const parsedRunDate = runDate ? new Date(runDate) : new Date();
-    if (Number.isNaN(parsedRunDate.getTime())) {
-      return res.status(400).json({ message: "Invalid runDate." });
+    const resolvedSensorType = normalizeSensorType(sensorType);
+    if (!resolvedSensorType) {
+      return res.status(400).json({
+        message:
+          "Invalid sensorType. Supported values: accelerometer, strainGauge, gps.",
+      });
     }
 
-    const timeOverride = runTime !== undefined ? parseInteger(runTime, 0) : null;
-    const resolvedRunName = String(name || runName || "").trim();
-    const runId = new ObjectId();
+    const defaultSensorId = SENSOR_TYPE_TO_ID[resolvedSensorType];
+    const resolvedSensorId = parseInteger(sensorId, defaultSensorId);
 
-    await runsColl.insertOne({
-      _id: runId,
-      name: resolvedRunName || `Run ${runId.toString()}`,
-      date: parsedRunDate,
-      driverId: resolvedDriverId,
-      trackId: resolvedTrackId,
-      time: timeOverride ?? 0,
-    });
+    const sensorsColl = await getCollection(db, "sensors");
+    await sensorsColl.updateOne(
+      { id: resolvedSensorId },
+      {
+        $setOnInsert: {
+          id: resolvedSensorId,
+          type: resolvedSensorType,
+          dataAxis: 3,
+          location: "uploaded",
+        },
+      },
+      { upsert: true }
+    );
 
-    const sensitivityX = parseNumber(sensX, DEFAULT_SENSITIVITY);
-    const sensitivityY = parseNumber(sensY, DEFAULT_SENSITIVITY);
-    const sensitivityZ = parseNumber(sensZ, DEFAULT_SENSITIVITY);
-    const resolvedSensorId = parseInteger(sensorId, DEFAULT_SENSOR_ID);
+    const sensitivityX =
+      resolvedSensorType === "accelerometer"
+        ? parseNumber(sensX, DEFAULT_SENSITIVITY)
+        : 1;
+    const sensitivityY =
+      resolvedSensorType === "accelerometer"
+        ? parseNumber(sensY, DEFAULT_SENSITIVITY)
+        : 1;
+    const sensitivityZ =
+      resolvedSensorType === "accelerometer"
+        ? parseNumber(sensZ, DEFAULT_SENSITIVITY)
+        : 1;
 
     let firstTimestamp = null;
     let lastTimestamp = null;
@@ -278,8 +354,9 @@ runRouter.post("/upload", async (req, res) => {
       const zG = (z * sensitivityZ) / 1_000_000.0;
 
       batch.push({
-        runId: runId,
+        runId: resolvedRunId,
         sensorId: resolvedSensorId,
+        sensorType: resolvedSensorType,
         timestamp: timestampSeconds,
         data: [xG, yG, zG],
       });
@@ -291,21 +368,31 @@ runRouter.post("/upload", async (req, res) => {
 
     await flushBatch();
 
-    if (timeOverride === null && firstTimestamp !== null) {
+    if (timeOverride === null && firstTimestamp !== null && runCreated) {
       const derivedSeconds = Math.max(
         0,
         Math.round(lastTimestamp - firstTimestamp)
       );
       await runsColl.updateOne(
-        { _id: runId },
+        { _id: resolvedRunId },
         { $set: { time: derivedSeconds } }
+      );
+    } else if (timeOverride !== null && !runCreated) {
+      await runsColl.updateOne(
+        { _id: resolvedRunId },
+        { $set: { time: timeOverride } }
       );
     }
 
-    return res.status(201).json({
-      message: "Run uploaded successfully.",
-      runId,
-      name: resolvedRunName || `Run ${runId.toString()}`,
+    return res.status(runCreated ? 201 : 200).json({
+      message: runCreated
+        ? "Run uploaded successfully."
+        : "Sensor data uploaded to existing run successfully.",
+      runId: resolvedRunId,
+      name: resolvedRunName || `Run ${resolvedRunId.toString()}`,
+      createdRun: runCreated,
+      sensorType: resolvedSensorType,
+      sensorId: resolvedSensorId,
     });
   } catch (error) {
     return res.status(500).json({

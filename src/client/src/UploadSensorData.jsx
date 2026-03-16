@@ -4,7 +4,10 @@ import { uploadSensorDataBin } from './api';
 
 const UploadSensorData = () => {
   const [selectedFile, setSelectedFile] = useState(null);
+  const [uploadMode, setUploadMode] = useState('existing');
+  const [existingRunId, setExistingRunId] = useState('');
   const [runName, setRunName] = useState('');
+  const [sensorType, setSensorType] = useState('accelerometer');
   const [status, setStatus] = useState({ type: 'idle', message: '' });
   const [isUploading, setIsUploading] = useState(false);
   const [inputKey, setInputKey] = useState(0);
@@ -34,8 +37,14 @@ const UploadSensorData = () => {
       setStatus({ type: 'error', message: 'Choose a .BIN file before uploading.' });
       return;
     }
+
     const trimmedRunName = runName.trim();
-    if (!trimmedRunName) {
+    const trimmedExistingRunId = existingRunId.trim();
+    if (uploadMode === 'existing' && !trimmedExistingRunId) {
+      setStatus({ type: 'error', message: 'Enter an existing run ID before uploading.' });
+      return;
+    }
+    if (uploadMode === 'new' && !trimmedRunName) {
       setStatus({ type: 'error', message: 'Enter a run name before uploading.' });
       return;
     }
@@ -44,10 +53,21 @@ const UploadSensorData = () => {
     setStatus({ type: 'info', message: 'Uploading file...' });
 
     try {
-      await uploadSensorDataBin(selectedFile, { name: trimmedRunName });
-      setStatus({ type: 'success', message: 'Upload complete. The backend will ingest the data when available.' });
+      const uploadOptions =
+        uploadMode === 'existing'
+          ? { runId: trimmedExistingRunId, sensorType }
+          : { name: trimmedRunName, sensorType };
+      await uploadSensorDataBin(selectedFile, uploadOptions);
+      setStatus({
+        type: 'success',
+        message:
+          uploadMode === 'existing'
+            ? 'Upload complete. Sensor data was added to the existing run.'
+            : 'Upload complete. New run created and data uploaded.',
+      });
       setSelectedFile(null);
       setRunName('');
+      setExistingRunId('');
       setInputKey((prev) => prev + 1);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Upload failed. Please try again.';
@@ -62,9 +82,47 @@ const UploadSensorData = () => {
       <div className="upload-card">
         <h2>Upload Sensor Data</h2>
         <p className="upload-hint">
-          Upload a sensor export in .BIN format to create a new run.
+          Upload a sensor export in .BIN format to either create a new run or append data to an existing run.
+          Sensor type determines which sensor ID is stored with readings.
         </p>
         <form className="upload-form" onSubmit={handleUpload}>
+          <div className="upload-mode-toggle">
+            <label className="upload-mode-option">
+              <input
+                type="radio"
+                name="upload-mode"
+                value="existing"
+                checked={uploadMode === 'existing'}
+                onChange={() => {
+                  setUploadMode('existing');
+                  setStatus({ type: 'idle', message: '' });
+                }}
+              />
+              Add to existing run
+            </label>
+            <label className="upload-mode-option">
+              <input
+                type="radio"
+                name="upload-mode"
+                value="new"
+                checked={uploadMode === 'new'}
+                onChange={() => {
+                  setUploadMode('new');
+                  setStatus({ type: 'idle', message: '' });
+                }}
+              />
+              Create new run
+            </label>
+          </div>
+          {uploadMode === 'existing' ? (
+            <input
+              className="form-control"
+              type="text"
+              value={existingRunId}
+              onChange={(event) => setExistingRunId(event.target.value)}
+              placeholder="Existing run ID"
+            />
+          ) : (
           <input
             className="form-control"
             type="text"
@@ -73,6 +131,16 @@ const UploadSensorData = () => {
             onChange={(event) => setRunName(event.target.value)}
             placeholder="Run name"
           />
+          )}
+          <select
+            className="form-control"
+            value={sensorType}
+            onChange={(event) => setSensorType(event.target.value)}
+          >
+            <option value="accelerometer">Accelerometer</option>
+            <option value="strainGauge">Strain Gauge</option>
+            <option value="gps">GPS</option>
+          </select>
           <input
             key={inputKey}
             className="form-control"
@@ -89,7 +157,11 @@ const UploadSensorData = () => {
             <button
               className="btn btn-primary"
               type="submit"
-              disabled={!selectedFile || !runName.trim() || isUploading}
+              disabled={
+                !selectedFile ||
+                isUploading ||
+                (uploadMode === 'existing' ? !existingRunId.trim() : !runName.trim())
+              }
             >
               {isUploading ? 'Uploading...' : 'Upload'}
             </button>
@@ -99,6 +171,7 @@ const UploadSensorData = () => {
               onClick={() => {
                 setSelectedFile(null);
                 setRunName('');
+                setExistingRunId('');
                 setStatus({ type: 'idle', message: '' });
                 setInputKey((prev) => prev + 1);
               }}

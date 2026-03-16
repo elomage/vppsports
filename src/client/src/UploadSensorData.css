@@ -33,6 +33,19 @@
   gap: 12px;
 }
 
+.upload-mode-toggle {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.upload-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
 .upload-actions {
   display: flex;
   align-items: center;
