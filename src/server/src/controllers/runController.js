@@ -599,22 +599,7 @@ const getSingleRunSavitzkyGolayFilter = async (runid) => {
 
 const getRunSensorData = async (runid, sensorid) => {
   try {
-    let sensorData = await runService.getRunSensorReadings(runid, sensorid);
-
-    //Convert raw readings to G for accelerometer data
-    if (sensorData && Array.isArray(sensorData)) {
-      sensorData = sensorData.map((entry) => {
-            if (entry && Array.isArray(entry.data)) {
-              entry.data = entry.data.map((rawReading) => {
-                return convertToG(rawReading, sensitivity);
-              });
-              entry.data[2] = entry.data[2] * -1;
-            }
-        return entry;
-      });
-    }
-
-    return sensorData;
+    return await runService.getRunSensorReadings(runid, sensorid);
   } catch (error) {
     throw new Error(error.message);
   }
@@ -727,73 +712,73 @@ const getRunSensorOrientationData = async (
 };
 
 const applyKalmanFilter = (sensorData) => {
-  const kfX = new KalmanFilter({ R: 0.01, Q: 1 });
-  const kfY = new KalmanFilter({ R: 0.01, Q: 1 });
-  const kfZ = new KalmanFilter({ R: 0.01, Q: 1 });
-
-  // const kfX = new KalmanFilter({ R: 0.0001, Q: 1 });
-  // const kfY = new KalmanFilter({ R: 0.0001, Q: 1 });
-  // const kfZ = new KalmanFilter({ R: 0.0001, Q: 1 });
+  const axisCount = sensorData.reduce((maxAxisCount, reading) => {
+    const readingAxisCount = Array.isArray(reading?.data) ? reading.data.length : 0;
+    return Math.max(maxAxisCount, readingAxisCount);
+  }, 0);
+  const filters = Array.from(
+    { length: axisCount },
+    () => new KalmanFilter({ R: 0.01, Q: 1 })
+  );
 
   sensorData.forEach((reading) => {
     if (reading.data && Array.isArray(reading.data)) {
-      // Apply Kalman filter
-      let filteredX = kfX.filter(reading.data[0]);
-      let filteredY = kfY.filter(reading.data[1]);
-      let filteredZ = kfZ.filter(reading.data[2]);
-
-      // Update reading data with filtered values
-      reading.data[0] = filteredX;
-      reading.data[1] = filteredY;
-      reading.data[2] = filteredZ;
+      reading.data = reading.data.map((value, axisIndex) =>
+        filters[axisIndex].filter(value)
+      );
     }
   });
 };
 
 const filterSensorData = (sensorData, filters) => {
   if (!sensorData || !filters) return sensorData;
+  const axisCount = sensorData.reduce((maxAxisCount, reading) => {
+    const readingAxisCount = Array.isArray(reading?.data) ? reading.data.length : 0;
+    return Math.max(maxAxisCount, readingAxisCount);
+  }, 0);
   const filtersList = filters.split(",").map((f) => f.trim());
   filtersList.forEach((filter) => {
     switch (filter.toLowerCase()) {
       case "kalman":
         applyKalmanFilter(sensorData);
         break;
-      case "movingaverage":
+      case "movingaverage": {
         const windowSize = 300;
-        const xValues = sensorData.map((r) => r.data[0]);
-        const yValues = sensorData.map((r) => r.data[1]);
-        const zValues = sensorData.map((r) => r.data[2]);
-
-        const smoothX = movingAverage(xValues, windowSize);
-        const smoothY = movingAverage(yValues, windowSize);
-        const smoothZ = movingAverage(zValues, windowSize);
+        const smoothedAxes = Array.from({ length: axisCount }, (_, axisIndex) =>
+          movingAverage(
+            sensorData.map((reading) => reading.data?.[axisIndex] ?? 0),
+            windowSize
+          )
+        );
 
         sensorData.forEach((reading, idx) => {
           if (reading.data && Array.isArray(reading.data)) {
-            reading.data[0] = smoothX[idx];
-            reading.data[1] = smoothY[idx];
-            reading.data[2] = smoothZ[idx];
+            reading.data = reading.data.map(
+              (_, axisIndex) => smoothedAxes[axisIndex][idx]
+            );
           }
         });
         break;
-      case "savitzkygolay":
+      }
+      case "savitzkygolay": {
         const options = { windowSize: 401, polynomial: 3, derivative: 0 };
-        const sgXValues = sensorData.map((r) => r.data[0]);
-        const sgYValues = sensorData.map((r) => r.data[1]);
-        const sgZValues = sensorData.map((r) => r.data[2]);
-
-        const sgSmoothX = savitzkyGolay(sgXValues, 1, options);
-        const sgSmoothY = savitzkyGolay(sgYValues, 1, options);
-        const sgSmoothZ = savitzkyGolay(sgZValues, 1, options);
+        const sgSmoothedAxes = Array.from({ length: axisCount }, (_, axisIndex) =>
+          savitzkyGolay(
+            sensorData.map((reading) => reading.data?.[axisIndex] ?? 0),
+            1,
+            options
+          )
+        );
 
         sensorData.forEach((reading, idx) => {
           if (reading.data && Array.isArray(reading.data)) {
-            reading.data[0] = sgSmoothX[idx];
-            reading.data[1] = sgSmoothY[idx];
-            reading.data[2] = sgSmoothZ[idx];
+            reading.data = reading.data.map(
+              (_, axisIndex) => sgSmoothedAxes[axisIndex][idx]
+            );
           }
         });
         break;
+      }
     }
   });
 

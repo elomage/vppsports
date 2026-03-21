@@ -64,14 +64,29 @@ const estimateStep = (ts) => {
   return diffs.length % 2 ? diffs[mid] : (diffs[mid - 1] + diffs[mid]) / 2;
 };
 
+const getAxisCount = (readings) => {
+  if (!Array.isArray(readings) || readings.length === 0) return 0;
+  return readings.reduce((maxAxisCount, reading) => {
+    const axisCount = Array.isArray(reading?.data) ? reading.data.length : 0;
+    return Math.max(maxAxisCount, axisCount);
+  }, 0);
+};
+
+const getAxisLabel = (axisIndex, axisCount) => {
+  if (axisCount === 3) {
+    return ["X", "Y", "Z"][axisIndex] || `Axis ${axisIndex + 1}`;
+  }
+  return `raw_value${axisIndex + 1}`;
+};
+
 // Align sensor readings to a base timeline using nearest neighbor with tolerance
 const alignReadingsToTimeline = (baseTs, readings) => {
-  // readings: [{ timestamp, data: [x,y,z] }, ...] assumed sorted by timestamp
+  const axisCount = getAxisCount(readings);
   const aligned = {
-    x: baseTs.slice(),        // keep base timestamps as x
-    xAxis: new Array(baseTs.length).fill(null),
-    yAxis: new Array(baseTs.length).fill(null),
-    zAxis: new Array(baseTs.length).fill(null),
+    x: baseTs.slice(),
+    axes: Array.from({ length: axisCount }, () =>
+      new Array(baseTs.length).fill(null)
+    ),
   };
   if (!Array.isArray(readings) || readings.length === 0) return aligned;
 
@@ -95,9 +110,9 @@ const alignReadingsToTimeline = (baseTs, readings) => {
 
     // only snap if within tolerance, else leave null (gap)
     if (dt <= tol) {
-      aligned.xAxis[i] = closest.data?.[0] ?? null;
-      aligned.yAxis[i] = closest.data?.[1] ?? null;
-      aligned.zAxis[i] = closest.data?.[2] ?? null;
+      for (let axisIndex = 0; axisIndex < axisCount; axisIndex++) {
+        aligned.axes[axisIndex][i] = closest.data?.[axisIndex] ?? null;
+      }
     }
   }
   return aligned;
@@ -337,39 +352,19 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
     selectedSensors.forEach((sensorId) => {
       const aligned = sensorAlignedData[sensorId];
       if (!aligned) return;
-
-      sensorTraces.push(
-        {
+      const axisCount = Array.isArray(aligned.axes) ? aligned.axes.length : 0;
+      for (let axisIndex = 0; axisIndex < axisCount; axisIndex++) {
+        sensorTraces.push({
           x: aligned.x,
-          y: aligned.xAxis,
+          y: aligned.axes[axisIndex],
           type: 'scattergl',
           mode: 'lines',
-          name: `Sensor ${sensorId} X-axis${useFilteredData ? ' (filtered)' : ''}`,
+          name: `Sensor ${sensorId} ${getAxisLabel(axisIndex, axisCount)}${useFilteredData ? ' (filtered)' : ''}`,
           visible: 'legendonly',
           yaxis: 'y',
           line: { width: 2 }
-        },
-        {
-          x: aligned.x,
-          y: aligned.yAxis,
-          type: 'scattergl',
-          mode: 'lines',
-          name: `Sensor ${sensorId} Y-axis${useFilteredData ? ' (filtered)' : ''}`,
-          visible: 'legendonly',
-          yaxis: 'y',
-          line: { width: 2 }
-        },
-        {
-          x: aligned.x,
-          y: aligned.zAxis,
-          type: 'scattergl',
-          mode: 'lines',
-          name: `Sensor ${sensorId} Z-axis${useFilteredData ? ' (filtered)' : ''}`,
-          visible: 'legendonly',
-          yaxis: 'y',
-          line: { width: 2 }
-        }
-      );
+        });
+      }
     });
 
     return sensorTraces;
@@ -509,12 +504,12 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
         const aligned = sensorAlignedData[sensorInfo.id];
         if (!aligned) return;
 
-        const vx = aligned.xAxis[sliderValue];
-        const vy = aligned.yAxis[sliderValue];
-        const vz = aligned.zAxis[sliderValue];
+        const axisCount = Array.isArray(aligned.axes) ? aligned.axes.length : 0;
+        const axisValues = aligned.axes.map((axisSeries) => axisSeries[sliderValue]);
+        const [vx, vy, vz] = axisValues;
 
         // Skip if no aligned value at this timeline index
-        if (vx == null && vy == null && vz == null) return;
+        if (axisValues.every((value) => value == null)) return;
 
         // Check if any of the sensor's traces are visible in the legend
         const isTraceVisible = plotData.some(trace => 
@@ -539,7 +534,7 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
             }
         });
 
-        const yOffset = newAnnotations.length * 0.1; // Each annotation shifts down by 0.2
+        const yOffset = newAnnotations.length * 0.1;
         // Check which axes are visible for this sensor
         const isXVisible = plotData.some(trace => 
             trace.name === `Sensor ${sensorInfo.label} X-axis` && trace.visible !== "legendonly"

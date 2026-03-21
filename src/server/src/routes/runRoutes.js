@@ -10,12 +10,25 @@ const { parseApiDataObject } = require("../controllers/sensorDataController");
 const { connectDB, getCollection } = require("../config/db");
 const { ObjectId } = require("mongodb");
 
-const RECORD_SIZE_BYTES = 16;
 const DEFAULT_SENSITIVITY = 19.5;
 const SENSOR_TYPE_TO_ID = Object.freeze({
   accelerometer: 3,
   strainGauge: 5,
   gps: 6,
+});
+const SENSOR_TYPE_CONFIG = Object.freeze({
+  accelerometer: {
+    recordSizeBytes: 16,
+    dataAxis: 3,
+  },
+  strainGauge: {
+    recordSizeBytes: 36,
+    dataAxis: 8,
+  },
+  gps: {
+    recordSizeBytes: 16,
+    dataAxis: 3,
+  },
 });
 const DEFAULT_SENSOR_TYPE = "accelerometer";
 
@@ -159,12 +172,6 @@ runRouter.post("/upload", async (req, res) => {
       });
     }
 
-    if (req.body.length % RECORD_SIZE_BYTES !== 0) {
-      return res.status(400).json({
-        message: `Invalid .BIN length (${req.body.length}). Expected multiple of ${RECORD_SIZE_BYTES}.`,
-      });
-    }
-
     const {
       runId,
       name,
@@ -185,6 +192,22 @@ runRouter.post("/upload", async (req, res) => {
       sensY,
       sensZ,
     } = req.query;
+
+    const resolvedSensorType = normalizeSensorType(sensorType);
+    if (!resolvedSensorType) {
+      return res.status(400).json({
+        message:
+          "Invalid sensorType. Supported values: accelerometer, strainGauge, gps.",
+      });
+    }
+
+    const sensorConfig = SENSOR_TYPE_CONFIG[resolvedSensorType];
+
+    if (req.body.length % sensorConfig.recordSizeBytes !== 0) {
+      return res.status(400).json({
+        message: `Invalid .BIN length (${req.body.length}). Expected multiple of ${sensorConfig.recordSizeBytes} for sensorType ${resolvedSensorType}.`,
+      });
+    }
 
     const db = await connectDB();
     const runsColl = await getCollection(db, "runs");
@@ -290,14 +313,6 @@ runRouter.post("/upload", async (req, res) => {
       runCreated = true;
     }
 
-    const resolvedSensorType = normalizeSensorType(sensorType);
-    if (!resolvedSensorType) {
-      return res.status(400).json({
-        message:
-          "Invalid sensorType. Supported values: accelerometer, strainGauge, gps.",
-      });
-    }
-
     const defaultSensorId = SENSOR_TYPE_TO_ID[resolvedSensorType];
     const resolvedSensorId = parseInteger(sensorId, defaultSensorId);
 
@@ -305,11 +320,13 @@ runRouter.post("/upload", async (req, res) => {
     await sensorsColl.updateOne(
       { id: resolvedSensorId },
       {
+        $set: {
+          type: resolvedSensorType,
+          dataAxis: sensorConfig.dataAxis,
+          location: "uploaded",
+        },
         $setOnInsert: {
           id: resolvedSensorId,
-          type: resolvedSensorType,
-          dataAxis: 3,
-          location: "uploaded",
         },
       },
       { upsert: true }
@@ -339,26 +356,47 @@ runRouter.post("/upload", async (req, res) => {
       batch.length = 0;
     };
 
-    for (let offset = 0; offset < req.body.length; offset += RECORD_SIZE_BYTES) {
+    for (
+      let offset = 0;
+      offset < req.body.length;
+      offset += sensorConfig.recordSizeBytes
+    ) {
       const tsUs = req.body.readUInt32LE(offset);
-      const x = req.body.readInt32LE(offset + 4);
-      const y = req.body.readInt32LE(offset + 8);
-      const z = req.body.readInt32LE(offset + 12);
 
       const timestampSeconds = tsUs / 1_000_000.0;
       if (firstTimestamp === null) firstTimestamp = timestampSeconds;
       lastTimestamp = timestampSeconds;
 
-      const xG = (x * sensitivityX) / 1_000_000.0;
-      const yG = (y * sensitivityY) / 1_000_000.0;
-      const zG = (z * sensitivityZ) / 1_000_000.0;
+      let parsedData;
+      if (resolvedSensorType === "strainGauge") {
+        parsedData = [
+          req.body.readInt32LE(offset + 4),
+          req.body.readInt32LE(offset + 8),
+          req.body.readInt32LE(offset + 12),
+          req.body.readInt32LE(offset + 16),
+          req.body.readInt32LE(offset + 20),
+          req.body.readInt32LE(offset + 24),
+          req.body.readInt32LE(offset + 28),
+          req.body.readInt32LE(offset + 32),
+        ];
+      } else {
+        const x = req.body.readInt32LE(offset + 4);
+        const y = req.body.readInt32LE(offset + 8);
+        const z = req.body.readInt32LE(offset + 12);
+
+        parsedData = [
+          (x * sensitivityX) / 1_000_000.0,
+          (y * sensitivityY) / 1_000_000.0,
+          (z * sensitivityZ) / 1_000_000.0,
+        ];
+      }
 
       batch.push({
         runId: resolvedRunId,
         sensorId: resolvedSensorId,
         sensorType: resolvedSensorType,
         timestamp: timestampSeconds,
-        data: [xG, yG, zG],
+        data: parsedData,
       });
 
       if (batch.length >= batchSize) {
