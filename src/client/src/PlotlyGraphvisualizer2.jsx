@@ -134,12 +134,18 @@ const filterKeyFromSelection = (useFilteredData, selectedFilters) => {
   return selectedFilters.join(",");
 };
 
+const getSensorOffset = (offsetsBySensor, sensorId) => {
+  const offset = offsetsBySensor[sensorId];
+  return Number.isFinite(offset) ? offset : 0;
+};
+
 const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => {
   const [useFilteredData, setUseFilteredData] = useState(false);
   const [selectedFilters, setSelectedFilters] = useState([]);
   const [pendingFilters, setPendingFilters] = useState([]);
   const [availableSensors, setAvailableSensors] = useState([]);
   const [selectedSensors, setSelectedSensors] = useState([]);
+  const [sensorSyncOffsets, setSensorSyncOffsets] = useState({});
   const [draggedFilter, setDraggedFilter] = useState(null);
   const [plotSeriesBySensor, setPlotSeriesBySensor] = useState({});
   const [rawSeriesBySensor, setRawSeriesBySensor] = useState({});
@@ -196,6 +202,7 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
     setRawSeriesBySensor({});
     setVisibleRange(getInitialRange(selectedRun));
     setTraceVisibility({});
+    setSensorSyncOffsets({});
     setIsPlotLoading(false);
     setIsRawLoading(false);
     plotRequestIdRef.current += 1;
@@ -270,6 +277,28 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
     setUseFilteredData(false);
     setPendingFilters(selectedFilters);
   };
+
+  useEffect(() => {
+    setSensorSyncOffsets((prev) => {
+      const next = {};
+      let changed = false;
+
+      selectedSensors.forEach((sensorId) => {
+        if (Number.isFinite(prev[sensorId])) {
+          next[sensorId] = prev[sensorId];
+        } else {
+          next[sensorId] = 0;
+          changed = true;
+        }
+      });
+
+      if (Object.keys(prev).length !== selectedSensors.length) {
+        changed = true;
+      }
+
+      return changed ? next : prev;
+    });
+  }, [selectedSensors]);
 
   useEffect(() => {
     const requestId = ++plotRequestIdRef.current;
@@ -397,7 +426,8 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
       if (!Array.isArray(readings) || readings.length === 0) return;
 
       const axisCount = getAxisCount(readings);
-      const timestamps = readings.map((reading) => reading.timestamp);
+      const syncOffset = getSensorOffset(sensorSyncOffsets, sensorId);
+      const timestamps = readings.map((reading) => reading.timestamp + syncOffset);
 
       for (let axisIndex = 0; axisIndex < axisCount; axisIndex++) {
         const traceName = `Sensor ${sensorId} ${getAxisLabel(axisIndex, axisCount)}${useFilteredData ? " (filtered)" : ""}`;
@@ -415,7 +445,7 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
     });
 
     return traces;
-  }, [plotSeriesBySensor, selectedSensors, traceVisibility, useFilteredData]);
+  }, [plotSeriesBySensor, selectedSensors, sensorSyncOffsets, traceVisibility, useFilteredData]);
 
   const highlightSectionShapes = useMemo(() => {
     if (!selectedSensors.length) return [];
@@ -423,6 +453,7 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
     const sensorId = selectedSensors[0];
     const readings = rawSeriesBySensor[sensorId];
     if (!Array.isArray(readings) || readings.length === 0) return [];
+    const syncOffset = getSensorOffset(sensorSyncOffsets, sensorId);
 
     const highlightSections = [];
     let isInSection = false;
@@ -483,8 +514,8 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
             ? "rgba(0, 255, 0, 0.54)"
             : "rgba(255, 0, 0, 0.54)";
 
-        const x0 = readings[sectionStart]?.timestamp;
-        const x1 = readings[sectionEnd]?.timestamp;
+        const x0 = readings[sectionStart]?.timestamp + syncOffset;
+        const x1 = readings[sectionEnd]?.timestamp + syncOffset;
         if (typeof x0 !== "number" || typeof x1 !== "number") return;
 
         highlightSections.push({
@@ -503,7 +534,7 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
     });
 
     return highlightSections;
-  }, [rawSeriesBySensor, selectedSensors]);
+  }, [rawSeriesBySensor, selectedSensors, sensorSyncOffsets]);
 
   useEffect(() => {
     if (!run || !plotData.length || !Array.isArray(run.totalTimestamps)) return;
@@ -518,7 +549,8 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
 
     selectedSensors.forEach((sensorId, index) => {
       const readings = rawSeriesBySensor[sensorId];
-      const nearest = getNearestReading(readings, ts);
+      const syncOffset = getSensorOffset(sensorSyncOffsets, sensorId);
+      const nearest = getNearestReading(readings, ts - syncOffset);
       if (!nearest) return;
 
       const isTraceVisible = currentTraces.some(
@@ -544,7 +576,11 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
 
       const yOffset = newAnnotations.length * 0.1;
       const axisCount = Array.isArray(nearest.data) ? nearest.data.length : 0;
-      let text = `${sensorId} - Time: ${ts}`;
+      let text = `${sensorId} - Timeline: ${ts}`;
+      if (syncOffset !== 0) {
+        text += ` Shift: ${syncOffset >= 0 ? "+" : ""}${syncOffset}`;
+      }
+      text += ` Sensor: ${nearest.timestamp}`;
 
       for (let axisIndex = 0; axisIndex < axisCount; axisIndex++) {
         const axisName = getAxisLabel(axisIndex, axisCount);
@@ -585,8 +621,37 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
     rawSeriesBySensor,
     highlightSectionShapes,
     selectedSensors,
+    sensorSyncOffsets,
     useFilteredData,
   ]);
+
+  const handleSyncOffsetChange = (sensorId, value) => {
+    if (value === "" || value === "-" || value === "." || value === "-.") {
+      setSensorSyncOffsets((prev) => ({ ...prev, [sensorId]: 0 }));
+      return;
+    }
+
+    const parsedValue = Number(value);
+    if (!Number.isFinite(parsedValue)) return;
+
+    setSensorSyncOffsets((prev) => {
+      if (prev[sensorId] === parsedValue) return prev;
+      return { ...prev, [sensorId]: parsedValue };
+    });
+  };
+
+  const nudgeSyncOffset = (sensorId, delta) => {
+    setSensorSyncOffsets((prev) => ({
+      ...prev,
+      [sensorId]: getSensorOffset(prev, sensorId) + delta,
+    }));
+  };
+
+  const resetAllSyncOffsets = () => {
+    setSensorSyncOffsets(
+      Object.fromEntries(selectedSensors.map((sensorId) => [sensorId, 0]))
+    );
+  };
 
   const handleRelayout = (eventData) => {
     if (!selectedRun) return;
@@ -710,6 +775,85 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
               Clear All
             </button>
           </div>
+        </div>
+      </details>
+
+      <details className="card mb-3 sync-collapsible">
+        <summary
+          className="card-header d-flex justify-content-between align-items-center"
+          style={{ listStyle: "none", cursor: "pointer" }}
+        >
+          <strong>Synchronization</strong>
+          <span className="badge bg-secondary">
+            {selectedSensors.filter((sensorId) => getSensorOffset(sensorSyncOffsets, sensorId) !== 0).length} shifted
+          </span>
+        </summary>
+
+        <div className="card-body">
+          <p className="text-muted small mb-3">
+            Use the main time slider to inspect alignment, then adjust each sensor offset so every trace follows the same timeline.
+          </p>
+
+          {selectedSensors.length === 0 && (
+            <div className="text-muted small">Select at least one sensor to sync.</div>
+          )}
+
+          {selectedSensors.length > 0 && (
+            <>
+              <div className="sync-offset-list">
+                {selectedSensors.map((sensorId) => {
+                  const offset = getSensorOffset(sensorSyncOffsets, sensorId);
+                  return (
+                    <div key={sensorId} className="sync-offset-row">
+                      <div>
+                        <strong>Sensor {sensorId}</strong>
+                      </div>
+                      <div className="sync-offset-controls">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary"
+                          onClick={() => nudgeSyncOffset(sensorId, -1)}
+                        >
+                          -1
+                        </button>
+                        <input
+                          type="number"
+                          step="any"
+                          className="form-control form-control-sm sync-offset-input"
+                          value={offset}
+                          onChange={(event) => handleSyncOffsetChange(sensorId, event.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary"
+                          onClick={() => nudgeSyncOffset(sensorId, 1)}
+                        >
+                          +1
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-danger"
+                          onClick={() => handleSyncOffsetChange(sensorId, "0")}
+                        >
+                          Reset
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="d-flex justify-content-end mt-3">
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-danger"
+                  onClick={resetAllSyncOffsets}
+                >
+                  Reset All Offsets
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </details>
 
