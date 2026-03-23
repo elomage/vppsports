@@ -13,3 +13,7 @@
 .playback-controls > * {
     margin: 0 10px 0 10px;
 }
+
+#run-time {
+    width: 200px
+}

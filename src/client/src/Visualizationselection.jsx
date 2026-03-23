@@ -4,7 +4,7 @@ import { checkRunVideoExists } from './api';
 
 const componentsMap = {
     info: React.lazy(() => import('./Infovisualizer')),
-    graph: React.lazy(() => import('./UPlotGraphPrototype')),
+    graph: React.lazy(() => import('./UPlotGraph')),
     video: React.lazy(() => import('./VideoVisualizer')),
     model: React.lazy(() => import('./Modelvisualizer')),
 };

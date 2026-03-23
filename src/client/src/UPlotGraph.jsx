@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
-import "./UPlotGraphPrototype.css";
+import "./UPlotGraph.css";
+import { fetchRuns } from "./api";
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL;
 const ACCESS_TOKEN_STORAGE_KEY = "vppsports_access_token";
@@ -34,6 +35,7 @@ const fetchJson = async (url) => {
 };
 
 const fetchRunSensors = async (runId) => fetchJson(`${SERVER_URL}/run/${runId}/sensor`);
+const fetchRun = async (runId) => fetchJson(`${SERVER_URL}/run/${runId}`);
 
 const buildSensorDataUrl = (runId, sensorId, options = {}) => {
   const params = new URLSearchParams();
@@ -169,12 +171,45 @@ const getNearestReading = (readings, target) => {
     : previous;
 };
 
-const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeFunction }) => {
+const interpolateSeriesValue = (points, target) => {
+  if (!Array.isArray(points) || points.length === 0 || !Number.isFinite(target)) return null;
+
+  let lo = 0;
+  let hi = points.length - 1;
+
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (points[mid].x < target) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+
+  if (lo === 0) return points[0]?.y ?? null;
+
+  const right = points[lo];
+  const left = points[lo - 1];
+  if (!right) return left?.y ?? null;
+  if (!left) return right?.y ?? null;
+
+  if (!Number.isFinite(left.y) || !Number.isFinite(right.y)) {
+    return Number.isFinite(left.y) ? left.y : Number.isFinite(right.y) ? right.y : null;
+  }
+
+  const span = right.x - left.x;
+  if (!(span > 0)) return left.y;
+
+  const ratio = (target - left.x) / span;
+  return left.y + (right.y - left.y) * ratio;
+};
+
+const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }) => {
   const [useFilteredData, setUseFilteredData] = useState(false);
   const [selectedFilters, setSelectedFilters] = useState([]);
   const [pendingFilters, setPendingFilters] = useState([]);
   const [availableSensors, setAvailableSensors] = useState([]);
-  const [selectedSensors, setSelectedSensors] = useState([]);
+  const [selectedSensorKeys, setSelectedSensorKeys] = useState([]);
   const [sensorSyncOffsets, setSensorSyncOffsets] = useState({});
   const [draggedFilter, setDraggedFilter] = useState(null);
   const [plotSeriesBySensor, setPlotSeriesBySensor] = useState({});
@@ -187,11 +222,17 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
   const [localSliderValue, setLocalSliderValue] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showHighlightSections, setShowHighlightSections] = useState(false);
+  const [availableRuns, setAvailableRuns] = useState([]);
+  const [comparisonRunId, setComparisonRunId] = useState("");
+  const [comparisonRuns, setComparisonRuns] = useState([]);
+  const [comparisonSensorsByRun, setComparisonSensorsByRun] = useState({});
+  const [comparisonPlotSeriesByRun, setComparisonPlotSeriesByRun] = useState({});
+  const [comparisonRawSeriesByRun, setComparisonRawSeriesByRun] = useState({});
 
   const chartContainerRef = useRef(null);
   const interactionLayerRef = useRef(null);
   const plotInstanceRef = useRef(null);
-  const requestIdRef = useRef({ plot: 0, raw: 0 });
+  const requestIdRef = useRef({ plot: 0, raw: 0, comparisonPlot: 0, comparisonRaw: 0 });
   const cacheRef = useRef({ plot: new Map(), raw: new Map() });
   const cursorTimestampRef = useRef(0);
   const zoomCommitTimeoutRef = useRef(null);
@@ -207,6 +248,45 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
   const runTimestamps = selectedRun?.totalTimestamps ?? [];
   const maxSliderIndex = Math.max(runTimestamps.length - 1, 0);
   const currentTimestamp = runTimestamps[localSliderValue] ?? runTimestamps[0] ?? 0;
+  const currentRunName = selectedRun?.name || `Run ${selectedRun?._id}`;
+  const availableSensorEntries = useMemo(() => {
+    const currentEntries = (availableSensors || []).map((sensorId) => ({
+      key: `${selectedRun?._id}:${sensorId}`,
+      runId: selectedRun?._id,
+      runName: currentRunName,
+      sensorId,
+      isPrimary: true,
+    }));
+
+    const comparisonEntries = comparisonRuns.flatMap((run) =>
+      (comparisonSensorsByRun[run._id] || []).map((sensorId) => ({
+        key: `${run._id}:${sensorId}`,
+        runId: run._id,
+        runName: run.name || `Run ${run._id}`,
+        sensorId,
+        isPrimary: false,
+      }))
+    );
+
+    return [...currentEntries, ...comparisonEntries];
+  }, [availableSensors, comparisonRuns, comparisonSensorsByRun, currentRunName, selectedRun?._id]);
+  const selectedSensorEntries = useMemo(
+    () => availableSensorEntries.filter((entry) => selectedSensorKeys.includes(entry.key)),
+    [availableSensorEntries, selectedSensorKeys]
+  );
+  const primarySelectedSensorIds = useMemo(
+    () => selectedSensorEntries.filter((entry) => entry.isPrimary).map((entry) => entry.sensorId),
+    [selectedSensorEntries]
+  );
+  const comparisonSelectedEntriesByRun = useMemo(() => {
+    return selectedSensorEntries
+      .filter((entry) => !entry.isPrimary)
+      .reduce((acc, entry) => {
+        if (!acc[entry.runId]) acc[entry.runId] = [];
+        acc[entry.runId].push(entry);
+        return acc;
+      }, {});
+  }, [selectedSensorEntries]);
 
   useEffect(() => {
     cursorTimestampRef.current = currentTimestamp;
@@ -232,10 +312,10 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
 
   useEffect(() => {
     cacheRef.current = { plot: new Map(), raw: new Map() };
-    requestIdRef.current = { plot: 0, raw: 0 };
+    requestIdRef.current = { plot: 0, raw: 0, comparisonPlot: 0, comparisonRaw: 0 };
     setPlotSeriesBySensor({});
     setRawSeriesBySensor({});
-    setSelectedSensors([]);
+    setSelectedSensorKeys([]);
     setSensorSyncOffsets({});
     setTraceVisibility({});
     setSliderReadout([]);
@@ -243,7 +323,21 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
     setIsPlaying(false);
     setShowHighlightSections(false);
     setVisibleRange(getInitialRange(selectedRun));
+    setComparisonRunId("");
+    setComparisonRuns([]);
+    setComparisonSensorsByRun({});
+    setComparisonPlotSeriesByRun({});
+    setComparisonRawSeriesByRun({});
   }, [selectedRun?._id]);
+
+  useEffect(() => {
+    fetchRuns()
+      .then((runs) => setAvailableRuns(Array.isArray(runs) ? runs : []))
+      .catch((error) => {
+        console.error("Error loading runs for comparison:", error);
+        setAvailableRuns([]);
+      });
+  }, []);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -258,7 +352,6 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
       try {
         const sensors = await fetchRunSensors(selectedRun._id);
         setAvailableSensors(sensors);
-        setSelectedSensors([]);
       } catch (error) {
         console.error("Error loading available sensors:", error);
       }
@@ -269,15 +362,35 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
 
   useEffect(() => {
     setSensorSyncOffsets((prev) =>
-      Object.fromEntries(selectedSensors.map((sensorId) => [sensorId, getSensorOffset(prev, sensorId)]))
+      Object.fromEntries(selectedSensorKeys.map((sensorKey) => [sensorKey, getSensorOffset(prev, sensorKey)]))
     );
-  }, [selectedSensors]);
+  }, [selectedSensorKeys]);
 
   useEffect(() => {
-    const requestId = ++requestIdRef.current.plot;
+    const loadComparisonSensors = async () => {
+      if (!comparisonRuns.length) {
+        setComparisonSensorsByRun({});
+        return;
+      }
+
+      try {
+        const entries = await Promise.all(
+          comparisonRuns.map(async (run) => [run._id, await fetchRunSensors(run._id)])
+        );
+        setComparisonSensorsByRun(Object.fromEntries(entries));
+      } catch (error) {
+        console.error("Error loading comparison run sensors:", error);
+      }
+    };
+
+    loadComparisonSensors();
+  }, [comparisonRuns]);
+
+  useEffect(() => {
+    const requestId = ++requestIdRef.current.comparisonPlot;
 
     const loadPlotSeries = async () => {
-      if (!selectedRun?._id || selectedSensors.length === 0) {
+      if (!selectedRun?._id || primarySelectedSensorIds.length === 0) {
         setPlotSeriesBySensor({});
         setIsPlotLoading(false);
         return;
@@ -286,7 +399,7 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
       setIsPlotLoading(true);
 
       const nextEntries = await Promise.all(
-        selectedSensors.map(async (sensorId) => {
+        primarySelectedSensorIds.map(async (sensorId) => {
           const cacheKey = getCacheKey(selectedRun._id, sensorId, {
             mode: "plot",
             start: visibleRange.start,
@@ -322,13 +435,13 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
       }
       console.error("Error loading uPlot plot data:", error);
     });
-  }, [filterKey, plotResolution, selectedRun?._id, selectedSensors, visibleRange.end, visibleRange.start]);
+  }, [filterKey, plotResolution, primarySelectedSensorIds, selectedRun?._id, visibleRange.end, visibleRange.start]);
 
   useEffect(() => {
     const requestId = ++requestIdRef.current.raw;
 
     const loadRawSeries = async () => {
-      if (!selectedRun?._id || selectedSensors.length === 0) {
+      if (!selectedRun?._id || primarySelectedSensorIds.length === 0) {
         setRawSeriesBySensor({});
         setIsRawLoading(false);
         return;
@@ -337,7 +450,7 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
       setIsRawLoading(true);
 
       const nextEntries = await Promise.all(
-        selectedSensors.map(async (sensorId) => {
+        primarySelectedSensorIds.map(async (sensorId) => {
           const cacheKey = getCacheKey(selectedRun._id, sensorId, {
             mode: "raw",
             filters: filterKey,
@@ -368,45 +481,199 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
       }
       console.error("Error loading uPlot raw data:", error);
     });
-  }, [filterKey, selectedRun?._id, selectedSensors]);
+  }, [filterKey, primarySelectedSensorIds, selectedRun?._id]);
+
+  useEffect(() => {
+    const requestId = ++requestIdRef.current.plot;
+
+    const loadComparisonPlotSeries = async () => {
+      if (!comparisonRuns.length || !selectedRun?._id || Object.keys(comparisonSelectedEntriesByRun).length === 0) {
+        setComparisonPlotSeriesByRun({});
+        return;
+      }
+
+      const currentBaseTimestamp = selectedRun?.totalTimestamps?.[0];
+      if (!Number.isFinite(currentBaseTimestamp)) {
+        setComparisonPlotSeriesByRun({});
+        return;
+      }
+
+      const runEntries = await Promise.all(
+        comparisonRuns
+          .filter((comparisonRun) => comparisonSelectedEntriesByRun[comparisonRun._id]?.length)
+          .map(async (comparisonRun) => {
+          const comparisonBaseTimestamp = comparisonRun?.totalTimestamps?.[0];
+          const mappedStart =
+            Number.isFinite(visibleRange.start) && Number.isFinite(comparisonBaseTimestamp)
+              ? comparisonBaseTimestamp + (visibleRange.start - currentBaseTimestamp)
+              : undefined;
+          const mappedEnd =
+            Number.isFinite(visibleRange.end) && Number.isFinite(comparisonBaseTimestamp)
+              ? comparisonBaseTimestamp + (visibleRange.end - currentBaseTimestamp)
+              : undefined;
+
+          const sensorEntries = await Promise.all(
+            comparisonSelectedEntriesByRun[comparisonRun._id].map(async (entry) => {
+              const sensorId = entry.sensorId;
+              const cacheKey = getCacheKey(comparisonRun._id, sensorId, {
+                mode: "plot",
+                start: mappedStart,
+                end: mappedEnd,
+                filters: filterKey,
+                resolution: plotResolution,
+              });
+
+              let cached = cacheRef.current.plot.get(cacheKey);
+              if (!cached) {
+                cached = fetchSensorData(comparisonRun._id, sensorId, {
+                  mode: "plot",
+                  start: mappedStart,
+                  end: mappedEnd,
+                  filters: filterKey || undefined,
+                  resolution: plotResolution,
+                }).then(normalizeSeriesPayload);
+                cacheRef.current.plot.set(cacheKey, cached);
+              }
+
+              return [sensorId, await cached];
+            })
+          );
+
+          return [comparisonRun._id, Object.fromEntries(sensorEntries)];
+        })
+      );
+
+      if (requestId !== requestIdRef.current.comparisonPlot) return;
+      setComparisonPlotSeriesByRun(Object.fromEntries(runEntries));
+    };
+
+    loadComparisonPlotSeries().catch((error) => {
+      console.error("Error loading comparison plot data:", error);
+    });
+  }, [
+    comparisonSelectedEntriesByRun,
+    comparisonRuns,
+    filterKey,
+    plotResolution,
+    selectedRun,
+    visibleRange.end,
+    visibleRange.start,
+  ]);
+
+  useEffect(() => {
+    const requestId = ++requestIdRef.current.comparisonRaw;
+
+    const loadComparisonRawSeries = async () => {
+      if (!comparisonRuns.length || Object.keys(comparisonSelectedEntriesByRun).length === 0) {
+        setComparisonRawSeriesByRun({});
+        return;
+      }
+
+      const runEntries = await Promise.all(
+        comparisonRuns
+          .filter((comparisonRun) => comparisonSelectedEntriesByRun[comparisonRun._id]?.length)
+          .map(async (comparisonRun) => {
+            const sensorEntries = await Promise.all(
+              comparisonSelectedEntriesByRun[comparisonRun._id].map(async (entry) => {
+                const sensorId = entry.sensorId;
+                const cacheKey = getCacheKey(comparisonRun._id, sensorId, {
+                  mode: "raw",
+                  filters: filterKey,
+                });
+
+                let cached = cacheRef.current.raw.get(cacheKey);
+                if (!cached) {
+                  cached = fetchSensorData(comparisonRun._id, sensorId, {
+                    mode: "raw",
+                    filters: filterKey || undefined,
+                  });
+                  cacheRef.current.raw.set(cacheKey, cached);
+                }
+
+                const readings = await cached;
+                return [sensorId, Array.isArray(readings) ? readings : []];
+              })
+            );
+
+            return [comparisonRun._id, Object.fromEntries(sensorEntries)];
+          })
+      );
+
+      if (requestId !== requestIdRef.current.comparisonRaw) return;
+      setComparisonRawSeriesByRun(Object.fromEntries(runEntries));
+    };
+
+    loadComparisonRawSeries().catch((error) => {
+      console.error("Error loading comparison raw data:", error);
+    });
+  }, [comparisonRuns, comparisonSelectedEntriesByRun, filterKey]);
 
   const chartModel = useMemo(() => {
-    const timelineSet = new Set();
     const series = [];
     const readoutEntries = [];
     const traceColorByLabel = new Map();
+    const currentBaseTimestamp = selectedRun?.totalTimestamps?.[0];
+    const fallbackStart = Number.isFinite(visibleRange.start) ? visibleRange.start : currentBaseTimestamp;
+    const fallbackEnd = Number.isFinite(visibleRange.end)
+      ? visibleRange.end
+      : selectedRun?.totalTimestamps?.[selectedRun.totalTimestamps.length - 1];
+    const displayResolution = Math.max(300, Math.min(plotResolution, 1800));
+    const xValues =
+      Number.isFinite(fallbackStart) &&
+      Number.isFinite(fallbackEnd) &&
+      fallbackEnd > fallbackStart
+        ? Array.from({ length: displayResolution }, (_, index) => {
+            const ratio = displayResolution === 1 ? 0 : index / (displayResolution - 1);
+            return fallbackStart + (fallbackEnd - fallbackStart) * ratio;
+          })
+        : [];
 
-    selectedSensors.forEach((sensorId) => {
-      const payload = plotSeriesBySensor[sensorId];
+    selectedSensorEntries.forEach((entry) => {
+      const payload = entry.isPrimary
+        ? plotSeriesBySensor[entry.sensorId]
+        : comparisonPlotSeriesByRun[entry.runId]?.[entry.sensorId];
       const plotReadings = payload?.readings;
       if (!Array.isArray(plotReadings) || plotReadings.length === 0) return;
 
       const axisCount = getAxisCount(plotReadings);
-      const offset = getSensorOffset(sensorSyncOffsets, sensorId);
-      const shiftedTimestamps = plotReadings.map((reading) => reading.timestamp + offset);
-      shiftedTimestamps.forEach((timestamp) => timelineSet.add(timestamp));
+      const entryBaseTimestamp = entry.isPrimary
+        ? currentBaseTimestamp
+        : comparisonRuns.find((run) => run._id === entry.runId)?.totalTimestamps?.[0];
+      const alignmentOffset =
+        !entry.isPrimary && Number.isFinite(currentBaseTimestamp) && Number.isFinite(entryBaseTimestamp)
+          ? currentBaseTimestamp - entryBaseTimestamp
+          : 0;
+      const offset = getSensorOffset(sensorSyncOffsets, entry.key);
 
       for (let axisIndex = 0; axisIndex < axisCount; axisIndex++) {
-        const label = `Sensor ${sensorId} ${getAxisLabel(axisIndex, axisCount)}${useFilteredData ? " (filtered)" : ""}`;
+        const label = `${entry.runName} Sensor ${entry.sensorId} ${getAxisLabel(axisIndex, axisCount)}${useFilteredData ? " (filtered)" : ""}`;
         const color = TRACE_COLORS[series.length % TRACE_COLORS.length];
         traceColorByLabel.set(label, color);
+        const interpolationPoints = plotReadings
+          .map((reading) => ({
+            x: reading.timestamp + offset + alignmentOffset,
+            y: reading.data?.[axisIndex] ?? null,
+          }))
+          .filter((point) => Number.isFinite(point.x));
         series.push({
-          sensorId,
+          sensorId: entry.sensorId,
           axisIndex,
           label,
           color,
-          valuesByTimestamp: new Map(
-            plotReadings.map((reading) => [reading.timestamp + offset, reading.data?.[axisIndex] ?? null])
-          ),
+          runId: entry.runId,
+          runName: entry.runName,
+          values: xValues.map((timestamp) => interpolateSeriesValue(interpolationPoints, timestamp)),
         });
       }
 
-      const rawReadings = rawSeriesBySensor[sensorId];
+      const rawReadings = entry.isPrimary
+        ? rawSeriesBySensor[entry.sensorId]
+        : comparisonRawSeriesByRun[entry.runId]?.[entry.sensorId];
       const nearest = getNearestReading(rawReadings, currentTimestamp - offset);
       if (nearest) {
         const axes = (nearest.data || [])
           .map((value, axisIndex) => {
-            const axisLabel = `Sensor ${sensorId} ${getAxisLabel(axisIndex, nearest.data.length)}${useFilteredData ? " (filtered)" : ""}`;
+            const axisLabel = `${entry.runName} Sensor ${entry.sensorId} ${getAxisLabel(axisIndex, nearest.data.length)}${useFilteredData ? " (filtered)" : ""}`;
             if (!(traceVisibility[axisLabel] ?? true)) return null;
             return {
               name: getAxisLabel(axisIndex, nearest.data.length).replace("-axis", ""),
@@ -421,7 +688,9 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
         }
 
         readoutEntries.push({
-          sensorId,
+          sensorId: entry.sensorId,
+          runId: entry.runId,
+          runName: entry.runName,
           timelineTimestamp: currentTimestamp,
           sensorTimestamp: nearest.timestamp,
           shift: offset,
@@ -430,26 +699,42 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
       }
     });
 
-    const xValues = Array.from(timelineSet).sort((a, b) => a - b);
     return { xValues, series, readoutEntries };
   }, [
+    comparisonPlotSeriesByRun,
+    comparisonRawSeriesByRun,
+    comparisonRuns,
     currentTimestamp,
+    plotResolution,
     plotSeriesBySensor,
     rawSeriesBySensor,
-    selectedSensors,
+    selectedSensorEntries,
+    selectedRun,
     sensorSyncOffsets,
     traceVisibility,
     useFilteredData,
+    visibleRange.end,
+    visibleRange.start,
   ]);
 
   const highlightSections = useMemo(() => {
-    if (!showHighlightSections || selectedSensors.length === 0) return [];
+    if (!showHighlightSections || selectedSensorEntries.length === 0) return [];
 
-    const sensorId = selectedSensors[0];
-    const readings = rawSeriesBySensor[sensorId];
+    const entry = selectedSensorEntries[0];
+    const readings = entry.isPrimary
+      ? rawSeriesBySensor[entry.sensorId]
+      : comparisonRawSeriesByRun[entry.runId]?.[entry.sensorId];
     if (!Array.isArray(readings) || readings.length === 0) return [];
 
-    const syncOffset = getSensorOffset(sensorSyncOffsets, sensorId);
+    const currentBaseTimestamp = selectedRun?.totalTimestamps?.[0];
+    const entryBaseTimestamp = entry.isPrimary
+      ? currentBaseTimestamp
+      : comparisonRuns.find((run) => run._id === entry.runId)?.totalTimestamps?.[0];
+    const alignmentOffset =
+      !entry.isPrimary && Number.isFinite(currentBaseTimestamp) && Number.isFinite(entryBaseTimestamp)
+        ? currentBaseTimestamp - entryBaseTimestamp
+        : 0;
+    const syncOffset = getSensorOffset(sensorSyncOffsets, entry.key) + alignmentOffset;
     const sections = [];
     let isInSection = false;
     let sectionStart = null;
@@ -518,7 +803,7 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
     });
 
     return sections;
-  }, [rawSeriesBySensor, selectedSensors, sensorSyncOffsets, showHighlightSections]);
+  }, [comparisonRawSeriesByRun, comparisonRuns, rawSeriesBySensor, selectedRun, selectedSensorEntries, sensorSyncOffsets, showHighlightSections]);
 
   useEffect(() => {
     setSliderReadout(chartModel.readoutEntries);
@@ -539,11 +824,7 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
 
     const data = [
       chartModel.xValues,
-      ...chartModel.series.map((seriesItem) =>
-        chartModel.xValues.map((timestamp) =>
-          seriesItem.valuesByTimestamp.has(timestamp) ? seriesItem.valuesByTimestamp.get(timestamp) : null
-        )
-      ),
+      ...chartModel.series.map((seriesItem) => seriesItem.values),
     ];
 
     const chart = new uPlot(
@@ -682,9 +963,9 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
     [setSliderValue]
   );
 
-  const toggleSensor = (sensorId) => {
-    setSelectedSensors((prev) =>
-      prev.includes(sensorId) ? prev.filter((id) => id !== sensorId) : [...prev, sensorId]
+  const toggleSensor = (sensorKey) => {
+    setSelectedSensorKeys((prev) =>
+      prev.includes(sensorKey) ? prev.filter((id) => id !== sensorKey) : [...prev, sensorKey]
     );
   };
 
@@ -760,7 +1041,7 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
   };
 
   const resetAllSyncOffsets = () => {
-    setSensorSyncOffsets(Object.fromEntries(selectedSensors.map((sensorId) => [sensorId, 0])));
+    setSensorSyncOffsets(Object.fromEntries(selectedSensorKeys.map((sensorKey) => [sensorKey, 0])));
   };
 
   const handleSliderInput = (event) => {
@@ -926,14 +1207,46 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
     setVisibleRange(getInitialRange(selectedRun));
   };
 
+  const addComparisonRun = async () => {
+    if (!comparisonRunId || comparisonRuns.some((run) => run._id === comparisonRunId)) return;
+
+    try {
+      const run = await fetchRun(comparisonRunId);
+      setComparisonRuns((prev) => [...prev, run]);
+      setComparisonRunId("");
+    } catch (error) {
+      console.error("Error loading comparison run:", error);
+    }
+  };
+
+  const removeComparisonRun = (runId) => {
+    setComparisonRuns((prev) => prev.filter((run) => run._id !== runId));
+    setComparisonSensorsByRun((prev) => {
+      const next = { ...prev };
+      delete next[runId];
+      return next;
+    });
+    setComparisonPlotSeriesByRun((prev) => {
+      const next = { ...prev };
+      delete next[runId];
+      return next;
+    });
+    setComparisonRawSeriesByRun((prev) => {
+      const next = { ...prev };
+      delete next[runId];
+      return next;
+    });
+    setSelectedSensorKeys((prev) => prev.filter((key) => !key.startsWith(`${runId}:`)));
+    setSensorSyncOffsets((prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${runId}:`)))
+    );
+  };
+
   return (
     <div className="uplot-prototype">
       <div className="uplot-prototype__header">
         <div>
           <strong>Sensor Graph</strong>
-          <div className="text-muted small">
-            uPlot-backed visualization with synchronized playback controls.
-          </div>
         </div>
         <button type="button" className="btn btn-sm btn-outline-danger" onClick={removeFunction}>
           Remove
@@ -944,42 +1257,41 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
         <button type="button" className="btn btn-sm btn-outline-primary" onClick={resetZoom}>
           Reset Zoom
         </button>
-        <span className="text-muted small">
-          Drag across the chart to zoom horizontally.
-        </span>
       </div>
 
-      {(isPlotLoading || isRawLoading) && selectedSensors.length > 0 && (
+      {(isPlotLoading || isRawLoading) && selectedSensorEntries.length > 0 && (
         <div className="alert alert-info py-2 px-3 mb-3">
-          {isPlotLoading ? "Updating plot data..." : "Syncing sensor data..."}
-        </div>
+            {isPlotLoading ? "Updating plot data..." : "Syncing sensor data..."}
+          </div>
       )}
 
-      <details className="card mb-3 sensors-collapsible">
+      <div className="plot-configuration">
+
+      <details className="card mb-3 sensors-collapsible" open>
         <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
           <strong>Sensors</strong>
           <span className="badge bg-secondary">
-            {selectedSensors.length} / {availableSensors.length}
+            {selectedSensorKeys.length} / {availableSensorEntries.length}
           </span>
         </summary>
         <div className="card-body">
           <div className="list-group">
-            {availableSensors.length === 0 && <div className="text-muted small">No sensors available</div>}
-            {availableSensors.map((sensorId) => (
+            {availableSensorEntries.length === 0 && <div className="text-muted small">No sensors available</div>}
+            {availableSensorEntries.map((entry) => (
               <label
-                key={sensorId}
-                className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center ${selectedSensors.includes(sensorId) ? "active" : ""}`}
+                key={entry.key}
+                className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center ${selectedSensorKeys.includes(entry.key) ? "active" : ""}`}
               >
                 <div className="form-check d-flex align-items-center m-0">
                   <input
                     className="form-check-input me-2"
                     type="checkbox"
-                    checked={selectedSensors.includes(sensorId)}
-                    onChange={() => toggleSensor(sensorId)}
+                    checked={selectedSensorKeys.includes(entry.key)}
+                    onChange={() => toggleSensor(entry.key)}
                   />
-                  <span className="form-check-label">Sensor {sensorId}</span>
+                  <span className="form-check-label">{entry.runName} Sensor {entry.sensorId}</span>
                 </div>
-                <small className="text-muted">ID: {sensorId}</small>
+                <small className="text-muted">ID: {entry.sensorId}</small>
               </label>
             ))}
           </div>
@@ -987,16 +1299,16 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
             <button
               type="button"
               className="btn btn-sm btn-outline-primary me-2 flex-fill"
-              onClick={() => setSelectedSensors([...availableSensors])}
-              disabled={availableSensors.length === 0}
+              onClick={() => setSelectedSensorKeys(availableSensorEntries.map((entry) => entry.key))}
+              disabled={availableSensorEntries.length === 0}
             >
               Select All
             </button>
             <button
               type="button"
               className="btn btn-sm btn-outline-secondary flex-fill"
-              onClick={() => setSelectedSensors([])}
-              disabled={availableSensors.length === 0}
+              onClick={() => setSelectedSensorKeys([])}
+              disabled={availableSensorEntries.length === 0}
             >
               Clear All
             </button>
@@ -1008,26 +1320,26 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
         <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
           <strong>Synchronization</strong>
           <span className="badge bg-secondary">
-            {selectedSensors.filter((sensorId) => getSensorOffset(sensorSyncOffsets, sensorId) !== 0).length} shifted
+            {selectedSensorEntries.filter((entry) => getSensorOffset(sensorSyncOffsets, entry.key) !== 0).length} shifted
           </span>
         </summary>
         <div className="card-body">
           <p className="text-muted small mb-3">
             Use the slider in this graph to inspect alignment, then adjust each sensor offset to match the unified timeline.
           </p>
-          {selectedSensors.length === 0 && <div className="text-muted small">Select at least one sensor to sync.</div>}
-          {selectedSensors.length > 0 && (
+          {selectedSensorEntries.length === 0 && <div className="text-muted small">Select at least one sensor to sync.</div>}
+          {selectedSensorEntries.length > 0 && (
             <>
               <div className="sync-offset-list">
-                {selectedSensors.map((sensorId) => {
-                  const offset = getSensorOffset(sensorSyncOffsets, sensorId);
+                {selectedSensorEntries.map((entry) => {
+                  const offset = getSensorOffset(sensorSyncOffsets, entry.key);
                   return (
-                    <div key={sensorId} className="sync-offset-row">
+                    <div key={entry.key} className="sync-offset-row">
                       <div>
-                        <strong>Sensor {sensorId}</strong>
+                        <strong>{entry.runName} Sensor {entry.sensorId}</strong>
                       </div>
                       <div className="sync-offset-controls">
-                        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => nudgeSyncOffset(sensorId, -1)}>
+                        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => nudgeSyncOffset(entry.key, -1)}>
                           -1
                         </button>
                         <input
@@ -1035,12 +1347,12 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
                           step="any"
                           className="form-control form-control-sm sync-offset-input"
                           value={offset}
-                          onChange={(event) => handleSyncOffsetChange(sensorId, event.target.value)}
+                          onChange={(event) => handleSyncOffsetChange(entry.key, event.target.value)}
                         />
-                        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => nudgeSyncOffset(sensorId, 1)}>
+                        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => nudgeSyncOffset(entry.key, 1)}>
                           +1
                         </button>
-                        <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => handleSyncOffsetChange(sensorId, "0")}>
+                        <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => handleSyncOffsetChange(entry.key, "0")}>
                           Reset
                         </button>
                       </div>
@@ -1158,6 +1470,59 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
 
       <details className="card mb-3">
         <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
+          <strong>Compare Runs</strong>
+          <span className="badge bg-secondary">{comparisonRuns.length} overlayed</span>
+        </summary>
+        <div className="card-body">
+          <div className="uplot-prototype__compare-controls">
+            <select
+              className="form-select form-select-sm"
+              value={comparisonRunId}
+              onChange={(event) => setComparisonRunId(event.target.value)}
+            >
+              <option value="">Select run to overlay</option>
+              {availableRuns
+                .filter((run) => run._id !== selectedRun?._id && !comparisonRuns.some((item) => item._id === run._id))
+                .map((run) => (
+                  <option key={run._id} value={run._id}>
+                    {run.name || `Run ${run._id}`}
+                  </option>
+                ))}
+            </select>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-primary"
+              onClick={addComparisonRun}
+              disabled={!comparisonRunId}
+            >
+              Add Overlay
+            </button>
+          </div>
+
+          {comparisonRuns.length > 0 && (
+            <div className="list-group mt-3">
+              {comparisonRuns.map((run) => (
+                <div
+                  key={run._id}
+                  className="list-group-item d-flex justify-content-between align-items-center"
+                >
+                  <span>{run.name || `Run ${run._id}`}</span>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-danger"
+                    onClick={() => removeComparisonRun(run._id)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </details>
+
+      <details className="card mb-3">
+        <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
           <strong>Highlights</strong>
           <span className={`badge ${showHighlightSections ? "bg-success" : "bg-secondary"}`}>
             {showHighlightSections ? "On" : "Off"}
@@ -1173,9 +1538,6 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
             />
             <span>Show green/red highlight sections</span>
           </label>
-          <div className="text-muted small mt-2">
-            Uses the same section-detection logic as the previous Plotly graph and applies it to the first selected sensor.
-          </div>
         </div>
       </details>
 
@@ -1201,8 +1563,8 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
             </div>
           </div>
         </details>
-      )}
-
+    )}
+</div>
       {sliderReadout.length > 0 && (
         <div className="uplot-prototype__readout">
           {sliderReadout.map((entry) => (
@@ -1244,4 +1606,4 @@ const UPlotGraphPrototype = ({ selectedRun, sliderValue, setSliderValue, removeF
   );
 };
 
-export default UPlotGraphPrototype;
+export default UPlotGraph;
