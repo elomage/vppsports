@@ -526,19 +526,18 @@ sensorRouter.get("/:sensorid", async (req, res) => {
 //TODO: Implement the filtering passing and array of filters to use and recieving filtered data
 sensorDataRouter.get("/data", async (req, res) => {
   try {
-    const { filters } = req.query;
+    const { filters, start, end, resolution, mode } = req.query;
     const runid = req.params.runid;
     const sensorid = req.params.sensorid;
-    const sensorData = await runController.getRunSensorData(runid, sensorid);
+    const sensorData = await runController.getRunSensorData(runid, sensorid, {
+      filters,
+      start,
+      end,
+      resolution,
+      mode,
+    });
 
-    
-
-    const filteredSensorData = runController.filterSensorData(
-      sensorData,
-      filters
-    );
-
-    res.json(filteredSensorData);
+    res.json(sensorData);
   } catch (err) {
     res.status(500).json({
       message: "Error fetching sensor data",

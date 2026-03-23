@@ -398,6 +398,73 @@ const movingAverage = (data, windowSize) => {
   });
 };
 
+const parseFiniteNumber = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeResolution = (value, fallback = 1200) => {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(50, Math.min(parsed, 5000));
+};
+
+const decimateSensorData = (sensorData, targetPoints) => {
+  if (!Array.isArray(sensorData) || sensorData.length <= targetPoints) {
+    return sensorData;
+  }
+
+  const safeTargetPoints = Math.max(50, targetPoints);
+  const bucketCount = Math.max(1, Math.floor(safeTargetPoints / 4));
+  const bucketSize = Math.max(1, Math.ceil(sensorData.length / bucketCount));
+  const axisCount = sensorData.reduce((maxAxisCount, reading) => {
+    const readingAxisCount = Array.isArray(reading?.data) ? reading.data.length : 0;
+    return Math.max(maxAxisCount, readingAxisCount);
+  }, 0);
+  const selectedIndices = new Set([0, sensorData.length - 1]);
+
+  for (
+    let bucketStart = 0;
+    bucketStart < sensorData.length;
+    bucketStart += bucketSize
+  ) {
+    const bucketEnd = Math.min(sensorData.length, bucketStart + bucketSize);
+    if (bucketEnd <= bucketStart) continue;
+
+    selectedIndices.add(bucketStart);
+    selectedIndices.add(bucketEnd - 1);
+
+    for (let axisIndex = 0; axisIndex < axisCount; axisIndex++) {
+      let minIndex = bucketStart;
+      let maxIndex = bucketStart;
+      let minValue = sensorData[bucketStart]?.data?.[axisIndex];
+      let maxValue = sensorData[bucketStart]?.data?.[axisIndex];
+
+      for (let index = bucketStart + 1; index < bucketEnd; index++) {
+        const value = sensorData[index]?.data?.[axisIndex];
+        if (typeof value !== "number") continue;
+
+        if (typeof minValue !== "number" || value < minValue) {
+          minValue = value;
+          minIndex = index;
+        }
+        if (typeof maxValue !== "number" || value > maxValue) {
+          maxValue = value;
+          maxIndex = index;
+        }
+      }
+
+      selectedIndices.add(minIndex);
+      selectedIndices.add(maxIndex);
+    }
+  }
+
+  return [...selectedIndices]
+    .sort((a, b) => a - b)
+    .map((index) => sensorData[index]);
+};
+
 const getSingleRunMovingAverage = async (runid) => {
   try {
     // const run = await runService.getSingleRun(runid);
@@ -597,9 +664,32 @@ const getSingleRunSavitzkyGolayFilter = async (runid) => {
   }
 };
 
-const getRunSensorData = async (runid, sensorid) => {
+const getRunSensorData = async (runid, sensorid, options = {}) => {
   try {
-    return await runService.getRunSensorReadings(runid, sensorid);
+    const sensorData = await runService.getRunSensorReadings(runid, sensorid, {
+      start: parseFiniteNumber(options.start),
+      end: parseFiniteNumber(options.end),
+    });
+    const filteredSensorData = filterSensorData(sensorData, options.filters);
+
+    if (String(options.mode || "raw").toLowerCase() !== "plot") {
+      return filteredSensorData;
+    }
+
+    const resolution = normalizeResolution(options.resolution);
+    const decimated = decimateSensorData(filteredSensorData, resolution);
+
+    return {
+      mode: "plot",
+      range: {
+        start: parseFiniteNumber(options.start),
+        end: parseFiniteNumber(options.end),
+      },
+      resolution,
+      sampleCountRaw: filteredSensorData.length,
+      sampleCountReturned: decimated.length,
+      readings: decimated,
+    };
   } catch (error) {
     throw new Error(error.message);
   }
@@ -798,4 +888,5 @@ module.exports = {
   getRunSensors,
   getRunSensorOrientationData,
   filterSensorData,
+  decimateSensorData,
 };

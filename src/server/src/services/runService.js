@@ -510,11 +510,25 @@ const getRunSensorReadingsAll = async (runid) => {
   return sensorData;
 };
 
-const getRunSensorReadings = async (runid, sensorid) => {
-  const sensorData = await SensorReading.find({
+const getRunSensorReadings = async (runid, sensorid, options = {}) => {
+  const query = {
     runId: runid,
-    sensorId: sensorid,
-  });
+    sensorId: Number(sensorid),
+  };
+
+  if (Number.isFinite(options.start) || Number.isFinite(options.end)) {
+    query.timestamp = {};
+    if (Number.isFinite(options.start)) {
+      query.timestamp.$gte = options.start;
+    }
+    if (Number.isFinite(options.end)) {
+      query.timestamp.$lte = options.end;
+    }
+  }
+
+  const sensorData = await SensorReading.find(query)
+    .sort({ timestamp: 1 })
+    .lean();
   return sensorData;
 };
 
