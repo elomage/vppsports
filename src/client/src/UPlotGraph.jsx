@@ -228,6 +228,7 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
   const [comparisonSensorsByRun, setComparisonSensorsByRun] = useState({});
   const [comparisonPlotSeriesByRun, setComparisonPlotSeriesByRun] = useState({});
   const [comparisonRawSeriesByRun, setComparisonRawSeriesByRun] = useState({});
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
 
   const chartContainerRef = useRef(null);
   const interactionLayerRef = useRef(null);
@@ -387,7 +388,7 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
   }, [comparisonRuns]);
 
   useEffect(() => {
-    const requestId = ++requestIdRef.current.comparisonPlot;
+    const requestId = ++requestIdRef.current.plot;
 
     const loadPlotSeries = async () => {
       if (!selectedRun?._id || primarySelectedSensorIds.length === 0) {
@@ -484,7 +485,7 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
   }, [filterKey, primarySelectedSensorIds, selectedRun?._id]);
 
   useEffect(() => {
-    const requestId = ++requestIdRef.current.plot;
+    const requestId = ++requestIdRef.current.comparisonPlot;
 
     const loadComparisonPlotSeries = async () => {
       if (!comparisonRuns.length || !selectedRun?._id || Object.keys(comparisonSelectedEntriesByRun).length === 0) {
@@ -1081,10 +1082,15 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
     }
 
     const chart = plotInstanceRef.current;
-    if (!chart || runTimestamps.length === 0) return;
+    const layer = interactionLayerRef.current;
+    if (!chart || !layer || runTimestamps.length === 0) return;
 
-    const bounds = chart.root.getBoundingClientRect();
-    const relativeX = event.clientX - bounds.left;
+    const layerBounds = layer.getBoundingClientRect();
+    const relativeToLayer = event.clientX + 10; // Replace with relative values
+    const relativeX = Math.min(
+      Math.max(relativeToLayer - chart.bbox.left, 0),
+      chart.bbox.width
+    );
     const value = chart.posToVal(relativeX, "x");
     const nextIndex = getNearestIndex(runTimestamps, value);
     if (nextIndex >= 0) {
@@ -1253,21 +1259,31 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
         </button>
       </div>
 
-      <div className="uplot-prototype__toolbar">
-        <button type="button" className="btn btn-sm btn-outline-primary" onClick={resetZoom}>
-          Reset Zoom
-        </button>
-      </div>
-
       {(isPlotLoading || isRawLoading) && selectedSensorEntries.length > 0 && (
         <div className="alert alert-info py-2 px-3 mb-3">
             {isPlotLoading ? "Updating plot data..." : "Syncing sensor data..."}
           </div>
       )}
+ 
+      <div className="uplot-prototype__chart-shell">
+        <div className="uplot-prototype__chart-toolbar">
+          <button
+            type="button"
+            className={`btn btn-sm ${isConfigOpen ? "btn-primary" : "btn-outline-primary"}`}
+            onClick={() => setIsConfigOpen((prev) => !prev)}
+            aria-expanded={isConfigOpen}
+            aria-label={isConfigOpen ? "Hide graph configuration" : "Show graph configuration"}
+          >
+            ☰
+          </button>
+          <button type="button" className="btn btn-sm btn-outline-primary" onClick={resetZoom}>
+            Reset Zoom
+          </button>
+        </div>
+        <div className={`uplot-prototype__overlay-controls ${isConfigOpen ? "is-open" : ""}`}>
+          <div className="plot-configuration">
 
-      <div className="plot-configuration">
-
-      <details className="card mb-3 sensors-collapsible" open>
+      <details className="card sensors-collapsible" open>
         <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
           <strong>Sensors</strong>
           <span className="badge bg-secondary">
@@ -1316,7 +1332,7 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
         </div>
       </details>
 
-      <details className="card mb-3 sync-collapsible">
+      <details className="card sync-collapsible">
         <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
           <strong>Synchronization</strong>
           <span className="badge bg-secondary">
@@ -1324,9 +1340,6 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
           </span>
         </summary>
         <div className="card-body">
-          <p className="text-muted small mb-3">
-            Use the slider in this graph to inspect alignment, then adjust each sensor offset to match the unified timeline.
-          </p>
           {selectedSensorEntries.length === 0 && <div className="text-muted small">Select at least one sensor to sync.</div>}
           {selectedSensorEntries.length > 0 && (
             <>
@@ -1370,7 +1383,7 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
         </div>
       </details>
 
-      <details className="card mb-3 filters-collapsible">
+      <details className="card filters-collapsible">
         <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
           <strong>Filters</strong>
           <span className={`badge ${useFilteredData ? "bg-success" : "bg-secondary"}`}>
@@ -1468,7 +1481,7 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
         </div>
       </details>
 
-      <details className="card mb-3">
+      <details className="card">
         <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
           <strong>Compare Runs</strong>
           <span className="badge bg-secondary">{comparisonRuns.length} overlayed</span>
@@ -1521,7 +1534,7 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
         </div>
       </details>
 
-      <details className="card mb-3">
+      <details className="card">
         <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
           <strong>Highlights</strong>
           <span className={`badge ${showHighlightSections ? "bg-success" : "bg-secondary"}`}>
@@ -1542,7 +1555,7 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
       </details>
 
       {chartModel.series.length > 0 && (
-        <details className="card mb-3 traces-collapsible">
+        <details className="card traces-collapsible">
           <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
             <strong>Traces</strong>
             <span className="badge bg-secondary">
@@ -1564,31 +1577,8 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
           </div>
         </details>
     )}
-</div>
-      {sliderReadout.length > 0 && (
-        <div className="uplot-prototype__readout">
-          {sliderReadout.map((entry) => (
-            <div key={entry.sensorId} className="uplot-prototype__readout-item">
-              <strong>Sensor {entry.sensorId}</strong>
-              <span>Timeline: {entry.timelineTimestamp}</span>
-              <span>Sensor: {entry.sensorTimestamp}</span>
-              {entry.shift !== 0 && <span>Shift: {entry.shift >= 0 ? "+" : ""}{entry.shift}</span>}
-              {entry.axes.map((axis) => (
-                <span
-                  key={`${entry.sensorId}-${axis.name}`}
-                  className="uplot-prototype__readout-axis"
-                  style={{ "--trace-color": axis.color }}
-                >
-                  <span className="uplot-prototype__readout-swatch" />
-                  {axis.name}: {axis.value}
-                </span>
-              ))}
-            </div>
-          ))}
+          </div>
         </div>
-      )}
-
-      <div className="uplot-prototype__chart-shell">
         <div ref={chartContainerRef} className="uplot-prototype__chart" />
         <div
           ref={interactionLayerRef}
@@ -1601,6 +1591,29 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
           onWheel={handleWheelZoom}
         >
         </div>
+        {sliderReadout.length > 0 && (
+          <div className="uplot-prototype__readout">
+            {sliderReadout.map((entry) => (
+              <div key={entry.sensorId} className="uplot-prototype__readout-item">
+                <strong>{entry.runName} - </strong>
+                <strong>Sensor {entry.sensorId}</strong>
+                <span>Timeline: {entry.timelineTimestamp}</span>
+                <span>Sensor: {entry.sensorTimestamp}</span>
+                {entry.shift !== 0 && <span>Shift: {entry.shift >= 0 ? "+" : ""}{entry.shift}</span>}
+                {entry.axes.map((axis) => (
+                  <span
+                    key={`${entry.sensorId}-${axis.name}`}
+                    className="uplot-prototype__readout-axis"
+                    style={{ "--trace-color": axis.color }}
+                  >
+                    <span className="uplot-prototype__readout-swatch" />
+                    {axis.name}: {axis.value}
+                  </span>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
