@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './PlaybackControl.css';
 
-const PlaybackControl = ({ selectedRun, setSliderValue }) => {
-    const [sliderValue, setLocalSliderValue] = useState(0);
+const PlaybackControl = ({ selectedRun, sliderValue, setSliderValue }) => {
+    const [localSliderValue, setLocalSliderValue] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
-    // const [currentTime, setCurrentTime] = useState(selectedRun.data[0].readings[0].timestamp);
-    const [currentTime, setCurrentTime] = useState(selectedRun.totalTimestamps[0]);
     const animationFrameRef = useRef(null);
     const pendingSliderValueRef = useRef(0);
+    const timestamps = selectedRun?.totalTimestamps ?? [];
+    const maxSliderIndex = Math.max(timestamps.length - 1, 0);
+    const currentTimestamp = timestamps[localSliderValue] ?? timestamps[0] ?? 0;
+    const timelineStart = timestamps[0] ?? 0;
+    const currentTimelineTime = Math.max(currentTimestamp - timelineStart, 0);
 
     const flushSliderValue = useCallback(() => {
         animationFrameRef.current = null;
@@ -25,8 +28,6 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
         setLocalSliderValue(value);
         scheduleSliderUpdate(value);
         setIsPlaying(false);
-        setCurrentTime(selectedRun.totalTimestamps[value]);
-
     };
 
     const pausePlayback = () => {
@@ -41,15 +42,12 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
         setLocalSliderValue(0);
         scheduleSliderUpdate(0);
         setIsPlaying(false);
-        setCurrentTime(selectedRun.totalTimestamps[0]);
     };
 
     const prevFrame = () => {
         setLocalSliderValue((prevValue) => {
             const newValue = Math.max(prevValue - 1, 0);
             scheduleSliderUpdate(newValue);
-            // setCurrentTime(selectedRun.data[0].readings[newValue].timestamp);
-            setCurrentTime(selectedRun.totalTimestamps[newValue]);
             return newValue;
         });
 
@@ -57,9 +55,8 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
 
     const nextFrame = () => {
         setLocalSliderValue((prevValue) => {
-            const newValue = Math.min(prevValue + 1, selectedRun.totalTimestamps.length - 1);
+            const newValue = Math.min(prevValue + 1, maxSliderIndex);
             scheduleSliderUpdate(newValue);
-            setCurrentTime(selectedRun.totalTimestamps[newValue]);
             return newValue;
         });
 
@@ -71,9 +68,11 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
             const speed = 100; //This needs to be propotional to the sample rate
             interval = setInterval(() => {
                 setLocalSliderValue((prevValue) => {
-                    const newValue = Math.min(prevValue + speed, selectedRun.totalTimestamps.length - 1);
+                    const newValue = Math.min(prevValue + speed, maxSliderIndex);
                     scheduleSliderUpdate(newValue);
-                    setCurrentTime(selectedRun.totalTimestamps[newValue]);
+                    if (newValue >= maxSliderIndex) {
+                        setIsPlaying(false);
+                    }
                     return newValue;
                 });
             }, 100);
@@ -81,14 +80,13 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
             clearInterval(interval);
         }
         return () => clearInterval(interval);
-    }, [isPlaying, selectedRun.totalTimestamps.length, scheduleSliderUpdate]);
+    }, [isPlaying, maxSliderIndex, scheduleSliderUpdate]);
 
     useEffect(() => {
         if (!isPlaying) {
             setLocalSliderValue(sliderValue);
-            setCurrentTime(selectedRun.totalTimestamps[sliderValue]);
         }
-    }, [sliderValue, isPlaying, selectedRun.orientationData]);
+    }, [sliderValue, isPlaying]);
 
     useEffect(() => () => {
         if (animationFrameRef.current !== null) {
@@ -96,20 +94,23 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
         }
     }, []);
 
-    // const formatTime = (timeInSeconds) => {
-    //     const ms = Math.floor(timeInSeconds * 1000);
-    //     const hours = Math.floor(ms / 3600000);
-    //     const minutes = Math.floor((ms % 3600000) / 60000);
-    //     const seconds = Math.floor((ms % 60000) / 1000);
-    //     const milliseconds = ms % 1000;
-  
-    //     const formatUnit = (unit) => String(unit).padStart(2, '0');
-    //     return `${formatUnit(hours)}:${formatUnit(minutes)}:${formatUnit(seconds)}:${String(milliseconds).padStart(3, '0')}`;
-    //   };
+    const formatTime = (timelineValue) => {
+    let ms = 0
 
-    const formatTime = (timeInNanoseconds) => {
-    // Convert nanoseconds to milliseconds
-    const ms = Math.floor(timeInNanoseconds / 1e6)
+    if (!Number.isFinite(timelineValue) || timelineValue <= 0) {
+        ms = 0
+    } else if (timelineValue >= 1e15) {
+        ms = Math.floor(timelineValue / 1e6)
+    } else if (timelineValue >= 1e12) {
+        ms = Math.floor(timelineValue / 1e3)
+    } else if (timelineValue >= 1e9) {
+        ms = Math.floor(timelineValue / 1e6)
+    } else if (timelineValue >= 1e6) {
+        ms = Math.floor(timelineValue / 1e3)
+    } else {
+        ms = Math.floor(timelineValue * 1000)
+    }
+
     const hours = Math.floor(ms / 3600000)
     const minutes = Math.floor((ms % 3600000) / 60000)
     const seconds = Math.floor((ms % 60000) / 1000)
@@ -123,8 +124,8 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
             <input
                 type="range"
                 min="0"
-                max={selectedRun.totalTimestamps.length - 1}
-                value={sliderValue}
+                max={maxSliderIndex}
+                value={localSliderValue}
                 className="p-2 w-100"
                 id="time-slider"
                 onInput={handleInput}
@@ -147,8 +148,7 @@ const PlaybackControl = ({ selectedRun, setSliderValue }) => {
                 </button>
             </div>
             <h3 id="run-time">
-                {/* {formatTime(currentTime)} */}
-                {currentTime}
+                {formatTime(currentTimelineTime)}
             </h3>
         </div>
     );

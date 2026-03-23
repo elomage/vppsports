@@ -154,6 +154,7 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
   const [traceVisibility, setTraceVisibility] = useState({});
   const [isPlotLoading, setIsPlotLoading] = useState(false);
   const [isRawLoading, setIsRawLoading] = useState(false);
+  const [sliderReadout, setSliderReadout] = useState([]);
 
   const cacheRef = useRef({
     plot: new Map(),
@@ -203,6 +204,7 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
     setVisibleRange(getInitialRange(selectedRun));
     setTraceVisibility({});
     setSensorSyncOffsets({});
+    setSliderReadout([]);
     setIsPlotLoading(false);
     setIsRawLoading(false);
     plotRequestIdRef.current += 1;
@@ -543,76 +545,74 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
 
     const currentTraces = plotRef.current.data || plotData;
     const ts = run.totalTimestamps[sliderValue];
-    const sensorColors = ["blue", "red", "green", "orange", "purple", "teal"];
-    const newShapes = [];
-    const newAnnotations = [];
+    const visibleTraceNames = new Set(
+      currentTraces
+        .filter((trace) => trace?.visible !== "legendonly")
+        .map((trace) => trace.name)
+    );
+    const readoutEntries = [];
 
-    selectedSensors.forEach((sensorId, index) => {
+    selectedSensors.forEach((sensorId) => {
       const readings = rawSeriesBySensor[sensorId];
       const syncOffset = getSensorOffset(sensorSyncOffsets, sensorId);
       const nearest = getNearestReading(readings, ts - syncOffset);
       if (!nearest) return;
 
       const isTraceVisible = currentTraces.some(
-        (trace) =>
-          trace.name?.includes(`Sensor ${sensorId}`) && trace.visible !== "legendonly"
+        (trace) => trace.name?.includes(`Sensor ${sensorId}`) && trace.visible !== "legendonly"
       );
       if (!isTraceVisible) return;
 
-      newShapes.push({
-        type: "line",
-        x0: ts,
-        x1: ts,
-        y0: 0,
-        y1: 1,
-        xref: "x",
-        yref: "paper",
-        line: {
-          color: sensorColors[index % sensorColors.length],
-          width: 2,
-          dash: "dashdot",
-        },
-      });
-
-      const yOffset = newAnnotations.length * 0.1;
       const axisCount = Array.isArray(nearest.data) ? nearest.data.length : 0;
-      let text = `${sensorId} - Timeline: ${ts}`;
-      if (syncOffset !== 0) {
-        text += ` Shift: ${syncOffset >= 0 ? "+" : ""}${syncOffset}`;
-      }
-      text += ` Sensor: ${nearest.timestamp}`;
+      const axes = [];
 
       for (let axisIndex = 0; axisIndex < axisCount; axisIndex++) {
         const axisName = getAxisLabel(axisIndex, axisCount);
         const fullName = `Sensor ${sensorId} ${axisName}${useFilteredData ? " (filtered)" : ""}`;
-        const axisVisible = currentTraces.some(
-          (trace) => trace.name === fullName && trace.visible !== "legendonly"
-        );
+        const axisVisible = visibleTraceNames.has(fullName);
         if (axisVisible) {
-          text += ` ${axisName.replace("-axis", "")}: ${nearest.data?.[axisIndex] ?? "-"}`;
+          axes.push({
+            name: axisName.replace("-axis", ""),
+            value: nearest.data?.[axisIndex] ?? "-",
+          });
         }
       }
 
-      newAnnotations.push({
-        x: ts,
-        y: 1 - yOffset,
-        xref: "x",
-        yref: "paper",
-        yanchor: "bottom",
-        align: "left",
-        text,
-        bordercolor: "black",
-        borderwidth: 1,
-        borderpad: 4,
-        bgcolor: "white",
-        showarrow: false,
-        xanchor: "left",
+      readoutEntries.push({
+        sensorId,
+        timelineTimestamp: ts,
+        sensorTimestamp: nearest.timestamp,
+        shift: syncOffset,
+        axes,
       });
     });
 
+    setSliderReadout((prev) => {
+      if (JSON.stringify(prev) === JSON.stringify(readoutEntries)) {
+        return prev;
+      }
+      return readoutEntries;
+    });
+
     window.Plotly.relayout(plotRef.current, {
-      shapes: [...highlightSectionShapes, ...newShapes],
-      annotations: newAnnotations,
+      shapes: [
+        ...highlightSectionShapes,
+        {
+          type: "line",
+          x0: ts,
+          x1: ts,
+          y0: 0,
+          y1: 1,
+          xref: "x",
+          yref: "paper",
+          line: {
+            color: "#1f77b4",
+            width: 2,
+            dash: "dashdot",
+          },
+        },
+      ],
+      annotations: [],
     });
   }, [
     sliderValue,
@@ -993,46 +993,67 @@ const PlotlyGraphVisualizer = ({ selectedRun, sliderValue, removeFunction }) => 
       </details>
 
       {run && plotData.length > 0 && (
-        <Plot
-          data={plotData}
-          layout={graphLayout}
-          style={{ width: "100%", height: "100%" }}
-          onInitialized={(_, graphDiv) => {
-            plotRef.current = graphDiv;
-            syncTraceVisibility(graphDiv);
-          }}
-          onUpdate={(_, graphDiv) => {
-            plotRef.current = graphDiv;
-            syncTraceVisibility(graphDiv);
-          }}
-          onRelayout={handleRelayout}
-          onRestyle={(_, graphDiv) => {
-            plotRef.current = graphDiv;
-            syncTraceVisibility(graphDiv);
-          }}
-          config={{
-            responsive: true,
-            scrollZoom: true,
-            displayModeBar: true,
-            displaylogo: false,
-            modeBarButtonsToRemove: [
-              "zoom2d",
-              "pan2d",
-              "toImage",
-              "lasso2d",
-              "select2d",
-              "autoscale2d",
-              "sendDataToCloud",
-            ],
-            modeBarButtonsToAdd: [
-              {
-                name: "Remove Graph",
-                icon: Plotly.Icons.selectbox,
-                click: () => removeFunction(),
-              },
-            ],
-          }}
-        />
+        <>
+          {sliderReadout.length > 0 && (
+            <div className="plot-readout">
+              {sliderReadout.map((entry) => (
+                <div key={entry.sensorId} className="plot-readout__item">
+                  <strong>Sensor {entry.sensorId}</strong>
+                  <span>Timeline: {entry.timelineTimestamp}</span>
+                  <span>Sensor: {entry.sensorTimestamp}</span>
+                  {entry.shift !== 0 && (
+                    <span>Shift: {entry.shift >= 0 ? "+" : ""}{entry.shift}</span>
+                  )}
+                  {entry.axes.map((axis) => (
+                    <span key={`${entry.sensorId}-${axis.name}`}>
+                      {axis.name}: {axis.value}
+                    </span>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+          <Plot
+            data={plotData}
+            layout={graphLayout}
+            style={{ width: "100%", height: "100%" }}
+            onInitialized={(_, graphDiv) => {
+              plotRef.current = graphDiv;
+              syncTraceVisibility(graphDiv);
+            }}
+            onUpdate={(_, graphDiv) => {
+              plotRef.current = graphDiv;
+              syncTraceVisibility(graphDiv);
+            }}
+            onRelayout={handleRelayout}
+            onRestyle={(_, graphDiv) => {
+              plotRef.current = graphDiv;
+              syncTraceVisibility(graphDiv);
+            }}
+            config={{
+              responsive: true,
+              scrollZoom: true,
+              displayModeBar: true,
+              displaylogo: false,
+              modeBarButtonsToRemove: [
+                "zoom2d",
+                "pan2d",
+                "toImage",
+                "lasso2d",
+                "select2d",
+                "autoscale2d",
+                "sendDataToCloud",
+              ],
+              modeBarButtonsToAdd: [
+                {
+                  name: "Remove Graph",
+                  icon: Plotly.Icons.selectbox,
+                  click: () => removeFunction(),
+                },
+              ],
+            }}
+          />
+        </>
       )}
     </>
   );

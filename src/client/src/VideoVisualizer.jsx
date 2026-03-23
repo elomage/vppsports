@@ -1,6 +1,28 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { fetchRunVideo } from './api'; // Adjust the path as needed
 
+const findClosestTimestampIndex = (timestamps, target) => {
+  if (!Array.isArray(timestamps) || timestamps.length === 0) return 0;
+
+  let lo = 0;
+  let hi = timestamps.length - 1;
+
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (timestamps[mid] < target) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+
+  if (lo === 0) return 0;
+  const current = timestamps[lo];
+  const previous = timestamps[lo - 1];
+  if (!Number.isFinite(current)) return lo - 1;
+  return Math.abs(current - target) < Math.abs(previous - target) ? lo : lo - 1;
+};
+
 const VideoVisualizer = ({ selectedRun, sliderValue, setSliderValue }) => {
   const [videoUrl, setVideoUrl] = useState('');
   const [videoError, setVideoError] = useState(null);
@@ -37,6 +59,8 @@ const VideoVisualizer = ({ selectedRun, sliderValue, setSliderValue }) => {
   const frameDuration = 1 / frameRate; // Duration of one frame in seconds
 
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
+  const videoSliderFrameRef = useRef(null);
+  const pendingVideoSliderValueRef = useRef(0);
 
   useEffect(() => {
     if (!videoName) {
@@ -94,42 +118,40 @@ const VideoVisualizer = ({ selectedRun, sliderValue, setSliderValue }) => {
   // );
 
 
-  // Update slider value during video playback using timeupdate event.
-useEffect(() => {
-    const videoEl = videoRef.current;
+  useEffect(() => {
+    const flushSliderValue = () => {
+      videoSliderFrameRef.current = null;
+      setSliderValue(pendingVideoSliderValueRef.current);
+    };
 
-    if (videoEl) {
+    const scheduleSliderValue = (value) => {
+      pendingVideoSliderValueRef.current = value;
+      if (videoSliderFrameRef.current !== null) return;
+      videoSliderFrameRef.current = requestAnimationFrame(flushSliderValue);
+    };
+
+    const videoEl = videoRef.current;
+    const sensorReadings = selectedRun?.totalTimestamps;
+
+    if (videoEl && Array.isArray(sensorReadings) && sensorReadings.length > 0) {
         const handleTimeUpdate = () => {
-            if (
-              selectedRun &&
-              selectedRun.filteredRunData &&
-              selectedRun.filteredRunData.data &&
-              selectedRun.filteredRunData.data.length > 0
-            ) {
-              // Assuming sensor readings are available in the first data element.
-              //FIXME: get the concurrent readings from the selectedRun.
-              // const sensorReadings = selectedRun.filteredRunData.data[0].readings;
-              const sensorReadings = selectedRun.totalTimestamps;
-              if (sensorReadings && sensorReadings.length > 0) {
-                const videoTargetTime = videoEl.currentTime + startOffset;
-                let closestIndex = 0;
-                let smallestDiff = Math.abs(sensorReadings[0] - videoTargetTime);
-                for (let i = 1; i < sensorReadings.length; i++) {
-                  const diff = Math.abs(sensorReadings[i] - videoTargetTime);
-                  if (diff < smallestDiff) {
-                    smallestDiff = diff;
-                    closestIndex = i;
-                  }
-                }
-                setSliderValue(closestIndex);
-              }
-            }
+          const videoTargetTime = videoEl.currentTime + startOffset;
+          const closestIndex = findClosestTimestampIndex(sensorReadings, videoTargetTime);
+          scheduleSliderValue(closestIndex);
         };
 
         videoEl.addEventListener('timeupdate', handleTimeUpdate);
-        return () => videoEl.removeEventListener('timeupdate', handleTimeUpdate);
+        return () => {
+          videoEl.removeEventListener('timeupdate', handleTimeUpdate);
+          if (videoSliderFrameRef.current !== null) {
+            cancelAnimationFrame(videoSliderFrameRef.current);
+            videoSliderFrameRef.current = null;
+          }
+        };
     }
-}, [videoUrl, sampleRate, setSliderValue, selectedRun, startOffset]);
+
+    return undefined;
+  }, [setSliderValue, selectedRun?.totalTimestamps, startOffset, videoUrl]);
 
   useEffect(() => {
     if (videoRef.current) {

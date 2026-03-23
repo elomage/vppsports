@@ -1,0 +1,103 @@
+.uplot-prototype {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 320px;
+}
+
+.uplot-prototype__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.uplot-prototype__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.uplot-prototype__offset {
+    max-width: 110px;
+}
+
+.uplot-prototype__readout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.uplot-prototype__readout-item {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid #d9dee3;
+    border-radius: 8px;
+    background: #f8f9fa;
+    font-size: 0.85rem;
+}
+
+.uplot-prototype__readout-axis {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.uplot-prototype__readout-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--trace-color, #6c757d);
+    flex: 0 0 auto;
+}
+
+.uplot-prototype__chart-shell {
+    position: relative;
+    flex: 1;
+    min-height: 320px;
+    border: 1px solid #d9dee3;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #fff;
+}
+
+.uplot-prototype__chart {
+    width: 100%;
+    height: 100%;
+}
+
+.uplot-prototype__interaction-layer {
+    position: absolute;
+    inset: 0;
+    cursor: crosshair;
+}
+
+.uplot-prototype__cursor {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: #1f77b4;
+    opacity: 0;
+    pointer-events: none;
+}
+
+@media (max-width: 768px) {
+    .uplot-prototype__header {
+        flex-direction: column;
+    }
+
+    .uplot-prototype__offset {
+        max-width: 100%;
+    }
+
+    .uplot-prototype__readout-item {
+        width: 100%;
+    }
+}

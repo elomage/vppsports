@@ -288,6 +288,24 @@
     width: 120px;
 }
 
+.plot-readout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.plot-readout__item {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid #d9dee3;
+    border-radius: 8px;
+    background: #f8f9fa;
+    font-size: 0.85rem;
+}
+
 @media (max-width: 768px) {
     .sync-offset-row {
         align-items: flex-start;
@@ -299,6 +317,10 @@
     }
 
     .sync-offset-input {
+        width: 100%;
+    }
+
+    .plot-readout__item {
         width: 100%;
     }
 }

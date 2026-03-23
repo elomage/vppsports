@@ -7,13 +7,8 @@ const Dashboard = ({ selectedRun }) => {
     const [sliderValue, setSliderValue] = useState(0);
     
     useEffect(() => {
-      // Reset slider when run changes
       setSliderValue(0);
     }, [selectedRun]);
-
-    useEffect(() => {
-      // console.log(sliderValue);
-    }, [sliderValue]);
 
     return (
       <div className="dashboard-container w-100">
@@ -21,9 +16,17 @@ const Dashboard = ({ selectedRun }) => {
           {selectedRun && (
             <>
               <div className="playback-control-container">
-                <PlaybackControl selectedRun={selectedRun} setSliderValue={setSliderValue} />
+                <PlaybackControl
+                  selectedRun={selectedRun}
+                  sliderValue={sliderValue}
+                  setSliderValue={setSliderValue}
+                />
               </div>
-              <VisualizationSelection selectedRun={selectedRun} sliderValue={sliderValue} setSliderValue={setSliderValue} />
+              <VisualizationSelection
+                selectedRun={selectedRun}
+                sliderValue={sliderValue}
+                setSliderValue={setSliderValue}
+              />
             </>
           )}
           {!selectedRun && (
