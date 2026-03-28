@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { fetchRuns, fetchSelectedRun, fetchSelectedRunFiltered } from './api';
 import './Runcontrol.css';
 
-const RunControl = ({ setSelectedRun }) => {
+const RunControl = ({ setSelectedRun, runs: externalRuns }) => {
   const [runs, setRuns] = useState([]);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -10,13 +10,18 @@ const RunControl = ({ setSelectedRun }) => {
   const [loadingRun, setLoadingRun] = useState(false); // add
 
   useEffect(() => {
+    if (Array.isArray(externalRuns)) {
+      setRuns(externalRuns);
+      return;
+    }
+
     fetchRuns(dateFrom, dateTo)
       .then(setRuns)
       .catch((err) => {
         console.error('Failed to fetch runs', err);
         setRuns([]);
       });
-  }, [dateFrom, dateTo]);
+  }, [dateFrom, dateTo, externalRuns]);
 
   const handleRunChange = async (event) => {
     const runId = event.target.value;

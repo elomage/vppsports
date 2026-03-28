@@ -137,13 +137,17 @@ export async function login(username, password) {
   return data;
 }
 
+export async function fetchCurrentUser() {
+  const data = await request("/auth/me");
+  return data?.user || null;
+}
+
 export async function initializeSession() {
   const cachedToken = window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
   if (cachedToken) {
     setAccessToken(cachedToken);
     try {
-      await request("/auth/me");
-      return true;
+      return await fetchCurrentUser();
     } catch (error) {
       setAccessToken(null);
     }
@@ -151,10 +155,10 @@ export async function initializeSession() {
 
   try {
     await refreshAccessToken();
-    return true;
+    return await fetchCurrentUser();
   } catch (error) {
     setAccessToken(null);
-    return false;
+    return null;
   }
 }
 
@@ -290,5 +294,78 @@ export async function uploadSensorDataBin(file, options = {}) {
       "Content-Type": "application/octet-stream",
     },
     body: await file.arrayBuffer(),
+  });
+}
+
+export async function deleteRun(runId) {
+  return request(`/run/${runId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function createUser(payload) {
+  return request("/auth/users", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchContexts() {
+  return request("/context", {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+export async function fetchDeletedContexts() {
+  return request("/context/deleted", {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+export async function createContext(name) {
+  return request("/context", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function updateContext(currentName, name) {
+  return request(`/context/${encodeURIComponent(currentName)}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function removeContext(name) {
+  return request(`/context/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+export async function restoreContext(name) {
+  return request(`/context/${encodeURIComponent(name)}/restore`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({}),
   });
 }

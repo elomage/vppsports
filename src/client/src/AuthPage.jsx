@@ -14,8 +14,8 @@ const AuthPage = ({ onAuthenticated }) => {
     setStatus({ type: "idle", message: "" });
 
     try {
-      await login(username, password);
-      onAuthenticated();
+      const session = await login(username, password);
+      onAuthenticated(session.user);
     } catch (error) {
       setStatus({
         type: "error",

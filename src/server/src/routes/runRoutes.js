@@ -32,6 +32,67 @@ const SENSOR_TYPE_CONFIG = Object.freeze({
 });
 const DEFAULT_SENSOR_TYPE = "accelerometer";
 
+const normalizeContext = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return normalized || null;
+};
+
+const isGlobalAdmin = (user) => user?.role === "admin";
+
+const getUserContexts = (user) =>
+  Array.isArray(user?.contextRoles)
+    ? user.contextRoles
+        .map(({ context }) => normalizeContext(context))
+        .filter(Boolean)
+    : [];
+
+const getUserContextRole = (user, contextName) => {
+  const normalizedContext = normalizeContext(contextName);
+  if (!normalizedContext) return null;
+
+  return (
+    user?.contextRoles?.find(
+      ({ context }) => normalizeContext(context) === normalizedContext
+    )?.role || null
+  );
+};
+
+const canAccessContext = (user, contextName) => {
+  if (isGlobalAdmin(user)) return true;
+  return Boolean(getUserContextRole(user, contextName));
+};
+
+const canAdministerContext = (user, contextName) => {
+  if (isGlobalAdmin(user)) return true;
+  return getUserContextRole(user, contextName) === "admin";
+};
+
+const buildRunAccessQuery = (user) => {
+  if (isGlobalAdmin(user)) {
+    return {};
+  }
+
+  const contexts = getUserContexts(user);
+  if (contexts.length === 0) {
+    return { _id: { $exists: false } };
+  }
+
+  return { context: { $in: contexts } };
+};
+
+const findRunForUser = async (runId, user) => {
+  const runObjectId = new ObjectId(runId);
+  const db = await connectDB();
+  const runsColl = await getCollection(db, "runs");
+
+  return runsColl.findOne({
+    _id: runObjectId,
+    ...buildRunAccessQuery(user),
+  });
+};
+
 const parseNumber = (value, fallback) => {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -63,14 +124,11 @@ sensorRouter.use("/:sensorid", sensorDataRouter);
 runRouter.get("/", async (req, res) => {
   try {
     const { dateFrom: dateFrom, dateTo: dateTo } = req.query;
-    if (dateFrom || dateTo) {
-      const runs = await runController.filterRunsByDate(dateFrom, dateTo);
-      res.json(runs);
-    } else {
-      const runs = await runController.getAllRuns();
-      // const runs = await runController.getAllRunsDB();
-      res.json(runs);
-    }
+    const runs = dateFrom || dateTo
+      ? await runController.filterRunsByDate(dateFrom, dateTo)
+      : await runController.getAllRuns();
+    const visibleRuns = runs.filter((run) => canAccessContext(req.user, run.context));
+    res.json(visibleRuns);
   } catch (error) {
     res
       .status(500)
@@ -84,6 +142,10 @@ runRouter.get("/:runid", async (req, res) => {
 
     // const { filterData } = req.query;
     const runid = req.params.runid;
+    const authorizedRun = await findRunForUser(runid, req.user).catch(() => null);
+    if (!authorizedRun) {
+      return res.status(404).json({ message: "Run not found." });
+    }
     // var runs = null;
     // if (dateFrom && dateTo) {
     //   runs = await runController.filterRunsByDate(dateFrom, dateTo);
@@ -139,6 +201,10 @@ runRouter.delete("/:runid", async (req, res) => {
       return res.status(404).json({ message: "Run not found." });
     }
 
+    if (!canAdministerContext(req.user, existingRun.context)) {
+      return res.status(403).json({ message: "Not allowed to delete this run." });
+    }
+
     const sensorDeleteResult = await sensorReadingsColl.deleteMany({
       runId: runObjectId,
     });
@@ -191,6 +257,7 @@ runRouter.post("/upload", async (req, res) => {
       sensX,
       sensY,
       sensZ,
+      context,
     } = req.query;
 
     const resolvedSensorType = normalizeSensorType(sensorType);
@@ -219,6 +286,7 @@ runRouter.post("/upload", async (req, res) => {
     let runCreated = false;
     let timeOverride = runTime !== undefined ? parseInteger(runTime, 0) : null;
     let resolvedRunName = String(name || runName || "").trim();
+    let resolvedContext = normalizeContext(context);
 
     if (runId) {
       try {
@@ -232,11 +300,29 @@ runRouter.post("/upload", async (req, res) => {
         return res.status(404).json({ message: "runId not found." });
       }
 
+      if (!canAccessContext(req.user, existingRun.context)) {
+        return res.status(403).json({ message: "Not allowed to upload to this run." });
+      }
+
+      resolvedContext = normalizeContext(existingRun.context);
+
       resolvedRunName =
         resolvedRunName ||
         (existingRun.name && String(existingRun.name).trim()) ||
         `Run ${resolvedRunId.toString()}`;
     } else {
+      if (!resolvedContext) {
+        return res.status(400).json({
+          message: "Context is required when creating a new run.",
+        });
+      }
+
+      if (!canAccessContext(req.user, resolvedContext)) {
+        return res.status(403).json({
+          message: "Not allowed to create runs in this context.",
+        });
+      }
+
       let resolvedDriverId = null;
       if (driverId) {
         try {
@@ -305,6 +391,7 @@ runRouter.post("/upload", async (req, res) => {
       await runsColl.insertOne({
         _id: resolvedRunId,
         name: resolvedRunName || `Run ${resolvedRunId.toString()}`,
+        context: resolvedContext,
         date: parsedRunDate,
         driverId: resolvedDriverId,
         trackId: resolvedTrackId,
@@ -428,6 +515,7 @@ runRouter.post("/upload", async (req, res) => {
         : "Sensor data uploaded to existing run successfully.",
       runId: resolvedRunId,
       name: resolvedRunName || `Run ${resolvedRunId.toString()}`,
+      context: resolvedContext,
       createdRun: runCreated,
       sensorType: resolvedSensorType,
       sensorId: resolvedSensorId,
@@ -469,7 +557,9 @@ runRouter.post("/filter-runs", async (req, res) => {
     //   dateFrom: dateFrom,
     //   dateTo: dateTo,
     // });
-    return res.json(filteredRuns);
+    return res.json(
+      filteredRuns.filter((run) => canAccessContext(req.user, run.context))
+    );
   } catch (error) {
     res
       .status(500)
@@ -480,6 +570,10 @@ runRouter.post("/filter-runs", async (req, res) => {
 sensorRouter.get("/", async (req, res) => {
   try {
     const runid = req.params.runid;
+    const authorizedRun = await findRunForUser(runid, req.user).catch(() => null);
+    if (!authorizedRun) {
+      return res.status(404).json({ message: "Run not found." });
+    }
     const sensors = await runController.getRunSensors(runid);
     res.json(sensors);
   } catch (error) {
@@ -492,6 +586,10 @@ sensorRouter.get("/", async (req, res) => {
 sensorRouter.get("/orientation", async (req, res) => {
   try {
     const runid = req.params.runid;
+    const authorizedRun = await findRunForUser(runid, req.user).catch(() => null);
+    if (!authorizedRun) {
+      return res.status(404).json({ message: "Run not found." });
+    }
     const { accelerometerid, gyroscopeid, magnetometerid } = req.query;
 
     const orientationData = await runController.getRunSensorOrientationData(
@@ -513,6 +611,10 @@ sensorRouter.get("/orientation", async (req, res) => {
 sensorRouter.get("/:sensorid", async (req, res) => {
   try {
     const runid = req.params.runid;
+    const authorizedRun = await findRunForUser(runid, req.user).catch(() => null);
+    if (!authorizedRun) {
+      return res.status(404).json({ message: "Run not found." });
+    }
     const sensorid = req.params.sensorid;
     const sensorData = await runController.getRunSensorData(runid, sensorid);
     res.json(sensorData);
@@ -528,6 +630,10 @@ sensorDataRouter.get("/data", async (req, res) => {
   try {
     const { filters, start, end, resolution, mode } = req.query;
     const runid = req.params.runid;
+    const authorizedRun = await findRunForUser(runid, req.user).catch(() => null);
+    if (!authorizedRun) {
+      return res.status(404).json({ message: "Run not found." });
+    }
     const sensorid = req.params.sensorid;
     const sensorData = await runController.getRunSensorData(runid, sensorid, {
       filters,

@@ -5,6 +5,7 @@ const { default: mongoose } = require("mongoose");
 
 const runSchema = new mongoose.Schema({
   name: { type: String, required: true, default: "" },
+  context: { type: String, default: null },
   date: { type: Date, required: true, default: Date.now },
   sensorCount: { type: Number, default: 0 },
   description: { type: String, default: "" },
@@ -335,7 +336,7 @@ const getAllRunsDB = async () => {
   // return result;
 
   // return await Run.find({});
-  const runs = await Run.find({}, { _id: 1, date: 1, name: 1 }).sort({
+  const runs = await Run.find({}, { _id: 1, date: 1, name: 1, context: 1 }).sort({
     date: -1,
   });
   return runs.map(withRunName);
@@ -375,7 +376,7 @@ const filterRunsByDateDB = async (dateFrom, dateTo) => {
           $lte: new Date(dateTo),
         },
       },
-      { projection: { _id: 1, date: 1, name: 1 } }
+      { projection: { _id: 1, date: 1, name: 1, context: 1 } }
     )
     .sort({ date: -1 })
     .toArray();

@@ -4,18 +4,32 @@ import Dashboard from './Dashboard'
 import RunControl from './Runcontrol'
 import UploadSensorData from './UploadSensorData'
 import AuthPage from './AuthPage'
-import { initializeSession, logout, setAuthFailureHandler } from './api'
+import AdminPanel from './AdminPanel'
+import { fetchRuns, initializeSession, logout, setAuthFailureHandler } from './api'
 
 function App() {
   const [authState, setAuthState] = useState('checking');
+  const [currentUser, setCurrentUser] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [dashboards, setDashboards] = useState([{ id: 1, flexGrow: 1 }]);
   const [dashboardRuns, setDashboardRuns] = useState({}); // Track selectedRun per dashboard
+  const [runs, setRuns] = useState([]);
   const MAX_DASHBOARDS = 4; // Limit to 4 for readability
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'upload', label: 'Upload Sensor Data' },
+    ...(currentUser?.role === 'admin' ? [{ id: 'admin', label: 'Admin' }] : []),
   ];
+
+  const loadRuns = async () => {
+    try {
+      const nextRuns = await fetchRuns();
+      setRuns(Array.isArray(nextRuns) ? nextRuns : []);
+    } catch (error) {
+      console.error('Failed to fetch runs', error);
+      setRuns([]);
+    }
+  };
 
   const addDashboard = () => {
     if (dashboards.length < MAX_DASHBOARDS) {
@@ -51,16 +65,28 @@ function App() {
 
   useEffect(() => {
     const boot = async () => {
-      const ok = await initializeSession();
-      setAuthState(ok ? 'authenticated' : 'unauthenticated');
+      const user = await initializeSession();
+      setCurrentUser(user);
+      setAuthState(user ? 'authenticated' : 'unauthenticated');
     };
 
     boot();
-    setAuthFailureHandler(() => setAuthState('unauthenticated'));
+    setAuthFailureHandler(() => {
+      setCurrentUser(null);
+      setRuns([]);
+      setAuthState('unauthenticated');
+    });
     return () => setAuthFailureHandler(null);
   }, []);
 
-  const handleAuthenticated = () => {
+  useEffect(() => {
+    if (authState === 'authenticated') {
+      loadRuns();
+    }
+  }, [authState]);
+
+  const handleAuthenticated = (user) => {
+    setCurrentUser(user);
     setAuthState('authenticated');
   };
 
@@ -68,6 +94,8 @@ function App() {
     await logout();
     setDashboards([{ id: 1, flexGrow: 1 }]);
     setDashboardRuns({});
+    setRuns([]);
+    setCurrentUser(null);
     setActiveTab('dashboard');
     setAuthState('unauthenticated');
   };
@@ -81,7 +109,7 @@ function App() {
   }
 
   if (authState !== 'authenticated') {
-    return <AuthPage onAuthenticated={handleAuthenticated} />;
+      return <AuthPage onAuthenticated={handleAuthenticated} />;
   }
 
   return (
@@ -140,6 +168,7 @@ function App() {
               >
                 <div className="dashboard-card__toolbar">
                   <RunControl 
+                    runs={runs}
                     setSelectedRun={(run) => setSelectedRunForDashboard(dashboard.id, run)} 
                   />
                   <button className="btn btn-outline-danger btn-sm" onClick={() => removeDashboard(dashboard.id)}>
@@ -165,7 +194,30 @@ function App() {
             </React.Fragment>
           );
         })}
-        {activeTab === 'upload' && <UploadSensorData />}
+        {activeTab === 'upload' && (
+          <UploadSensorData
+            currentUser={currentUser}
+            runs={runs}
+            onRunCreated={loadRuns}
+          />
+        )}
+        {activeTab === 'admin' && currentUser?.role === 'admin' && (
+          <AdminPanel
+            runs={runs}
+            onRunDeleted={(runId) => {
+              setDashboardRuns((prev) => {
+                const next = { ...prev };
+                Object.keys(next).forEach((key) => {
+                  if (next[key]?._id === runId) {
+                    next[key] = null;
+                  }
+                });
+                return next;
+              });
+              loadRuns();
+            }}
+          />
+        )}
       </div>
     </>
   )

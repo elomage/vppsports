@@ -1,16 +1,32 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import './UploadSensorData.css';
 import { uploadSensorDataBin } from './api';
 
-const UploadSensorData = () => {
+const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploadMode, setUploadMode] = useState('existing');
   const [existingRunId, setExistingRunId] = useState('');
   const [runName, setRunName] = useState('');
+  const [context, setContext] = useState('');
   const [sensorType, setSensorType] = useState('accelerometer');
   const [status, setStatus] = useState({ type: 'idle', message: '' });
   const [isUploading, setIsUploading] = useState(false);
   const [inputKey, setInputKey] = useState(0);
+
+  const availableContexts = useMemo(
+    () =>
+      Array.isArray(currentUser?.contextRoles)
+        ? [...new Set(currentUser.contextRoles.map(({ context }) => String(context || '').trim().toLowerCase()).filter(Boolean))]
+        : [],
+    [currentUser]
+  );
+
+  const visibleRuns = useMemo(
+    () => (Array.isArray(runs) ? runs : []),
+    [runs]
+  );
+
+  const canTypeCustomContext = currentUser?.role === 'admin';
 
   const handleFileChange = (event) => {
     const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
@@ -48,6 +64,10 @@ const UploadSensorData = () => {
       setStatus({ type: 'error', message: 'Enter a run name before uploading.' });
       return;
     }
+    if (uploadMode === 'new' && !context.trim()) {
+      setStatus({ type: 'error', message: 'Choose a context before uploading.' });
+      return;
+    }
 
     setIsUploading(true);
     setStatus({ type: 'info', message: 'Uploading file...' });
@@ -56,8 +76,8 @@ const UploadSensorData = () => {
       const uploadOptions =
         uploadMode === 'existing'
           ? { runId: trimmedExistingRunId, sensorType }
-          : { name: trimmedRunName, sensorType };
-      await uploadSensorDataBin(selectedFile, uploadOptions);
+          : { name: trimmedRunName, sensorType, context: context.trim().toLowerCase() };
+      const response = await uploadSensorDataBin(selectedFile, uploadOptions);
       setStatus({
         type: 'success',
         message:
@@ -68,7 +88,11 @@ const UploadSensorData = () => {
       setSelectedFile(null);
       setRunName('');
       setExistingRunId('');
+      setContext('');
       setInputKey((prev) => prev + 1);
+      if (response?.createdRun) {
+        onRunCreated?.(response);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Upload failed. Please try again.';
       setStatus({ type: 'error', message });
@@ -83,7 +107,7 @@ const UploadSensorData = () => {
         <h2>Upload Sensor Data</h2>
         <p className="upload-hint">
           Upload a sensor export in .BIN format to either create a new run or append data to an existing run.
-          Sensor type determines which sensor ID is stored with readings.
+          Existing runs are limited to the contexts assigned to your account.
         </p>
         <form className="upload-form" onSubmit={handleUpload}>
           <div className="upload-mode-toggle">
@@ -115,22 +139,60 @@ const UploadSensorData = () => {
             </label>
           </div>
           {uploadMode === 'existing' ? (
+            <select
+              className="form-control"
+              value={existingRunId}
+              onChange={(event) => setExistingRunId(event.target.value)}
+            >
+              <option value="">Select existing run</option>
+              {visibleRuns.map((run) => (
+                <option key={run._id} value={run._id}>
+                  {run.name || `Run ${run._id}`}{run.context ? ` (${run.context})` : ''}
+                </option>
+              ))}
+            </select>
+          ) : (
+          <>
             <input
               className="form-control"
               type="text"
-              value={existingRunId}
-              onChange={(event) => setExistingRunId(event.target.value)}
-              placeholder="Existing run ID"
+              value={runName}
+              maxLength={120}
+              onChange={(event) => setRunName(event.target.value)}
+              placeholder="Run name"
             />
-          ) : (
-          <input
-            className="form-control"
-            type="text"
-            value={runName}
-            maxLength={120}
-            onChange={(event) => setRunName(event.target.value)}
-            placeholder="Run name"
-          />
+            {canTypeCustomContext ? (
+              <input
+                className="form-control"
+                type="text"
+                list="upload-context-options"
+                value={context}
+                maxLength={64}
+                onChange={(event) => setContext(event.target.value)}
+                placeholder="Context"
+              />
+            ) : (
+              <select
+                className="form-control"
+                value={context}
+                onChange={(event) => setContext(event.target.value)}
+              >
+                <option value="">Select context</option>
+                {availableContexts.map((entry) => (
+                  <option key={entry} value={entry}>
+                    {entry}
+                  </option>
+                ))}
+              </select>
+            )}
+            {canTypeCustomContext && availableContexts.length > 0 && (
+              <datalist id="upload-context-options">
+                {availableContexts.map((entry) => (
+                  <option key={entry} value={entry} />
+                ))}
+              </datalist>
+            )}
+          </>
           )}
           <select
             className="form-control"
@@ -160,7 +222,7 @@ const UploadSensorData = () => {
               disabled={
                 !selectedFile ||
                 isUploading ||
-                (uploadMode === 'existing' ? !existingRunId.trim() : !runName.trim())
+                (uploadMode === 'existing' ? !existingRunId.trim() : (!runName.trim() || !context.trim()))
               }
             >
               {isUploading ? 'Uploading...' : 'Upload'}
@@ -172,6 +234,7 @@ const UploadSensorData = () => {
                 setSelectedFile(null);
                 setRunName('');
                 setExistingRunId('');
+                setContext('');
                 setStatus({ type: 'idle', message: '' });
                 setInputKey((prev) => prev + 1);
               }}

@@ -16,6 +16,43 @@ const {
 const router = express.Router();
 const REFRESH_COOKIE_NAME = "refreshToken";
 
+const normalizeContextRoles = (value) => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seenContexts = new Set();
+  const normalizedRoles = [];
+
+  value.forEach((entry) => {
+    const context = String(entry?.context || "")
+      .trim()
+      .toLowerCase();
+    const role = String(entry?.role || "user")
+      .trim()
+      .toLowerCase();
+
+    if (!context) {
+      throw new Error("Each context role requires a context.");
+    }
+
+    if (!["admin", "user"].includes(role)) {
+      throw new Error(
+        `Invalid context role '${role}'. Allowed roles: admin, user.`
+      );
+    }
+
+    if (seenContexts.has(context)) {
+      throw new Error(`Duplicate context '${context}' is not allowed.`);
+    }
+
+    seenContexts.add(context);
+    normalizedRoles.push({ context, role });
+  });
+
+  return normalizedRoles;
+};
+
 const buildRefreshCookieOptions = () => ({
   httpOnly: true,
   secure: getCookieSecureFlag(),
@@ -195,6 +232,66 @@ router.get("/me", authenticateAccessToken, async (req, res) => {
       contextRoles: req.user.contextRoles,
     },
   });
+});
+
+router.post("/users", authenticateAccessToken, async (req, res) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "Admin role required." });
+    }
+
+    const parsed = validateCredentials(req.body || {});
+    if (parsed.error) {
+      return res.status(400).json({ message: parsed.error });
+    }
+
+    const role = String(req.body?.role || "user")
+      .trim()
+      .toLowerCase();
+    if (!["admin", "user"].includes(role)) {
+      return res
+        .status(400)
+        .json({ message: "Role must be either 'admin' or 'user'." });
+    }
+
+    let contextRoles = [];
+    try {
+      contextRoles = normalizeContextRoles(req.body?.contextRoles);
+    } catch (error) {
+      return res.status(400).json({ message: error.message });
+    }
+
+    const existingUser = await User.findOne({ username: parsed.username })
+      .select("_id")
+      .lean();
+    if (existingUser) {
+      return res.status(409).json({ message: "Username already exists." });
+    }
+
+    const passwordHash = await bcrypt.hash(parsed.password, 12);
+    const createdUser = await User.create({
+      username: parsed.username,
+      passwordHash,
+      role,
+      contextRoles,
+    });
+
+    return res.status(201).json({
+      message: "User created successfully.",
+      user: {
+        id: createdUser._id,
+        username: createdUser.username,
+        role: createdUser.role,
+        contextRoles: createdUser.contextRoles,
+        isActive: createdUser.isActive,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to create user.",
+      error: error.message,
+    });
+  }
 });
 
 module.exports = router;

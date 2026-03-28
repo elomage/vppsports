@@ -36,7 +36,17 @@ router.post("/data/V1", (req, res) => {
 router.get("/runs", async (req, res) => {
   try {
     const runs = await runController.getAllRuns();
-    res.json(runs);
+    const visibleRuns =
+      req.user?.role === "admin"
+        ? runs
+        : runs.filter((run) =>
+            (req.user?.contextRoles || []).some(
+              ({ context }) =>
+                String(context || "").trim().toLowerCase() ===
+                String(run.context || "").trim().toLowerCase()
+            )
+          );
+    res.json(visibleRuns);
   } catch (error) {
     res
       .status(500)

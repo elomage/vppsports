@@ -61,10 +61,12 @@ const runRoutes = require("./routes/runRoutes");
 const sensorRoutes = require("./routes/sensorRoutes");
 const videoRoutes = require("./routes/videoRoutes");
 const authRoutes = require("./routes/authRoutes");
+const contextRoutes = require("./routes/contextRoutes");
 
 app.use("/auth", authRoutes);
 app.use(authenticateAccessToken);
 app.use("/api", apiRoutes);
+app.use("/context", contextRoutes);
 app.use("/run", runRoutes);
 app.use("/sensor", sensorRoutes);
 app.use("/video", videoRoutes);
