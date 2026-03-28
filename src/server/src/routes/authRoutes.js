@@ -71,7 +71,7 @@ router.post("/login", async (req, res) => {
     }
 
     const user = await User.findOne({ username: parsed.username }).select(
-      "+passwordHash +refreshTokenHash tokenVersion role username isActive"
+      "+passwordHash +refreshTokenHash tokenVersion role contextRoles username isActive"
     );
 
     if (!user || !user.isActive) {
@@ -98,6 +98,7 @@ router.post("/login", async (req, res) => {
         id: user._id,
         username: user.username,
         role: user.role,
+        contextRoles: user.contextRoles,
       },
     });
   } catch (error) {
@@ -127,7 +128,7 @@ router.post("/refresh", async (req, res) => {
     }
 
     const user = await User.findById(decoded.sub).select(
-      "+refreshTokenHash tokenVersion username role isActive refreshTokenExpiresAt"
+      "+refreshTokenHash tokenVersion username role contextRoles isActive refreshTokenExpiresAt"
     );
 
     if (!user || !user.isActive) {
@@ -191,6 +192,7 @@ router.get("/me", authenticateAccessToken, async (req, res) => {
       id: req.user._id,
       username: req.user.username,
       role: req.user.role,
+      contextRoles: req.user.contextRoles,
     },
   });
 });

@@ -15,9 +15,14 @@ JWT_ISSUER=... (optional, default vppsports-api)
 JWT_AUDIENCE=... (optional, default vppsports-client)
 ADMIN_USERNAME=... (required for `npm run seed:user`)
 ADMIN_PASSWORD=... (required for `npm run seed:user`, 12-128 chars)
+ADMIN_CONTEXT_ROLES=... (optional, comma-separated `context:role`)
 
-## Seed single user
+## Seed initial admin user
 
 Run this from `src/server`:
 
 `npm run seed:user`
+
+or
+
+`npm run seed:admin`

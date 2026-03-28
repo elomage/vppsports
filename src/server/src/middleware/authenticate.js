@@ -19,7 +19,7 @@ const authenticateAccessToken = async (req, res, next) => {
     }
 
     const user = await User.findById(decoded.sub).select(
-      "_id username role tokenVersion isActive"
+      "_id username role contextRoles tokenVersion isActive"
     );
     if (!user || !user.isActive) {
       return res.status(401).json({ message: "User is inactive" });
