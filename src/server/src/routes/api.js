@@ -42,8 +42,9 @@ router.get("/runs", async (req, res) => {
         : runs.filter((run) =>
             (req.user?.contexts || []).some(
               (context) =>
+                String(context?.id || "") === String(run.contextId || "") ||
                 String(context?.name || "").trim().toLowerCase() ===
-                String(run.context || "").trim().toLowerCase()
+                  String(run.context || "").trim().toLowerCase()
             )
           );
     res.json(visibleRuns);

@@ -48,8 +48,22 @@ const getUserContexts = (user) =>
         .filter(Boolean)
     : [];
 
-const canAccessContext = (user, contextName) => {
+const getUserContextIds = (user) =>
+  Array.isArray(user?.contexts)
+    ? user.contexts
+        .map((context) =>
+          ObjectId.isValid(context?.id) ? new ObjectId(context.id) : null
+        )
+        .filter(Boolean)
+    : [];
+
+const canAccessContext = (user, contextName, contextId = null) => {
   if (isGlobalAdmin(user)) return true;
+  if (contextId && ObjectId.isValid(contextId)) {
+    return getUserContextIds(user).some(
+      (entry) => String(entry) === String(contextId)
+    );
+  }
   return getUserContexts(user).includes(normalizeContext(contextName));
 };
 
@@ -64,11 +78,20 @@ const buildRunAccessQuery = (user) => {
   }
 
   const contexts = getUserContexts(user);
-  if (contexts.length === 0) {
+  const contextIds = getUserContextIds(user);
+  if (contexts.length === 0 && contextIds.length === 0) {
     return { _id: { $exists: false } };
   }
 
-  return { context: { $in: contexts } };
+  const filters = [];
+  if (contexts.length > 0) {
+    filters.push({ context: { $in: contexts } });
+  }
+  if (contextIds.length > 0) {
+    filters.push({ contextId: { $in: contextIds } });
+  }
+
+  return filters.length === 1 ? filters[0] : { $or: filters };
 };
 
 const findRunForUser = async (runId, user) => {
@@ -116,7 +139,9 @@ runRouter.get("/", async (req, res) => {
     const runs = dateFrom || dateTo
       ? await runController.filterRunsByDate(dateFrom, dateTo)
       : await runController.getAllRuns();
-    const visibleRuns = runs.filter((run) => canAccessContext(req.user, run.context));
+    const visibleRuns = runs.filter((run) =>
+      canAccessContext(req.user, run.context, run.contextId),
+    );
     res.json(visibleRuns);
   } catch (error) {
     res
@@ -190,7 +215,7 @@ runRouter.delete("/:runid", async (req, res) => {
       return res.status(404).json({ message: "Run not found." });
     }
 
-    if (!canAdministerContext(req.user, existingRun.context)) {
+    if (!canAdministerContext(req.user, existingRun.context, existingRun.contextId)) {
       return res.status(403).json({ message: "Not allowed to delete this run." });
     }
 
@@ -247,6 +272,7 @@ runRouter.post("/upload", async (req, res) => {
       sensY,
       sensZ,
       context,
+      contextId,
     } = req.query;
 
     const resolvedSensorType = normalizeSensorType(sensorType);
@@ -267,6 +293,7 @@ runRouter.post("/upload", async (req, res) => {
 
     const db = await connectDB();
     const runsColl = await getCollection(db, "runs");
+    const contextsColl = await getCollection(db, "contexts");
     const driversColl = await getCollection(db, "drivers");
     const tracksColl = await getCollection(db, "tracks");
     const sensorReadingsColl = await getCollection(db, "sensor_readings");
@@ -276,6 +303,7 @@ runRouter.post("/upload", async (req, res) => {
     let timeOverride = runTime !== undefined ? parseInteger(runTime, 0) : null;
     let resolvedRunName = String(name || runName || "").trim();
     let resolvedContext = normalizeContext(context);
+    let resolvedContextId = null;
 
     if (runId) {
       try {
@@ -289,24 +317,39 @@ runRouter.post("/upload", async (req, res) => {
         return res.status(404).json({ message: "runId not found." });
       }
 
-      if (!canAccessContext(req.user, existingRun.context)) {
+      if (!canAccessContext(req.user, existingRun.context, existingRun.contextId)) {
         return res.status(403).json({ message: "Not allowed to upload to this run." });
       }
 
       resolvedContext = normalizeContext(existingRun.context);
+      resolvedContextId =
+        existingRun.contextId && ObjectId.isValid(existingRun.contextId)
+          ? new ObjectId(existingRun.contextId)
+          : null;
 
       resolvedRunName =
         resolvedRunName ||
         (existingRun.name && String(existingRun.name).trim()) ||
         `Run ${resolvedRunId.toString()}`;
     } else {
-      if (!resolvedContext) {
+      if (!contextId || !ObjectId.isValid(contextId)) {
         return res.status(400).json({
-          message: "Context is required when creating a new run.",
+          message: "A valid contextId is required when creating a new run.",
         });
       }
 
-      if (!canAccessContext(req.user, resolvedContext)) {
+      const selectedContext = await contextsColl.findOne({
+        _id: new ObjectId(contextId),
+        deletedAt: null,
+      });
+      if (!selectedContext) {
+        return res.status(400).json({ message: "Selected context not found." });
+      }
+
+      resolvedContext = normalizeContext(selectedContext.name);
+      resolvedContextId = selectedContext._id;
+
+      if (!canAccessContext(req.user, resolvedContext, resolvedContextId)) {
         return res.status(403).json({
           message: "Not allowed to create runs in this context.",
         });
@@ -381,6 +424,7 @@ runRouter.post("/upload", async (req, res) => {
         _id: resolvedRunId,
         name: resolvedRunName || `Run ${resolvedRunId.toString()}`,
         context: resolvedContext,
+        contextId: resolvedContextId,
         date: parsedRunDate,
         driverId: resolvedDriverId,
         trackId: resolvedTrackId,
@@ -505,6 +549,7 @@ runRouter.post("/upload", async (req, res) => {
       runId: resolvedRunId,
       name: resolvedRunName || `Run ${resolvedRunId.toString()}`,
       context: resolvedContext,
+      contextId: resolvedContextId,
       createdRun: runCreated,
       sensorType: resolvedSensorType,
       sensorId: resolvedSensorId,

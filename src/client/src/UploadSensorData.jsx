@@ -7,7 +7,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
   const [uploadMode, setUploadMode] = useState('existing');
   const [existingRunId, setExistingRunId] = useState('');
   const [runName, setRunName] = useState('');
-  const [context, setContext] = useState('');
+  const [selectedContextId, setSelectedContextId] = useState('');
   const [sensorType, setSensorType] = useState('accelerometer');
   const [status, setStatus] = useState({ type: 'idle', message: '' });
   const [isUploading, setIsUploading] = useState(false);
@@ -16,13 +16,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
   const availableContexts = useMemo(
     () =>
       Array.isArray(currentUser?.contexts)
-        ? [
-            ...new Set(
-              currentUser.contexts
-                .map(({ name }) => String(name || '').trim().toLowerCase())
-                .filter(Boolean)
-            ),
-          ]
+        ? currentUser.contexts.filter((entry) => entry?.id && entry?.name)
         : [],
     [currentUser]
   );
@@ -31,8 +25,6 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
     () => (Array.isArray(runs) ? runs : []),
     [runs]
   );
-
-  const canTypeCustomContext = currentUser?.role === 'admin';
 
   const handleFileChange = (event) => {
     const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
@@ -70,7 +62,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
       setStatus({ type: 'error', message: 'Enter a run name before uploading.' });
       return;
     }
-    if (uploadMode === 'new' && !context.trim()) {
+    if (uploadMode === 'new' && !selectedContextId.trim()) {
       setStatus({ type: 'error', message: 'Choose a context before uploading.' });
       return;
     }
@@ -82,7 +74,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
       const uploadOptions =
         uploadMode === 'existing'
           ? { runId: trimmedExistingRunId, sensorType }
-          : { name: trimmedRunName, sensorType, context: context.trim().toLowerCase() };
+          : { name: trimmedRunName, sensorType, contextId: selectedContextId.trim() };
       const response = await uploadSensorDataBin(selectedFile, uploadOptions);
       setStatus({
         type: 'success',
@@ -94,7 +86,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
       setSelectedFile(null);
       setRunName('');
       setExistingRunId('');
-      setContext('');
+      setSelectedContextId('');
       setInputKey((prev) => prev + 1);
       if (response?.createdRun) {
         onRunCreated?.(response);
@@ -167,37 +159,22 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
               onChange={(event) => setRunName(event.target.value)}
               placeholder="Run name"
             />
-            {canTypeCustomContext ? (
-              <input
-                className="form-control"
-                type="text"
-                list="upload-context-options"
-                value={context}
-                maxLength={64}
-                onChange={(event) => setContext(event.target.value)}
-                placeholder="Context"
-              />
-            ) : (
-              <select
-                className="form-control"
-                value={context}
-                onChange={(event) => setContext(event.target.value)}
+            <div className="upload-file-meta">Select one context</div>
+            {availableContexts.map((entry) => (
+              <label
+                key={entry.id}
+                className="form-control d-flex align-items-center gap-2"
               >
-                <option value="">Select context</option>
-                {availableContexts.map((entry) => (
-                  <option key={entry} value={entry}>
-                    {entry}
-                  </option>
-                ))}
-              </select>
-            )}
-            {canTypeCustomContext && availableContexts.length > 0 && (
-              <datalist id="upload-context-options">
-                {availableContexts.map((entry) => (
-                  <option key={entry} value={entry} />
-                ))}
-              </datalist>
-            )}
+                <input
+                  type="checkbox"
+                  checked={selectedContextId === entry.id}
+                  onChange={(event) =>
+                    setSelectedContextId(event.target.checked ? entry.id : '')
+                  }
+                />
+                <span>{entry.name}</span>
+              </label>
+            ))}
           </>
           )}
           <select
@@ -228,7 +205,9 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
               disabled={
                 !selectedFile ||
                 isUploading ||
-                (uploadMode === 'existing' ? !existingRunId.trim() : (!runName.trim() || !context.trim()))
+                (uploadMode === 'existing'
+                  ? !existingRunId.trim()
+                  : (!runName.trim() || !selectedContextId.trim()))
               }
             >
               {isUploading ? 'Uploading...' : 'Upload'}
@@ -240,7 +219,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
                 setSelectedFile(null);
                 setRunName('');
                 setExistingRunId('');
-                setContext('');
+                setSelectedContextId('');
                 setStatus({ type: 'idle', message: '' });
                 setInputKey((prev) => prev + 1);
               }}
