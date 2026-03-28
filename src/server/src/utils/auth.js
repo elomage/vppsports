@@ -30,7 +30,7 @@ const signAccessToken = (user) => {
       sub: String(user._id),
       username: user.username,
       role: user.role,
-      contextRoles: user.contextRoles || [],
+      contexts: user.contexts || [],
       tokenVersion: user.tokenVersion,
       type: "access",
     },

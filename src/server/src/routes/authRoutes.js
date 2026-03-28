@@ -1,6 +1,7 @@
 const bcrypt = require("bcryptjs");
 const express = require("express");
 
+const { connectDB, getCollection } = require("../config/db");
 const User = require("../models/User");
 const { authenticateAccessToken } = require("../middleware/authenticate");
 const {
@@ -12,45 +13,31 @@ const {
   signRefreshToken,
   verifyRefreshToken,
 } = require("../utils/auth");
+const { normalizeContextIds, serializeUser } = require("../utils/userContexts");
 
 const router = express.Router();
 const REFRESH_COOKIE_NAME = "refreshToken";
 
-const normalizeContextRoles = (value) => {
-  if (!Array.isArray(value)) {
+const normalizeUserContexts = async (value) => {
+  const contextIds = normalizeContextIds(value);
+  if (contextIds.length === 0) {
     return [];
   }
 
-  const seenContexts = new Set();
-  const normalizedRoles = [];
+  const db = await connectDB();
+  const contextsColl = await getCollection(db, "contexts");
+  const activeContexts = await contextsColl
+    .find(
+      { _id: { $in: contextIds }, deletedAt: null },
+      { projection: { _id: 1 } }
+    )
+    .toArray();
 
-  value.forEach((entry) => {
-    const context = String(entry?.context || "")
-      .trim()
-      .toLowerCase();
-    const role = String(entry?.role || "user")
-      .trim()
-      .toLowerCase();
+  if (activeContexts.length !== contextIds.length) {
+    throw new Error("Each selected context must exist and be active.");
+  }
 
-    if (!context) {
-      throw new Error("Each context role requires a context.");
-    }
-
-    if (!["admin", "user"].includes(role)) {
-      throw new Error(
-        `Invalid context role '${role}'. Allowed roles: admin, user.`
-      );
-    }
-
-    if (seenContexts.has(context)) {
-      throw new Error(`Duplicate context '${context}' is not allowed.`);
-    }
-
-    seenContexts.add(context);
-    normalizedRoles.push({ context, role });
-  });
-
-  return normalizedRoles;
+  return contextIds;
 };
 
 const buildRefreshCookieOptions = () => ({
@@ -92,6 +79,15 @@ const validateCredentials = ({ username, password }) => {
   };
 };
 
+const requireAdmin = (req, res) => {
+  if (req.user?.role !== "admin") {
+    res.status(403).json({ message: "Admin role required." });
+    return false;
+  }
+
+  return true;
+};
+
 router.post("/login", async (req, res) => {
   try {
     const parsed = validateCredentials(req.body || {});
@@ -108,7 +104,7 @@ router.post("/login", async (req, res) => {
     }
 
     const user = await User.findOne({ username: parsed.username }).select(
-      "+passwordHash +refreshTokenHash tokenVersion role contextRoles username isActive"
+      "+passwordHash +refreshTokenHash tokenVersion role contexts username isActive +contextRoles"
     );
 
     if (!user || !user.isActive) {
@@ -131,12 +127,7 @@ router.post("/login", async (req, res) => {
       accessToken,
       tokenType: "Bearer",
       expiresIn: ACCESS_TOKEN_TTL,
-      user: {
-        id: user._id,
-        username: user.username,
-        role: user.role,
-        contextRoles: user.contextRoles,
-      },
+      user: await serializeUser(user),
     });
   } catch (error) {
     return res.status(500).json({
@@ -165,7 +156,7 @@ router.post("/refresh", async (req, res) => {
     }
 
     const user = await User.findById(decoded.sub).select(
-      "+refreshTokenHash tokenVersion username role contextRoles isActive refreshTokenExpiresAt"
+      "+refreshTokenHash tokenVersion username role contexts isActive refreshTokenExpiresAt +contextRoles"
     );
 
     if (!user || !user.isActive) {
@@ -225,20 +216,53 @@ router.post("/logout", authenticateAccessToken, async (req, res) => {
 
 router.get("/me", authenticateAccessToken, async (req, res) => {
   return res.json({
-    user: {
-      id: req.user._id,
-      username: req.user.username,
-      role: req.user.role,
-      contextRoles: req.user.contextRoles,
-    },
+    user: await serializeUser(req.user),
   });
+});
+
+router.get("/users", authenticateAccessToken, async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const users = await User.find(
+      { isActive: true },
+      "username role contexts isActive createdAt updatedAt deletedAt restoredAt +contextRoles"
+    )
+      .sort({ username: 1 })
+      .lean();
+
+    return res.json(await Promise.all(users.map((user) => serializeUser(user))));
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to fetch users.",
+      error: error.message,
+    });
+  }
+});
+
+router.get("/users/deleted", authenticateAccessToken, async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const users = await User.find(
+      { isActive: false },
+      "username role contexts isActive createdAt updatedAt deletedAt restoredAt +contextRoles"
+    )
+      .sort({ deletedAt: -1, username: 1 })
+      .lean();
+
+    return res.json(await Promise.all(users.map((user) => serializeUser(user))));
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to fetch deleted users.",
+      error: error.message,
+    });
+  }
 });
 
 router.post("/users", authenticateAccessToken, async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Admin role required." });
-    }
+    if (!requireAdmin(req, res)) return;
 
     const parsed = validateCredentials(req.body || {});
     if (parsed.error) {
@@ -254,9 +278,9 @@ router.post("/users", authenticateAccessToken, async (req, res) => {
         .json({ message: "Role must be either 'admin' or 'user'." });
     }
 
-    let contextRoles = [];
+    let contexts = [];
     try {
-      contextRoles = normalizeContextRoles(req.body?.contextRoles);
+      contexts = await normalizeUserContexts(req.body?.contextIds);
     } catch (error) {
       return res.status(400).json({ message: error.message });
     }
@@ -265,7 +289,9 @@ router.post("/users", authenticateAccessToken, async (req, res) => {
       .select("_id")
       .lean();
     if (existingUser) {
-      return res.status(409).json({ message: "Username already exists." });
+      return res.status(409).json({
+        message: "Username must be unique across active and deleted users.",
+      });
     }
 
     const passwordHash = await bcrypt.hash(parsed.password, 12);
@@ -273,18 +299,12 @@ router.post("/users", authenticateAccessToken, async (req, res) => {
       username: parsed.username,
       passwordHash,
       role,
-      contextRoles,
+      contexts,
     });
 
     return res.status(201).json({
       message: "User created successfully.",
-      user: {
-        id: createdUser._id,
-        username: createdUser.username,
-        role: createdUser.role,
-        contextRoles: createdUser.contextRoles,
-        isActive: createdUser.isActive,
-      },
+      user: await serializeUser(createdUser),
     });
   } catch (error) {
     return res.status(500).json({
@@ -293,5 +313,175 @@ router.post("/users", authenticateAccessToken, async (req, res) => {
     });
   }
 });
+
+router.patch("/users/:username", authenticateAccessToken, async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const currentUsername = String(req.params.username || "")
+      .trim()
+      .toLowerCase();
+    if (!currentUsername) {
+      return res.status(400).json({ message: "Username is required." });
+    }
+
+    const nextUsername = String(req.body?.username || "")
+      .trim()
+      .toLowerCase();
+    if (nextUsername.length < 3 || nextUsername.length > 64) {
+      return res.status(400).json({ message: "Username must be 3-64 characters long." });
+    }
+
+    const role = String(req.body?.role || "user")
+      .trim()
+      .toLowerCase();
+    if (!["admin", "user"].includes(role)) {
+      return res
+        .status(400)
+        .json({ message: "Role must be either 'admin' or 'user'." });
+    }
+
+    let contexts = [];
+    try {
+      contexts = await normalizeUserContexts(req.body?.contextIds);
+    } catch (error) {
+      return res.status(400).json({ message: error.message });
+    }
+
+    const currentUser = await User.findOne({ username: currentUsername });
+    if (!currentUser) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    const conflictingUser = await User.findOne({
+      username: nextUsername,
+      _id: { $ne: currentUser._id },
+    })
+      .select("_id")
+      .lean();
+    if (conflictingUser) {
+      return res.status(409).json({
+        message: "Username must be unique across active and deleted users.",
+      });
+    }
+
+    currentUser.username = nextUsername;
+    currentUser.role = role;
+    currentUser.contexts = contexts;
+
+    const password = req.body?.password;
+    if (typeof password === "string" && password.length > 0) {
+      if (password.length < 12 || password.length > 128) {
+        return res
+          .status(400)
+          .json({ message: "Password must be 12-128 characters long." });
+      }
+      currentUser.passwordHash = await bcrypt.hash(password, 12);
+    }
+
+    await currentUser.save();
+
+    return res.json({
+      message: "User updated successfully.",
+      user: await serializeUser(currentUser),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to update user.",
+      error: error.message,
+    });
+  }
+});
+
+router.delete("/users/:username", authenticateAccessToken, async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const username = String(req.params.username || "")
+      .trim()
+      .toLowerCase();
+    if (!username) {
+      return res.status(400).json({ message: "Username is required." });
+    }
+
+    const result = await User.updateOne(
+      { username, isActive: true },
+      {
+        $set: {
+          isActive: false,
+          deletedAt: new Date(),
+          refreshTokenHash: null,
+          refreshTokenExpiresAt: null,
+        },
+        $inc: {
+          tokenVersion: 1,
+        },
+      }
+    );
+
+    if (result.matchedCount !== 1) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    return res.json({
+      message: "User removed successfully.",
+      user: {
+        username,
+        isActive: false,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to remove user.",
+      error: error.message,
+    });
+  }
+});
+
+router.post(
+  "/users/:username/restore",
+  authenticateAccessToken,
+  async (req, res) => {
+    try {
+      if (!requireAdmin(req, res)) return;
+
+      const username = String(req.params.username || "")
+        .trim()
+        .toLowerCase();
+      if (!username) {
+        return res.status(400).json({ message: "Username is required." });
+      }
+
+      const result = await User.updateOne(
+        { username, isActive: false },
+        {
+          $set: {
+            isActive: true,
+            deletedAt: null,
+            restoredAt: new Date(),
+          },
+        }
+      );
+
+      if (result.matchedCount !== 1) {
+        return res.status(404).json({ message: "Deleted user not found." });
+      }
+
+      return res.json({
+        message: "User restored successfully.",
+        user: {
+          username,
+          isActive: true,
+          deletedAt: null,
+        },
+      });
+    } catch (error) {
+      return res.status(500).json({
+        message: "Failed to restore user.",
+        error: error.message,
+      });
+    }
+  }
+);
 
 module.exports = router;

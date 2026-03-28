@@ -1,12 +1,14 @@
 require("dotenv").config();
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
+const { ObjectId } = require("mongodb");
 
 const User = require("./models/User");
+const { connectDB, getCollection } = require("./config/db");
 
 const BCRYPT_ROUNDS = 12;
 
-const parseContextRoles = (value, fallbackRole = "user") => {
+const parseContextNames = (value) => {
   const rawValue = String(value || "").trim();
   if (!rawValue) {
     return [];
@@ -17,27 +19,15 @@ const parseContextRoles = (value, fallbackRole = "user") => {
     .map((entry) => entry.trim())
     .filter(Boolean)
     .map((entry) => {
-      const [contextPart, rolePart] = entry.split(":");
-      const context = String(contextPart || "")
-        .trim()
-        .toLowerCase();
-      const role = String(rolePart || fallbackRole)
+      const context = String(entry || "")
         .trim()
         .toLowerCase();
 
       if (!context) {
-        throw new Error(
-          "Context roles must use 'context:role' format, for example 'sport:user'."
-        );
+        throw new Error("Context names must be comma-separated non-empty values.");
       }
 
-      if (!["admin", "user"].includes(role)) {
-        throw new Error(
-          `Invalid role '${role}' in context roles. Allowed roles: admin, user.`
-        );
-      }
-
-      return { context, role };
+      return context;
     });
 };
 
@@ -47,10 +37,7 @@ const parseAndValidate = () => {
     .trim()
     .toLowerCase();
   const password = String(process.env.ADMIN_PASSWORD || "");
-  const contextRoles = parseContextRoles(
-    process.env.ADMIN_CONTEXT_ROLES,
-    "admin"
-  );
+  const contextNames = parseContextNames(process.env.ADMIN_CONTEXTS);
 
   if (!mongoUri) {
     throw new Error("MONGODB_URI is required.");
@@ -62,12 +49,31 @@ const parseAndValidate = () => {
     throw new Error("ADMIN_PASSWORD must be 12-128 characters.");
   }
 
-  return { mongoUri, username, password, contextRoles };
+  return { mongoUri, username, password, contextNames };
 };
 
 const seedUser = async () => {
-  const { mongoUri, username, password, contextRoles } = parseAndValidate();
+  const { mongoUri, username, password, contextNames } = parseAndValidate();
   await mongoose.connect(mongoUri);
+  const db = await connectDB();
+  const contextsColl = await getCollection(db, "contexts");
+
+  const contexts = contextNames.length
+    ? await contextsColl
+        .find(
+          { name: { $in: contextNames }, deletedAt: null },
+          { projection: { _id: 1, name: 1 } }
+        )
+        .toArray()
+    : [];
+
+  if (contexts.length !== contextNames.length) {
+    const found = new Set(contexts.map((entry) => String(entry.name || "").trim().toLowerCase()));
+    const missing = contextNames.filter((entry) => !found.has(entry));
+    throw new Error(`ADMIN_CONTEXTS contains unknown or deleted contexts: ${missing.join(", ")}`);
+  }
+
+  const contextIds = contexts.map((entry) => new ObjectId(entry._id));
 
   const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
@@ -90,7 +96,7 @@ const seedUser = async () => {
         username,
         passwordHash,
         role: "admin",
-        contextRoles,
+        contexts: contextIds,
         isActive: true,
         refreshTokenHash: null,
         refreshTokenExpiresAt: null,
@@ -101,7 +107,7 @@ const seedUser = async () => {
   );
 
   const finalUser = await User.findOne({ username }).select(
-    "_id username role contextRoles isActive"
+    "_id username role contexts isActive"
   );
   console.log(
     JSON.stringify(
@@ -111,7 +117,7 @@ const seedUser = async () => {
           id: String(finalUser._id),
           username: finalUser.username,
           role: finalUser.role,
-          contextRoles: finalUser.contextRoles,
+          contexts: (finalUser.contexts || []).map((entry) => String(entry)),
           isActive: finalUser.isActive,
         },
       },

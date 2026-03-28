@@ -3,19 +3,47 @@ import {
   createContext,
   createUser,
   deleteRun,
-  fetchDeletedContexts,
   fetchContexts,
+  fetchDeletedContexts,
+  fetchDeletedUsers,
+  fetchUsers,
   removeContext,
+  removeUser,
   restoreContext,
+  restoreUser,
   updateContext,
+  updateUser,
 } from "./api";
-
-const emptyContextRole = { context: "", role: "user" };
 
 const normalizeContext = (value) =>
   String(value || "")
     .trim()
     .toLowerCase();
+
+const normalizeUsername = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+
+const sortContextsByName = (contexts) =>
+  [...contexts].sort((a, b) =>
+    String(a?.name || "").localeCompare(String(b?.name || "")),
+  );
+
+const formatContexts = (contexts) => {
+  if (!Array.isArray(contexts) || contexts.length === 0) {
+    return "None";
+  }
+
+  return contexts.map((context) => context.name).join(", ");
+};
+
+const createEmptyUserForm = () => ({
+  username: "",
+  password: "",
+  role: "user",
+  contextIds: [],
+});
 
 const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
   const [selectedRunId, setSelectedRunId] = useState("");
@@ -32,17 +60,13 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
     message: "",
   });
   const [isLoadingContexts, setIsLoadingContexts] = useState(false);
-  const [form, setForm] = useState({
-    username: "",
-    password: "",
-    role: "user",
-    contextRoles: [{ ...emptyContextRole }],
-  });
-  const [isCreating, setIsCreating] = useState(false);
-  const [createStatus, setCreateStatus] = useState({
-    type: "idle",
-    message: "",
-  });
+  const [form, setForm] = useState(createEmptyUserForm);
+  const [editingUsername, setEditingUsername] = useState("");
+  const [storedUsers, setStoredUsers] = useState([]);
+  const [deletedUsers, setDeletedUsers] = useState([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [isSavingUser, setIsSavingUser] = useState(false);
+  const [userStatus, setUserStatus] = useState({ type: "idle", message: "" });
 
   const sortedRuns = useMemo(
     () =>
@@ -53,9 +77,28 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
   );
 
   const availableContexts = useMemo(
-    () => [...new Set(storedContexts)].sort((a, b) => a.localeCompare(b)),
+    () =>
+      sortContextsByName(Array.isArray(storedContexts) ? storedContexts : []),
     [storedContexts],
   );
+
+  const removedContexts = useMemo(
+    () =>
+      sortContextsByName(Array.isArray(deletedContexts) ? deletedContexts : []),
+    [deletedContexts],
+  );
+
+  const activeContextNames = useMemo(
+    () => availableContexts.map((context) => context.name),
+    [availableContexts],
+  );
+
+  const deletedContextNames = useMemo(
+    () => removedContexts.map((context) => context.name),
+    [removedContexts],
+  );
+
+  const isEditingUser = Boolean(editingUsername);
 
   const loadContexts = async () => {
     setIsLoadingContexts(true);
@@ -65,14 +108,10 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
         fetchDeletedContexts(),
       ]);
       setStoredContexts(
-        Array.isArray(contexts)
-          ? contexts.map((entry) => normalizeContext(entry?.name)).filter(Boolean)
-          : [],
+        Array.isArray(contexts) ? sortContextsByName(contexts) : [],
       );
       setDeletedContexts(
-        Array.isArray(deleted)
-          ? deleted.map((entry) => normalizeContext(entry?.name)).filter(Boolean)
-          : [],
+        Array.isArray(deleted) ? sortContextsByName(deleted) : [],
       );
     } catch (error) {
       setContextStatus({
@@ -85,34 +124,72 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
     }
   };
 
+  const loadUsers = async () => {
+    setIsLoadingUsers(true);
+    try {
+      const [activeUsers, removedUsers] = await Promise.all([
+        fetchUsers(),
+        fetchDeletedUsers(),
+      ]);
+      setStoredUsers(Array.isArray(activeUsers) ? activeUsers : []);
+      setDeletedUsers(Array.isArray(removedUsers) ? removedUsers : []);
+    } catch (error) {
+      setUserStatus({
+        type: "error",
+        message:
+          error instanceof Error ? error.message : "Failed to load users.",
+      });
+    } finally {
+      setIsLoadingUsers(false);
+    }
+  };
+
   useEffect(() => {
     loadContexts();
+    loadUsers();
   }, []);
 
-  const updateContextRole = (index, field, value) => {
-    setForm((current) => ({
-      ...current,
-      contextRoles: current.contextRoles.map((entry, entryIndex) =>
-        entryIndex === index ? { ...entry, [field]: value } : entry,
-      ),
-    }));
+  const toggleContextSelection = (contextId, checked) => {
+    setForm((current) => {
+      const hasContext = current.contextIds.includes(contextId);
+
+      if (checked && !hasContext) {
+        return {
+          ...current,
+          contextIds: [...current.contextIds, contextId],
+        };
+      }
+
+      if (!checked && hasContext) {
+        return {
+          ...current,
+          contextIds: current.contextIds.filter((entry) => entry !== contextId),
+        };
+      }
+
+      return current;
+    });
   };
 
-  const addContextRole = () => {
-    setForm((current) => ({
-      ...current,
-      contextRoles: [...current.contextRoles, { ...emptyContextRole }],
-    }));
+  const resetUserForm = () => {
+    setForm(createEmptyUserForm());
+    setEditingUsername("");
   };
 
-  const removeContextRole = (index) => {
-    setForm((current) => ({
-      ...current,
-      contextRoles:
-        current.contextRoles.length > 1
-          ? current.contextRoles.filter((_, entryIndex) => entryIndex !== index)
-          : [{ ...emptyContextRole }],
-    }));
+  const populateUserForm = (user) => {
+    setEditingUsername(normalizeUsername(user?.username));
+    setForm({
+      username: user?.username || "",
+      password: "",
+      role: user?.role || "user",
+      contextIds: Array.isArray(user?.contexts)
+        ? user.contexts.map((context) => context.id).filter(Boolean)
+        : [],
+    });
+    setUserStatus({
+      type: "info",
+      message: `Editing user '${user.username}'.`,
+    });
   };
 
   const handleAddContext = () => {
@@ -122,7 +199,7 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
       return;
     }
 
-    if (availableContexts.includes(normalized)) {
+    if (activeContextNames.includes(normalized)) {
       setContextStatus({
         type: "error",
         message: "Context already exists in the list.",
@@ -130,7 +207,7 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
       return;
     }
 
-    if (deletedContexts.includes(normalized)) {
+    if (deletedContextNames.includes(normalized)) {
       setContextStatus({
         type: "error",
         message: "A deleted context with this name exists. Restore it instead.",
@@ -141,21 +218,19 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
     const saveContext = async () => {
       try {
         const response = await createContext(normalized);
-        const createdName = normalizeContext(
-          response?.context?.name || normalized,
-        );
-        setStoredContexts((current) =>
-          [...new Set([...current, createdName])].sort((a, b) =>
-            a.localeCompare(b),
-          ),
-        );
+        const createdContext = response?.context || null;
+        if (createdContext) {
+          setStoredContexts((current) =>
+            sortContextsByName([...current, createdContext]),
+          );
+        }
         setDeletedContexts((current) =>
-          current.filter((entry) => entry !== createdName),
+          current.filter((entry) => entry.id !== createdContext?.id),
         );
         setNewContext("");
         setContextStatus({
           type: "success",
-          message: `Context '${createdName}' added.`,
+          message: `Context '${normalizeContext(createdContext?.name || normalized)}' added.`,
         });
       } catch (error) {
         setContextStatus({
@@ -172,24 +247,27 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
   };
 
   const handleEditContext = (context) => {
-    const newName = window.prompt("Enter new name for context", context);
+    const newName = window.prompt("Enter new name for context", context.name);
     const normalized = normalizeContext(newName);
     if (!normalized) {
-      setContextStatus({ type: "error", message: "Context name cannot be empty." });
+      setContextStatus({
+        type: "error",
+        message: "Context name cannot be empty.",
+      });
       return;
     }
-    if (normalized === context) {
+    if (normalized === context.name) {
       setContextStatus({ type: "info", message: "Context name is unchanged." });
       return;
     }
-    if (availableContexts.includes(normalized)) {
+    if (activeContextNames.includes(normalized)) {
       setContextStatus({
         type: "error",
         message: "Another context with this name already exists.",
       });
       return;
     }
-    if (deletedContexts.includes(normalized)) {
+    if (deletedContextNames.includes(normalized)) {
       setContextStatus({
         type: "error",
         message: "A deleted context with this name already exists.",
@@ -199,33 +277,30 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
 
     const saveContext = async () => {
       try {
-        const response = await updateContext(context, normalized);
-        const updatedName = normalizeContext(
-          response?.context?.name || normalized,
-        );
+        const response = await updateContext(context.name, normalized);
+        const updatedContext = response?.context || {
+          ...context,
+          name: normalized,
+        };
         setStoredContexts((current) =>
-          current
-            .map((entry) => (entry === context ? updatedName : entry))
-            .filter(Boolean)
-            .filter((entry, index, array) => array.indexOf(entry) === index)
-            .sort((a, b) => a.localeCompare(b)),
+          sortContextsByName(
+            current.map((entry) =>
+              entry.id === updatedContext.id ? updatedContext : entry,
+            ),
+          ),
         );
-        setForm((current) => ({
-          ...current,
-          contextRoles: current.contextRoles.map((entry) => ({
-            ...entry,
-            context: entry.context === context ? updatedName : entry.context,
-          })),
-        }));
+        await loadUsers();
         setContextStatus({
           type: "success",
-          message: `Context '${context}' renamed to '${updatedName}'.`,
+          message: `Context '${context.name}' renamed to '${updatedContext.name}'.`,
         });
       } catch (error) {
         setContextStatus({
           type: "error",
           message:
-            error instanceof Error ? error.message : "Failed to update context.",
+            error instanceof Error
+              ? error.message
+              : "Failed to update context.",
         });
       }
     };
@@ -235,64 +310,71 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
 
   const handleRemoveContext = (context) => {
     const confirmed = window.confirm(
-      `Remove context '${context}' from the available context list?`,
+      `Remove context '${context.name}' from the available context list?`,
     );
     if (!confirmed) return;
 
-    const deleteContext = async () => {
+    const deleteContextRecord = async () => {
       try {
-        await removeContext(context);
-        setStoredContexts((current) => current.filter((entry) => entry !== context));
+        await removeContext(context.name);
+        setStoredContexts((current) =>
+          current.filter((entry) => entry.id !== context.id),
+        );
         setDeletedContexts((current) =>
-          [...new Set([...current, context])].sort((a, b) => a.localeCompare(b)),
+          sortContextsByName([...current, context]),
         );
         setForm((current) => ({
           ...current,
-          contextRoles: current.contextRoles.map((entry) => ({
-            ...entry,
-            context: entry.context === context ? "" : entry.context,
-          })),
+          contextIds: current.contextIds.filter(
+            (entry) => entry !== context.id,
+          ),
         }));
+        await loadUsers();
         setContextStatus({
           type: "success",
-          message: `Context '${context}' removed.`,
+          message: `Context '${context.name}' removed.`,
         });
       } catch (error) {
         setContextStatus({
           type: "error",
           message:
-            error instanceof Error ? error.message : "Failed to remove context.",
+            error instanceof Error
+              ? error.message
+              : "Failed to remove context.",
         });
       }
     };
 
-    deleteContext();
+    deleteContextRecord();
   };
 
   const handleRestoreContext = (context) => {
     const restoreDeletedContext = async () => {
       try {
-        await restoreContext(context);
-        setDeletedContexts((current) => current.filter((entry) => entry !== context));
+        await restoreContext(context.name);
+        setDeletedContexts((current) =>
+          current.filter((entry) => entry.id !== context.id),
+        );
         setStoredContexts((current) =>
-          [...new Set([...current, context])].sort((a, b) => a.localeCompare(b)),
+          sortContextsByName([...current, context]),
         );
         setContextStatus({
           type: "success",
-          message: `Context '${context}' restored.`,
+          message: `Context '${context.name}' restored.`,
         });
       } catch (error) {
         setContextStatus({
           type: "error",
           message:
-            error instanceof Error ? error.message : "Failed to restore context.",
+            error instanceof Error
+              ? error.message
+              : "Failed to restore context.",
         });
       }
     };
 
     restoreDeletedContext();
   };
-
 
   const handleDelete = async () => {
     if (!selectedRunId || isDeleting) return;
@@ -324,48 +406,97 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
     }
   };
 
-  const handleCreateUser = async (event) => {
+  const handleSaveUser = async (event) => {
     event.preventDefault();
-    if (isCreating) return;
+    if (isSavingUser) return;
 
-    setIsCreating(true);
-    setCreateStatus({ type: "info", message: "Creating user..." });
+    setIsSavingUser(true);
+    setUserStatus({
+      type: "info",
+      message: isEditingUser ? "Updating user..." : "Creating user...",
+    });
 
     try {
-      const contextRoles = form.contextRoles
-        .map((entry) => ({
-          context: normalizeContext(entry.context),
-          role: entry.role,
-        }))
-        .filter((entry) => entry.context);
-
-      const response = await createUser({
-        username: form.username.trim(),
-        password: form.password,
+      const payload = {
+        username: normalizeUsername(form.username),
         role: form.role,
-        contextRoles,
-      });
+        contextIds: form.contextIds,
+      };
 
-      setCreateStatus({
+      if (form.password) {
+        payload.password = form.password;
+      }
+
+      const response = isEditingUser
+        ? await updateUser(editingUsername, payload)
+        : await createUser(payload);
+
+      setUserStatus({
         type: "success",
-        message: "User created successfully.",
+        message: isEditingUser
+          ? `User '${payload.username}' updated successfully.`
+          : "User created successfully.",
       });
-      setForm({
-        username: "",
-        password: "",
-        role: "user",
-        contextRoles: [{ ...emptyContextRole }],
-      });
-      onUserCreated?.(response.user);
+      resetUserForm();
+      await loadUsers();
+      onUserCreated?.(response?.user);
     } catch (error) {
-      setCreateStatus({
+      setUserStatus({
         type: "error",
         message:
-          error instanceof Error ? error.message : "Failed to create user.",
+          error instanceof Error ? error.message : "Failed to save user.",
       });
     } finally {
-      setIsCreating(false);
+      setIsSavingUser(false);
     }
+  };
+
+  const handleRemoveUser = (username) => {
+    const confirmed = window.confirm(`Remove user '${username}'?`);
+    if (!confirmed) return;
+
+    const deleteUserRecord = async () => {
+      try {
+        await removeUser(username);
+        await loadUsers();
+        if (editingUsername === username) {
+          resetUserForm();
+        }
+        setUserStatus({
+          type: "success",
+          message: `User '${username}' removed.`,
+        });
+      } catch (error) {
+        setUserStatus({
+          type: "error",
+          message:
+            error instanceof Error ? error.message : "Failed to remove user.",
+        });
+      }
+    };
+
+    deleteUserRecord();
+  };
+
+  const handleRestoreUser = (username) => {
+    const restoreDeletedUser = async () => {
+      try {
+        await restoreUser(username);
+        await loadUsers();
+        setUserStatus({
+          type: "success",
+          message: `User '${username}' restored.`,
+        });
+      } catch (error) {
+        setUserStatus({
+          type: "error",
+          message:
+            error instanceof Error ? error.message : "Failed to restore user.",
+        });
+      }
+    };
+
+    restoreDeletedUser();
   };
 
   return (
@@ -409,6 +540,7 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
           )}
         </div>
       </div>
+
       <div className="upload-card col m-2">
         <h3>Context management</h3>
         <div>
@@ -424,13 +556,13 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
               setNewContext(event.target.value);
               setContextStatus({ type: "idle", message: "" });
             }}
-            disabled={isCreating}
+            disabled={isSavingUser}
           />
           <button
             className="btn btn-outline-primary btn-sm"
             type="button"
             onClick={handleAddContext}
-            disabled={isCreating}
+            disabled={isSavingUser}
           >
             Add context
           </button>
@@ -444,83 +576,94 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
         )}
         {availableContexts.length > 0 && (
           <>
-          <div>
-            <strong>Available contexts</strong>
-          </div>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {availableContexts.map((context) => (
-                <tr key={context}>
-                  <td>{context}</td>
-                  <td>
-                    <button
-                      className="btn btn-secondary btn-sm me-2"
-                      type="button"
-                      onClick={() => handleEditContext(context)}
-                      disabled={isCreating}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      className="btn btn-outline-danger btn-sm"
-                      type="button"
-                      onClick={() => handleRemoveContext(context)}
-                      disabled={isCreating}
-                    >
-                      Remove
-                    </button>
-                  </td>
+            <div>
+              <strong>Available contexts</strong>
+            </div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {availableContexts.map((context) => (
+                  <tr key={context.id}>
+                    <td>{context.name}</td>
+                    <td>
+                      <button
+                        className="btn btn-secondary btn-sm me-2"
+                        type="button"
+                        onClick={() => handleEditContext(context)}
+                        disabled={isSavingUser}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="btn btn-outline-danger btn-sm"
+                        type="button"
+                        onClick={() => handleRemoveContext(context)}
+                        disabled={isSavingUser}
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </>
         )}
-        {deletedContexts.length > 0 && (
+        {removedContexts.length > 0 && (
           <>
-          <div>
-            <strong>Deleted contexts</strong>
-          </div>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {deletedContexts.map((context) => (
-                <tr key={context}>
-                  <td>{context}</td>
-                  <td>
-                    <button
-                      className="btn btn-outline-secondary btn-sm"
-                      type="button"
-                      onClick={() => handleRestoreContext(context)}
-                      disabled={isCreating}
-                    >
-                      Restore
-                    </button>
-                  </td>
+            <div>
+              <strong>Deleted contexts</strong>
+            </div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {removedContexts.map((context) => (
+                  <tr key={context.id}>
+                    <td>{context.name}</td>
+                    <td>
+                      <button
+                        className="btn btn-outline-secondary btn-sm"
+                        type="button"
+                        onClick={() => handleRestoreContext(context)}
+                        disabled={isSavingUser}
+                      >
+                        Restore
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </>
         )}
         {isLoadingContexts && (
           <div className="upload-file-meta">Loading contexts...</div>
         )}
       </div>
+
       <div className="upload-card col m-2">
-        <form className="upload-form" onSubmit={handleCreateUser}>
+        <form className="upload-form" onSubmit={handleSaveUser}>
           <h3>User management</h3>
+          {isEditingUser && (
+            <div
+              className={`upload-status ${userStatus.type !== "idle" ? `is-${userStatus.type}` : ""}`}
+            >
+              {userStatus.message}
+            </div>
+          )}
+          <div>
+            <strong>{isEditingUser ? "Edit user" : "Create user"}</strong>
+          </div>
 
           <input
             className="form-control"
@@ -536,14 +679,18 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
               }))
             }
             required
-            disabled={isCreating}
+            disabled={isSavingUser}
           />
           <input
             className="form-control"
             type="password"
-            placeholder="Password"
+            placeholder={
+              isEditingUser
+                ? "New password (leave blank to keep current)"
+                : "Password"
+            }
             value={form.password}
-            minLength={12}
+            minLength={isEditingUser ? 0 : 12}
             maxLength={128}
             onChange={(event) =>
               setForm((current) => ({
@@ -551,8 +698,8 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
                 password: event.target.value,
               }))
             }
-            required
-            disabled={isCreating}
+            required={!isEditingUser}
+            disabled={isSavingUser}
           />
           <select
             className="form-control"
@@ -560,73 +707,146 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
             onChange={(event) =>
               setForm((current) => ({ ...current, role: event.target.value }))
             }
-            disabled={isCreating}
+            disabled={isSavingUser}
           >
             <option value="user">User</option>
             <option value="admin">Admin</option>
           </select>
 
-          {form.contextRoles.map((entry, index) => (
-            <div
-              key={`${index}-${entry.context}-${entry.role}`}
-              className="upload-actions"
+          <div>
+            <strong>Contexts</strong>
+          </div>
+          {availableContexts.map((context) => (
+            <label
+              key={context.id}
+              className="form-control d-flex align-items-center gap-2"
             >
-              <select
-                className="form-control"
-                value={entry.context}
+              <input
+                type="checkbox"
+                checked={form.contextIds.includes(context.id)}
                 onChange={(event) =>
-                  updateContextRole(index, "context", event.target.value)
+                  toggleContextSelection(context.id, event.target.checked)
                 }
-                disabled={isCreating}
-              >
-                <option value="">Select context</option>
-                {availableContexts.map((context) => (
-                  <option key={context} value={context}>
-                    {context}
-                  </option>
-                ))}
-              </select>
-
-              {index !== 0 && (
-                <button
-                  className="btn btn-outline-danger btn-sm"
-                  type="button"
-                  onClick={() => removeContextRole(index)}
-                  disabled={isCreating}
-                >
-                  Remove
-                </button>
-              )}
-            </div>
+                disabled={isSavingUser}
+              />
+              <span>{context.name}</span>
+            </label>
           ))}
 
           <div className="upload-actions">
             <button
-              className="btn btn-outline-secondary btn-sm"
-              type="button"
-              onClick={addContextRole}
-              disabled={isCreating}
-            >
-              Add context role
-            </button>
-          </div>
-          <div className="upload-actions">
-            <button
               className="btn btn-primary"
               type="submit"
-              disabled={isCreating || availableContexts.length === 0}
+              disabled={isSavingUser || availableContexts.length === 0}
             >
-              {isCreating ? "Creating..." : "Create user"}
+              {isSavingUser
+                ? isEditingUser
+                  ? "Saving..."
+                  : "Creating..."
+                : isEditingUser
+                  ? "Save user"
+                  : "Create user"}
             </button>
+            {isEditingUser && (
+              <>
+                <button
+                  className="btn btn-outline-secondary btn-sm"
+                  type="button"
+                  onClick={resetUserForm}
+                  disabled={isSavingUser}
+                >
+                  Cancel edit
+                </button>
+              </>
+            )}
           </div>
-          {createStatus.message && (
-            <div
-              className={`upload-status ${createStatus.type !== "idle" ? `is-${createStatus.type}` : ""}`}
-            >
-              {createStatus.message}
-            </div>
-          )}
         </form>
+
+        {storedUsers.length > 0 && (
+          <div className="mt-2">
+            <div>
+              <strong>Active users</strong>
+            </div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Username</th>
+                  <th>Role</th>
+                  <th>Contexts</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {storedUsers.map((user) => (
+                  <tr key={user.id || user.username}>
+                    <td>{user.username}</td>
+                    <td>{user.role}</td>
+                    <td>{formatContexts(user.contexts)}</td>
+                    <td>
+                      <button
+                        className="btn btn-secondary btn-sm me-2"
+                        type="button"
+                        onClick={() => populateUserForm(user)}
+                        disabled={isSavingUser}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="btn btn-outline-danger btn-sm"
+                        type="button"
+                        onClick={() => handleRemoveUser(user.username)}
+                        disabled={isSavingUser}
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {deletedUsers.length > 0 && (
+          <>
+            <div>
+              <strong>Deleted users</strong>
+            </div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Username</th>
+                  <th>Role</th>
+                  <th>Contexts</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deletedUsers.map((user) => (
+                  <tr key={user.id || user.username}>
+                    <td>{user.username}</td>
+                    <td>{user.role}</td>
+                    <td>{formatContexts(user.contexts)}</td>
+                    <td>
+                      <button
+                        className="btn btn-outline-secondary btn-sm"
+                        type="button"
+                        onClick={() => handleRestoreUser(user.username)}
+                        disabled={isSavingUser}
+                      >
+                        Restore
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+
+        {isLoadingUsers && (
+          <div className="upload-file-meta">Loading users...</div>
+        )}
       </div>
     </div>
   );

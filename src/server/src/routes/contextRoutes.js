@@ -25,13 +25,14 @@ router.get("/", async (req, res) => {
     const contexts = await contextsColl
       .find(
         { deletedAt: null },
-        { projection: { _id: 0, name: 1, createdAt: 1 } }
+        { projection: { _id: 1, name: 1, createdAt: 1 } }
       )
       .sort({ name: 1 })
       .toArray();
 
     return res.json(
       contexts.map((context) => ({
+        id: String(context._id),
         name: normalizeContext(context.name),
         createdAt: context.createdAt || null,
       }))
@@ -51,13 +52,14 @@ router.get("/deleted", async (req, res) => {
     const contexts = await contextsColl
       .find(
         { deletedAt: { $ne: null } },
-        { projection: { _id: 0, name: 1, createdAt: 1, deletedAt: 1 } }
+        { projection: { _id: 1, name: 1, createdAt: 1, deletedAt: 1 } }
       )
       .sort({ deletedAt: -1, name: 1 })
       .toArray();
 
     return res.json(
       contexts.map((context) => ({
+        id: String(context._id),
         name: normalizeContext(context.name),
         createdAt: context.createdAt || null,
         deletedAt: context.deletedAt || null,
@@ -98,11 +100,17 @@ router.post("/", async (req, res) => {
       deletedAt: null,
     };
 
-    await contextsColl.insertOne(document);
+    const insertResult = await contextsColl.insertOne(document);
+    document._id = insertResult.insertedId;
 
     return res.status(201).json({
       message: "Context created successfully.",
-      context: document,
+      context: {
+        id: String(document._id),
+        name: document.name,
+        createdAt: document.createdAt,
+        deletedAt: document.deletedAt,
+      },
     });
   } catch (error) {
     return res.status(500).json({
@@ -123,6 +131,10 @@ router.post("/:name/restore", async (req, res) => {
 
     const db = await connectDB();
     const contextsColl = await getCollection(db, "contexts");
+    const deletedContext = await contextsColl.findOne({
+      name: normalizedName,
+      deletedAt: { $ne: null },
+    });
     const result = await contextsColl.updateOne(
       { name: normalizedName, deletedAt: { $ne: null } },
       {
@@ -141,6 +153,7 @@ router.post("/:name/restore", async (req, res) => {
     return res.json({
       message: "Context restored successfully.",
       context: {
+        id: deletedContext ? String(deletedContext._id) : null,
         name: normalizedName,
         deletedAt: null,
       },
@@ -204,6 +217,7 @@ router.patch("/:name", async (req, res) => {
     return res.json({
       message: "Context updated successfully.",
       context: {
+        id: String(currentContext._id),
         name: nextName,
         createdAt: currentContext.createdAt || null,
         deletedAt: null,
@@ -228,6 +242,10 @@ router.delete("/:name", async (req, res) => {
 
     const db = await connectDB();
     const contextsColl = await getCollection(db, "contexts");
+    const currentContext = await contextsColl.findOne({
+      name: normalizedName,
+      deletedAt: null,
+    });
     const result = await contextsColl.updateOne(
       { name: normalizedName, deletedAt: null },
       {
@@ -244,6 +262,7 @@ router.delete("/:name", async (req, res) => {
     return res.json({
       message: "Context removed successfully.",
       context: {
+        id: currentContext ? String(currentContext._id) : null,
         name: normalizedName,
       },
     });

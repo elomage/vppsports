@@ -40,9 +40,9 @@ router.get("/runs", async (req, res) => {
       req.user?.role === "admin"
         ? runs
         : runs.filter((run) =>
-            (req.user?.contextRoles || []).some(
-              ({ context }) =>
-                String(context || "").trim().toLowerCase() ===
+            (req.user?.contexts || []).some(
+              (context) =>
+                String(context?.name || "").trim().toLowerCase() ===
                 String(run.context || "").trim().toLowerCase()
             )
           );

@@ -15,8 +15,14 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
 
   const availableContexts = useMemo(
     () =>
-      Array.isArray(currentUser?.contextRoles)
-        ? [...new Set(currentUser.contextRoles.map(({ context }) => String(context || '').trim().toLowerCase()).filter(Boolean))]
+      Array.isArray(currentUser?.contexts)
+        ? [
+            ...new Set(
+              currentUser.contexts
+                .map(({ name }) => String(name || '').trim().toLowerCase())
+                .filter(Boolean)
+            ),
+          ]
         : [],
     [currentUser]
   );

@@ -1,5 +1,6 @@
 const User = require("../models/User");
 const { verifyAccessToken } = require("../utils/auth");
+const { loadContextsByIds } = require("../utils/userContexts");
 
 const authenticateAccessToken = async (req, res, next) => {
   try {
@@ -19,7 +20,7 @@ const authenticateAccessToken = async (req, res, next) => {
     }
 
     const user = await User.findById(decoded.sub).select(
-      "_id username role contextRoles tokenVersion isActive"
+      "_id username role contexts tokenVersion isActive +contextRoles"
     );
     if (!user || !user.isActive) {
       return res.status(401).json({ message: "User is inactive" });
@@ -29,6 +30,7 @@ const authenticateAccessToken = async (req, res, next) => {
       return res.status(401).json({ message: "Token revoked" });
     }
 
+    user.contexts = await loadContextsByIds(user.contexts || []);
     req.user = user;
     return next();
   } catch (error) {

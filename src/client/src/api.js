@@ -313,6 +313,53 @@ export async function createUser(payload) {
   });
 }
 
+export async function fetchUsers() {
+  return request("/auth/users", {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+export async function fetchDeletedUsers() {
+  return request("/auth/users/deleted", {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+export async function updateUser(currentUsername, payload) {
+  return request(`/auth/users/${encodeURIComponent(currentUsername)}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function removeUser(username) {
+  return request(`/auth/users/${encodeURIComponent(username)}`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+export async function restoreUser(username) {
+  return request(`/auth/users/${encodeURIComponent(username)}/restore`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({}),
+  });
+}
+
 export async function fetchContexts() {
   return request("/context", {
     method: "GET",

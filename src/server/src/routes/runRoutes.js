@@ -42,31 +42,20 @@ const normalizeContext = (value) => {
 const isGlobalAdmin = (user) => user?.role === "admin";
 
 const getUserContexts = (user) =>
-  Array.isArray(user?.contextRoles)
-    ? user.contextRoles
-        .map(({ context }) => normalizeContext(context))
+  Array.isArray(user?.contexts)
+    ? user.contexts
+        .map((context) => normalizeContext(context?.name))
         .filter(Boolean)
     : [];
 
-const getUserContextRole = (user, contextName) => {
-  const normalizedContext = normalizeContext(contextName);
-  if (!normalizedContext) return null;
-
-  return (
-    user?.contextRoles?.find(
-      ({ context }) => normalizeContext(context) === normalizedContext
-    )?.role || null
-  );
-};
-
 const canAccessContext = (user, contextName) => {
   if (isGlobalAdmin(user)) return true;
-  return Boolean(getUserContextRole(user, contextName));
+  return getUserContexts(user).includes(normalizeContext(contextName));
 };
 
 const canAdministerContext = (user, contextName) => {
   if (isGlobalAdmin(user)) return true;
-  return getUserContextRole(user, contextName) === "admin";
+  return false;
 };
 
 const buildRunAccessQuery = (user) => {
