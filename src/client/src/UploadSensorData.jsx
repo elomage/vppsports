@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import './UploadSensorData.css';
-import { uploadSensorDataBin } from './api';
+import { uploadRunVideo, uploadSensorDataBin } from './api';
 
 const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -12,6 +12,11 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
   const [status, setStatus] = useState({ type: 'idle', message: '' });
   const [isUploading, setIsUploading] = useState(false);
   const [inputKey, setInputKey] = useState(0);
+  const [selectedVideoFile, setSelectedVideoFile] = useState(null);
+  const [selectedVideoRunId, setSelectedVideoRunId] = useState('');
+  const [videoStatus, setVideoStatus] = useState({ type: 'idle', message: '' });
+  const [isVideoUploading, setIsVideoUploading] = useState(false);
+  const [videoInputKey, setVideoInputKey] = useState(0);
 
   const availableContexts = useMemo(
     () =>
@@ -43,6 +48,25 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
     }
 
     setSelectedFile(file);
+  };
+
+  const handleVideoFileChange = (event) => {
+    const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
+    setVideoStatus({ type: 'idle', message: '' });
+
+    if (!file) {
+      setSelectedVideoFile(null);
+      return;
+    }
+
+    if (!file.name.toLowerCase().endsWith('.mp4')) {
+      setSelectedVideoFile(null);
+      setVideoStatus({ type: 'error', message: 'Please select an .MP4 video file.' });
+      setVideoInputKey((prev) => prev + 1);
+      return;
+    }
+
+    setSelectedVideoFile(file);
   };
 
   const handleUpload = async (event) => {
@@ -96,6 +120,36 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
       setStatus({ type: 'error', message });
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  const handleVideoUpload = async (event) => {
+    event.preventDefault();
+
+    if (!selectedVideoRunId.trim()) {
+      setVideoStatus({ type: 'error', message: 'Select an existing run before uploading a video.' });
+      return;
+    }
+
+    if (!selectedVideoFile) {
+      setVideoStatus({ type: 'error', message: 'Choose an .MP4 file before uploading.' });
+      return;
+    }
+
+    setIsVideoUploading(true);
+    setVideoStatus({ type: 'info', message: 'Uploading video...' });
+
+    try {
+      await uploadRunVideo(selectedVideoFile, selectedVideoRunId.trim());
+      setVideoStatus({ type: 'success', message: 'Video uploaded and linked to the selected run.' });
+      setSelectedVideoFile(null);
+      setSelectedVideoRunId('');
+      setVideoInputKey((prev) => prev + 1);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Video upload failed. Please try again.';
+      setVideoStatus({ type: 'error', message });
+    } finally {
+      setIsVideoUploading(false);
     }
   };
 
@@ -231,6 +285,65 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
           {status.message && (
             <div className={`upload-status ${status.type !== 'idle' ? `is-${status.type}` : ''}`} aria-live="polite">
               {status.message}
+            </div>
+          )}
+        </form>
+      </div>
+      <div className="upload-card">
+        <h2>Upload Run Video</h2>
+        <p className="upload-hint">
+          Upload an `.mp4` file for an existing run. Videos are stored in the server workspace and served from there.
+        </p>
+        <form className="upload-form" onSubmit={handleVideoUpload}>
+          <select
+            className="form-control"
+            value={selectedVideoRunId}
+            onChange={(event) => setSelectedVideoRunId(event.target.value)}
+          >
+            <option value="">Select existing run</option>
+            {visibleRuns.map((run) => (
+              <option key={run._id} value={run._id}>
+                {run.name || `Run ${run._id}`}{run.context ? ` (${run.context})` : ''}
+              </option>
+            ))}
+          </select>
+          <input
+            key={videoInputKey}
+            className="form-control"
+            type="file"
+            accept="video/mp4,.mp4"
+            onChange={handleVideoFileChange}
+          />
+          {selectedVideoFile && (
+            <div className="upload-file-meta">
+              Selected: {selectedVideoFile.name} ({Math.round(selectedVideoFile.size / 1024)} KB)
+            </div>
+          )}
+          <div className="upload-actions">
+            <button
+              className="btn btn-primary"
+              type="submit"
+              disabled={!selectedVideoFile || !selectedVideoRunId.trim() || isVideoUploading}
+            >
+              {isVideoUploading ? 'Uploading...' : 'Upload video'}
+            </button>
+            <button
+              className="btn btn-outline-danger btn-sm"
+              type="button"
+              onClick={() => {
+                setSelectedVideoFile(null);
+                setSelectedVideoRunId('');
+                setVideoStatus({ type: 'idle', message: '' });
+                setVideoInputKey((prev) => prev + 1);
+              }}
+              disabled={isVideoUploading}
+            >
+              Clear
+            </button>
+          </div>
+          {videoStatus.message && (
+            <div className={`upload-status ${videoStatus.type !== 'idle' ? `is-${videoStatus.type}` : ''}`} aria-live="polite">
+              {videoStatus.message}
             </div>
           )}
         </form>

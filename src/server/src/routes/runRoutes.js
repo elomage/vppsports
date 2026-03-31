@@ -9,6 +9,8 @@ const driverController = require("../controllers/driverController");
 const { parseApiDataObject } = require("../controllers/sensorDataController");
 const { connectDB, getCollection } = require("../config/db");
 const { ObjectId } = require("mongodb");
+const { getRunVideoDirectory } = require("../utils/videoStorage");
+const fs = require("fs");
 
 const DEFAULT_SENSITIVITY = 19.5;
 const SENSOR_TYPE_TO_ID = Object.freeze({
@@ -223,6 +225,16 @@ runRouter.delete("/:runid", async (req, res) => {
       runId: runObjectId,
     });
     const runDeleteResult = await runsColl.deleteOne({ _id: runObjectId });
+    const runVideoDirectory = getRunVideoDirectory(runid);
+
+    try {
+      await fs.promises.rm(runVideoDirectory, { recursive: true, force: true });
+    } catch (videoDeleteError) {
+      return res.status(500).json({
+        message: "Run deleted, but associated video cleanup failed.",
+        error: videoDeleteError.message,
+      });
+    }
 
     if (runDeleteResult.deletedCount !== 1) {
       return res.status(500).json({

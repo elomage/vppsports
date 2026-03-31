@@ -1,21 +1,113 @@
 const express = require("express");
-const path = require("path");
 const fs = require("fs");
 const { pipeline } = require("stream");
+const { connectDB, getCollection } = require("../config/db");
+const { ObjectId } = require("mongodb");
+const {
+  VIDEO_STORAGE_ROOT,
+  getRunVideoDirectory,
+  getRunVideoPath,
+} = require("../utils/videoStorage");
 const router = express.Router();
+
+const normalizeContext = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return normalized || null;
+};
+
+const isGlobalAdmin = (user) => user?.role === "admin";
+
+const getUserContexts = (user) =>
+  Array.isArray(user?.contexts)
+    ? user.contexts
+        .map((context) => normalizeContext(context?.name))
+        .filter(Boolean)
+    : [];
+
+const getUserContextIds = (user) =>
+  Array.isArray(user?.contexts)
+    ? user.contexts
+        .map((context) =>
+          ObjectId.isValid(context?.id) ? new ObjectId(context.id) : null
+        )
+        .filter(Boolean)
+    : [];
+
+const buildRunAccessQuery = (user) => {
+  if (isGlobalAdmin(user)) {
+    return {};
+  }
+
+  const contexts = getUserContexts(user);
+  const contextIds = getUserContextIds(user);
+  if (contexts.length === 0 && contextIds.length === 0) {
+    return { _id: { $exists: false } };
+  }
+
+  const filters = [];
+  if (contexts.length > 0) {
+    filters.push({ context: { $in: contexts } });
+  }
+  if (contextIds.length > 0) {
+    filters.push({ contextId: { $in: contextIds } });
+  }
+
+  return filters.length === 1 ? filters[0] : { $or: filters };
+};
+
+router.post("/upload", async (req, res) => {
+  try {
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({
+        message: "Upload requires application/octet-stream body with video data.",
+      });
+    }
+
+    const runId = String(req.query.runId || "").trim();
+    if (!ObjectId.isValid(runId)) {
+      return res.status(400).json({ message: "A valid runId is required." });
+    }
+
+    const db = await connectDB();
+    const runsColl = await getCollection(db, "runs");
+    const run = await runsColl.findOne({
+      _id: new ObjectId(runId),
+      ...buildRunAccessQuery(req.user),
+    });
+
+    if (!run) {
+      return res.status(404).json({ message: "Run not found." });
+    }
+
+    const videoDirectory = getRunVideoDirectory(runId);
+    const videoPath = getRunVideoPath(runId);
+
+    await fs.promises.mkdir(videoDirectory, { recursive: true });
+    await fs.promises.writeFile(videoPath, req.body);
+
+    return res.status(201).json({
+      message: "Video uploaded successfully.",
+      runId,
+      path: videoPath,
+      storageRoot: VIDEO_STORAGE_ROOT,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Error uploading video.",
+      error: error.message,
+    });
+  }
+});
 
 router.get("/:videoName", (req, res) => {
   const videoName = req.params.videoName;
-  // const videoDir = path.resolve(
-  //   "C:/Users/Reinis/Documents/VPPSport/VijolesVideo/"
-  // );
-  const videoDir = path.resolve("C:/Users/Reinis/Documents/VPPSport/video/");
 
-  const videoPath = path.join(videoDir, videoName, `${videoName}.mp4`);
+  const videoPath = getRunVideoPath(videoName);
 
   fs.stat(videoPath, (err, stats) => {
     if (err || !stats.isFile()) {
-      console.error(err);
       return res.status(404).send("Video not found");
     }
 

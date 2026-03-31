@@ -297,6 +297,24 @@ export async function uploadSensorDataBin(file, options = {}) {
   });
 }
 
+export async function uploadRunVideo(file, runId) {
+  const params = new URLSearchParams();
+  if (runId) {
+    params.append("runId", runId);
+  }
+
+  const query = params.toString();
+  const uploadUrl = `/video/upload${query ? `?${query}` : ""}`;
+
+  return request(uploadUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/octet-stream",
+    },
+    body: await file.arrayBuffer(),
+  });
+}
+
 export async function deleteRun(runId) {
   return request(`/run/${runId}`, {
     method: "DELETE",
