@@ -106,7 +106,9 @@ async function request(path, options = {}, retry = true) {
     const message =
       typeof payload === "string"
         ? payload
-        : payload?.message || `Request failed (${response.status})`;
+        : payload?.error
+          ? `${payload?.message || `Request failed (${response.status})`}: ${payload.error}`
+          : payload?.message || `Request failed (${response.status})`;
     throw new Error(message);
   }
 
@@ -188,6 +190,16 @@ export async function fetchRuns(dateFrom, dateTo) {
 
 export async function fetchSelectedRun(runId) {
   return request(`/run/${runId}`);
+}
+
+export async function updateRunLabels(runId, labels) {
+  return request(`/run/${runId}/labels`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ labels }),
+  });
 }
 
 export async function fetchSelectedRunFiltered(runId) {

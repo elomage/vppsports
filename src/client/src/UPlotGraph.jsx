@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import "./UPlotGraph.css";
-import { fetchRuns } from "./api";
+import { fetchRuns, updateRunLabels } from "./api";
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL;
 const ACCESS_TOKEN_STORAGE_KEY = "vppsports_access_token";
@@ -204,6 +204,63 @@ const interpolateSeriesValue = (points, target) => {
   return left.y + (right.y - left.y) * ratio;
 };
 
+const buildTraceKey = ({ runId, sensorId, axisIndex, useFilteredData }) =>
+  `${runId}:${sensorId}:${axisIndex}:${useFilteredData ? "filtered" : "raw"}`;
+
+const createLabelId = () =>
+  `label-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+const normalizeLabel = (label) => {
+  const kind = String(label?.kind || "").trim().toLowerCase();
+  const startTimestamp = Number(label?.startTimestamp);
+  const endTimestamp = Number(label?.endTimestamp);
+  const anchorTimestamp = Number(label?.anchorTimestamp);
+  const anchorY = Number(label?.anchorY);
+
+  if (
+    !label?.id ||
+    !["single", "range"].includes(kind) ||
+    !Number.isFinite(startTimestamp) ||
+    !Number.isFinite(endTimestamp) ||
+    !Number.isFinite(anchorTimestamp) ||
+    !Number.isFinite(anchorY)
+  ) {
+    return null;
+  }
+
+  return {
+    id: String(label.id),
+    kind,
+    text: String(label?.text || ""),
+    traceKeys: Array.isArray(label?.traceKeys)
+      ? label.traceKeys.map((traceKey) => String(traceKey).trim()).filter(Boolean)
+      : [],
+    points: Array.isArray(label?.points)
+      ? label.points
+          .map((point) => {
+            const traceKey = String(point?.traceKey || "").trim();
+            const timestamp = Number(point?.timestamp);
+            const yValue = Number(point?.yValue);
+            if (!traceKey || !Number.isFinite(timestamp) || !Number.isFinite(yValue)) {
+              return null;
+            }
+            return { traceKey, timestamp, yValue };
+          })
+          .filter(Boolean)
+      : [],
+    startTimestamp: Math.min(startTimestamp, endTimestamp),
+    endTimestamp: Math.max(startTimestamp, endTimestamp),
+    anchorTimestamp,
+    anchorY,
+    dx: Number.isFinite(Number(label?.dx)) ? Number(label.dx) : 0,
+    dy: Number.isFinite(Number(label?.dy)) ? Number(label.dy) : 0,
+    createdAt: label?.createdAt || new Date().toISOString(),
+    updatedAt: label?.updatedAt || new Date().toISOString(),
+  };
+};
+
+const labelsEqual = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+
 const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }) => {
   const [useFilteredData, setUseFilteredData] = useState(false);
   const [selectedFilters, setSelectedFilters] = useState([]);
@@ -229,6 +286,17 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
   const [comparisonPlotSeriesByRun, setComparisonPlotSeriesByRun] = useState({});
   const [comparisonRawSeriesByRun, setComparisonRawSeriesByRun] = useState({});
   const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [runLabels, setRunLabels] = useState([]);
+  // console.log(runLabels);
+  
+  const [selectedLabelTraceKeys, setSelectedLabelTraceKeys] = useState([]);
+  const [pendingLabelMode, setPendingLabelMode] = useState(null);
+  const [pendingRangeStart, setPendingRangeStart] = useState(null);
+  const [activeLabelId, setActiveLabelId] = useState(null);
+  const [labelDraftText, setLabelDraftText] = useState("");
+  const [chartRevision, setChartRevision] = useState(0);
+  const [showLabels, setShowLabels] = useState(true);
+  const [selectionBox, setSelectionBox] = useState(null);
 
   const chartContainerRef = useRef(null);
   const interactionLayerRef = useRef(null);
@@ -244,6 +312,11 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
     min: 0,
     max: 0,
   });
+  const labelSaveTimeoutRef = useRef(null);
+  const lastSavedLabelsRef = useRef([]);
+  const draggingLabelRef = useRef(null);
+  const selectionDragRef = useRef(null);
+  const selectionBoxRef = useRef(null);
   const [visibleRange, setVisibleRange] = useState(() => getInitialRange(selectedRun));
   const filterKey = filterKeyFromSelection(useFilteredData, selectedFilters);
   const runTimestamps = selectedRun?.totalTimestamps ?? [];
@@ -303,6 +376,9 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
   }, []);
 
   useEffect(() => () => {
+    if (labelSaveTimeoutRef.current !== null) {
+      window.clearTimeout(labelSaveTimeoutRef.current);
+    }
   }, []);
 
   useEffect(() => {
@@ -329,7 +405,21 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
     setComparisonSensorsByRun({});
     setComparisonPlotSeriesByRun({});
     setComparisonRawSeriesByRun({});
+    setShowLabels(true);
+    selectionBoxRef.current = null;
+    setSelectionBox(null);
   }, [selectedRun?._id]);
+
+  useEffect(() => {
+    const nextLabels = Array.isArray(selectedRun?.labels)
+      ? selectedRun.labels.map(normalizeLabel).filter(Boolean)
+      : [];
+    lastSavedLabelsRef.current = nextLabels;
+    setRunLabels(nextLabels);
+    setPendingLabelMode(null);
+    setPendingRangeStart(null);
+    setActiveLabelId((prev) => (nextLabels.some((label) => label.id === prev) ? prev : null));
+  }, [selectedRun?.labels]);
 
   useEffect(() => {
     fetchRuns()
@@ -648,6 +738,12 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
 
       for (let axisIndex = 0; axisIndex < axisCount; axisIndex++) {
         const label = `${entry.runName} Sensor ${entry.sensorId} ${getAxisLabel(axisIndex, axisCount)}${useFilteredData ? " (filtered)" : ""}`;
+        const traceKey = buildTraceKey({
+          runId: entry.runId,
+          sensorId: entry.sensorId,
+          axisIndex,
+          useFilteredData,
+        });
         const color = TRACE_COLORS[series.length % TRACE_COLORS.length];
         traceColorByLabel.set(label, color);
         const interpolationPoints = plotReadings
@@ -655,14 +751,16 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
             x: reading.timestamp + offset + alignmentOffset,
             y: reading.data?.[axisIndex] ?? null,
           }))
-          .filter((point) => Number.isFinite(point.x));
+          .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
         series.push({
+          traceKey,
           sensorId: entry.sensorId,
           axisIndex,
           label,
           color,
           runId: entry.runId,
           runName: entry.runName,
+          points: interpolationPoints,
           values: xValues.map((timestamp) => interpolateSeriesValue(interpolationPoints, timestamp)),
         });
       }
@@ -717,6 +815,78 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
     visibleRange.end,
     visibleRange.start,
   ]);
+
+  const seriesByTraceKey = useMemo(
+    () => new Map(chartModel.series.map((seriesItem) => [seriesItem.traceKey, seriesItem])),
+    [chartModel.series]
+  );
+
+  const labelRenderItems = useMemo(() => {
+    const chart = plotInstanceRef.current;
+    if (!chart) return [];
+
+    return runLabels
+      .map((label) => {
+        const anchorX = chart.valToPos(label.anchorTimestamp, "x", true);
+        const anchorY = chart.valToPos(label.anchorY, "y", true);
+        if (!Number.isFinite(anchorX) || !Number.isFinite(anchorY)) return null;
+        const startX = chart.valToPos(label.startTimestamp, "x", true);
+        const endX = chart.valToPos(label.endTimestamp, "x", true);
+
+        const linkedSeries = label.traceKeys
+          .map((traceKey) => seriesByTraceKey.get(traceKey))
+          .filter(Boolean);
+        const allHidden =
+          linkedSeries.length > 0 &&
+          linkedSeries.every((seriesItem) => !(traceVisibility[seriesItem.label] ?? true));
+
+        return {
+          ...label,
+          left: chart.bbox.left + anchorX + label.dx,
+          top: chart.bbox.top + anchorY + label.dy,
+          anchorLeft: chart.bbox.left + anchorX,
+          anchorTop: chart.bbox.top + anchorY,
+          rangeLeft: Number.isFinite(startX) ? chart.bbox.left + Math.min(startX, endX) : null,
+          rangeRight: Number.isFinite(endX) ? chart.bbox.left + Math.max(startX, endX) : null,
+          linkedSeries,
+          allHidden,
+        };
+      })
+      .filter(Boolean);
+  }, [chartRevision, runLabels, seriesByTraceKey, traceVisibility, visibleRange, plotResolution, currentTimestamp]);
+
+  const labelHighlightSections = useMemo(
+    () =>
+      labelRenderItems
+        .filter((label) => label.kind === "range" && Number.isFinite(label.rangeLeft) && Number.isFinite(label.rangeRight))
+        .map((label) => ({
+          id: label.id,
+          left: label.rangeLeft,
+          width: Math.max(label.rangeRight - label.rangeLeft, 2),
+          dimmed: label.allHidden,
+        })),
+    [labelRenderItems]
+  );
+
+  const labelPointMarkers = useMemo(() => {
+    const chart = plotInstanceRef.current;
+    if (!chart) return [];
+
+    return runLabels.flatMap((label) =>
+      (label.points || [])
+        .map((point, index) => {
+          const x = chart.valToPos(point.timestamp, "x", true);
+          const y = chart.valToPos(point.yValue, "y", true);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+          return {
+            id: `${label.id}-${index}`,
+            left: chart.bbox.left + x,
+            top: chart.bbox.top + y,
+          };
+        })
+        .filter(Boolean)
+    );
+  }, [chartRevision, runLabels, visibleRange, plotResolution, currentTimestamp]);
 
   const highlightSections = useMemo(() => {
     if (!showHighlightSections || selectedSensorEntries.length === 0) return [];
@@ -811,6 +981,53 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
   }, [chartModel.readoutEntries]);
 
   useEffect(() => {
+    const validTraceKeys = new Set(chartModel.series.map((seriesItem) => seriesItem.traceKey));
+    setSelectedLabelTraceKeys((prev) => prev.filter((traceKey) => validTraceKeys.has(traceKey)));
+  }, [chartModel.series]);
+
+  useEffect(() => {
+    const activeLabel = runLabels.find((label) => label.id === activeLabelId);
+    setLabelDraftText(activeLabel?.text || "");
+  }, [activeLabelId, runLabels]);
+
+  useEffect(() => {
+    selectionBoxRef.current = selectionBox;
+  }, [selectionBox]);
+
+  useEffect(() => {
+    if (!selectedRun?._id) return;
+    if (labelsEqual(runLabels, lastSavedLabelsRef.current)) return;
+
+    if (labelSaveTimeoutRef.current !== null) {
+      window.clearTimeout(labelSaveTimeoutRef.current);
+    }
+
+    labelSaveTimeoutRef.current = window.setTimeout(async () => {
+      try {
+        const payload = runLabels.map((label) => ({
+          ...label,
+          updatedAt: new Date().toISOString(),
+        }));
+        const response = await updateRunLabels(selectedRun._id, payload);
+        const normalized = Array.isArray(response?.labels)
+          ? response.labels.map(normalizeLabel).filter(Boolean)
+          : payload.map(normalizeLabel).filter(Boolean);
+        lastSavedLabelsRef.current = normalized;
+        setRunLabels((prev) => (labelsEqual(prev, normalized) ? prev : normalized));
+      } catch (error) {
+        console.error("Error saving run labels:", error);
+      }
+    }, 250);
+
+    return () => {
+      if (labelSaveTimeoutRef.current !== null) {
+        window.clearTimeout(labelSaveTimeoutRef.current);
+        labelSaveTimeoutRef.current = null;
+      }
+    };
+  }, [runLabels, selectedRun?._id]);
+
+  useEffect(() => {
     const target = chartContainerRef.current;
     if (!target) return undefined;
 
@@ -876,6 +1093,7 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
                   if (prev.start === min && prev.end === max) return prev;
                   return { start: min, end: max };
                 });
+                setChartRevision((prev) => prev + 1);
               }, 120);
             },
           ],
@@ -930,12 +1148,14 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
     );
 
     plotInstanceRef.current = chart;
+    setChartRevision((prev) => prev + 1);
 
     return () => {
       chart.destroy();
       if (plotInstanceRef.current === chart) {
         plotInstanceRef.current = null;
       }
+      setChartRevision((prev) => prev + 1);
     };
   }, [chartModel, highlightSections, showHighlightSections, traceVisibility]);
 
@@ -975,6 +1195,197 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
       ...prev,
       [label]: !(prev[label] ?? true),
     }));
+  };
+
+  const toggleLabelTraceSelection = (traceKey) => {
+    setSelectedLabelTraceKeys((prev) =>
+      prev.includes(traceKey) ? prev.filter((key) => key !== traceKey) : [...prev, traceKey]
+    );
+  };
+
+  const beginAddSingleLabel = () => {
+    if (selectedLabelTraceKeys.length === 0) return;
+    setActiveLabelId(null);
+    setLabelDraftText("");
+    setPendingRangeStart(null);
+    setPendingLabelMode("single");
+  };
+
+  const beginAddRangeLabel = () => {
+    if (selectedLabelTraceKeys.length === 0) return;
+    setActiveLabelId(null);
+    setLabelDraftText("");
+    setPendingRangeStart(null);
+    setSelectionBox(null);
+    setPendingLabelMode("range");
+  };
+
+  const cancelAddLabel = () => {
+    setPendingLabelMode(null);
+    setPendingRangeStart(null);
+    selectionBoxRef.current = null;
+    setSelectionBox(null);
+  };
+
+  const updateLabelText = (labelId, text) => {
+    setRunLabels((prev) =>
+      prev.map((label) =>
+        label.id === labelId
+          ? { ...label, text, updatedAt: new Date().toISOString() }
+          : label
+      )
+    );
+  };
+
+  const deleteLabel = (labelId) => {
+    setRunLabels((prev) => prev.filter((label) => label.id !== labelId));
+    if (activeLabelId === labelId) {
+      setActiveLabelId(null);
+      setLabelDraftText("");
+    }
+  };
+
+  const commitDraftToActiveLabel = () => {
+    if (!activeLabelId) return;
+    updateLabelText(activeLabelId, labelDraftText);
+  };
+
+  const getClickTimestamp = (event) => {
+    const chart = plotInstanceRef.current;
+    if (!chart) return null;
+
+    const rootBounds = chart.root.getBoundingClientRect();
+    const relativeX = Math.min(
+      Math.max(event.clientX - rootBounds.left - chart.bbox.left, 0),
+      chart.bbox.width
+    );
+    return chart.posToVal(relativeX, "x");
+  };
+
+  const getRelativeChartPoint = (clientX, clientY) => {
+    const chart = plotInstanceRef.current;
+    if (!chart) return null;
+
+    const rootBounds = chart.root.getBoundingClientRect();
+    const x = clientX - rootBounds.left - chart.bbox.left;
+    const y = clientY - rootBounds.top - chart.bbox.top;
+
+    return {
+      x: Math.min(Math.max(x, 0), chart.bbox.width),
+      y: Math.min(Math.max(y, 0), chart.bbox.height),
+    };
+  };
+
+  const findNearestPointForLabel = (event) => {
+    const chart = plotInstanceRef.current;
+    if (!chart) return null;
+
+    const rootBounds = chart.root.getBoundingClientRect();
+    const clickedTimestamp = getClickTimestamp(event);
+    if (!Number.isFinite(clickedTimestamp)) return null;
+
+    const candidateSeries = chartModel.series.filter((seriesItem) =>
+      selectedLabelTraceKeys.includes(seriesItem.traceKey)
+    );
+
+    let bestMatch = null;
+
+    candidateSeries.forEach((seriesItem) => {
+      const point = getNearestReading(
+        seriesItem.points.map((entry) => ({ timestamp: entry.x, data: [entry.y] })),
+        clickedTimestamp
+      );
+      if (!point) return;
+
+      const pointLeft =
+        rootBounds.left + chart.bbox.left + chart.valToPos(point.timestamp, "x", true);
+      const pointTop =
+        rootBounds.top + chart.bbox.top + chart.valToPos(point.data[0], "y", true);
+      const distance = Math.hypot(pointLeft - event.clientX, pointTop - event.clientY);
+
+      if (!bestMatch || distance < bestMatch.distance) {
+        bestMatch = {
+          xTimestamp: point.timestamp,
+          yValue: point.data[0],
+          distance,
+        };
+      }
+    });
+
+    return bestMatch;
+  };
+
+  const buildLabelReadingCount = useCallback(
+    (label) =>
+      Array.isArray(label.points) && label.points.length > 0
+        ? label.points.length
+        : label.traceKeys.reduce((total, traceKey) => {
+            const seriesItem = seriesByTraceKey.get(traceKey);
+            if (!seriesItem) return total;
+            const matchingPoints = seriesItem.points.filter(
+              (point) => point.x >= label.startTimestamp && point.x <= label.endTimestamp
+            );
+            return total + matchingPoints.length;
+          }, 0),
+    [seriesByTraceKey]
+  );
+
+  const buildGroupLabelFromSelection = (selection) => {
+    if (!selection) return null;
+
+    const selectedPoints = chartModel.series
+      .filter((seriesItem) => selectedLabelTraceKeys.includes(seriesItem.traceKey))
+      .flatMap((seriesItem) =>
+        seriesItem.points
+          .map((point) => {
+            const x = plotInstanceRef.current.valToPos(point.x, "x", true);
+            const y = plotInstanceRef.current.valToPos(point.y, "y", true);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+            const left = plotInstanceRef.current.bbox.left + x;
+            const top = plotInstanceRef.current.bbox.top + y;
+            if (
+              left < selection.left ||
+              left > selection.left + selection.width ||
+              top < selection.top ||
+              top > selection.top + selection.height
+            ) {
+              return null;
+            }
+            return {
+              traceKey: seriesItem.traceKey,
+              timestamp: point.x,
+              yValue: point.y,
+            };
+          })
+          .filter(Boolean)
+      );
+
+    if (selectedPoints.length === 0) return null;
+
+    const timestamps = selectedPoints.map((point) => point.timestamp);
+    const yValues = selectedPoints.map((point) => point.yValue);
+    const startTimestamp = Math.min(...timestamps);
+    const endTimestamp = Math.max(...timestamps);
+    const anchorTimestamp =
+      selectedPoints.reduce((sum, point) => sum + point.timestamp, 0) / selectedPoints.length;
+    const anchorY =
+      selectedPoints.reduce((sum, point) => sum + point.yValue, 0) / selectedPoints.length;
+
+    return normalizeLabel({
+      id: createLabelId(),
+      kind: "range",
+      text: "",
+      traceKeys: [...new Set(selectedPoints.map((point) => point.traceKey))],
+      points: selectedPoints,
+      startTimestamp,
+      endTimestamp,
+      anchorTimestamp,
+      anchorY,
+      dx: 0,
+      dy: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
   };
 
   const toggleFilter = (filterId) => {
@@ -1082,16 +1493,40 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
     }
 
     const chart = plotInstanceRef.current;
-    const layer = interactionLayerRef.current;
-    if (!chart || !layer || runTimestamps.length === 0) return;
+    if (!chart || runTimestamps.length === 0) return;
 
-    const layerBounds = layer.getBoundingClientRect();
-    const relativeToLayer = event.clientX + 10; // Replace with relative values
-    const relativeX = Math.min(
-      Math.max(relativeToLayer - chart.bbox.left, 0),
-      chart.bbox.width
-    );
-    const value = chart.posToVal(relativeX, "x");
+    if (pendingLabelMode === "single" && selectedLabelTraceKeys.length > 0) {
+      const anchor = findNearestPointForLabel(event);
+      if (anchor) {
+        const nextLabel = normalizeLabel({
+          id: createLabelId(),
+          kind: "single",
+          text: "",
+          traceKeys: selectedLabelTraceKeys,
+          startTimestamp: anchor.xTimestamp,
+          endTimestamp: anchor.xTimestamp,
+          anchorTimestamp: anchor.xTimestamp,
+          anchorY: anchor.yValue,
+          dx: 0,
+          dy: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+        if (nextLabel) {
+          setRunLabels((prev) => [...prev, nextLabel]);
+          setActiveLabelId(nextLabel.id);
+          setLabelDraftText("");
+        }
+      }
+      setPendingLabelMode(null);
+      return;
+    }
+
+    if (pendingLabelMode === "range") {
+      return;
+    }
+
+    const value = getClickTimestamp(event);
     const nextIndex = getNearestIndex(runTimestamps, value);
     if (nextIndex >= 0) {
       scheduleSharedSliderUpdate(nextIndex);
@@ -1102,6 +1537,32 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
     const chart = plotInstanceRef.current;
     if (!chart) return;
     if (event.button !== 0) return;
+
+    if (pendingLabelMode === "range" && selectedLabelTraceKeys.length > 0) {
+      const startPoint = getRelativeChartPoint(event.clientX, event.clientY);
+      if (!startPoint) return;
+
+      panStateRef.current = {
+        active: false,
+        moved: false,
+        startClientX: 0,
+        min: 0,
+        max: 0,
+      };
+      selectionDragRef.current = {
+        startX: startPoint.x + chart.bbox.left,
+        startY: startPoint.y + chart.bbox.top,
+      };
+      const nextSelectionBox = {
+        left: startPoint.x + chart.bbox.left,
+        top: startPoint.y + chart.bbox.top,
+        width: 0,
+        height: 0,
+      };
+      selectionBoxRef.current = nextSelectionBox;
+      setSelectionBox(nextSelectionBox);
+      return;
+    }
 
     const min = chart.scales.x.min;
     const max = chart.scales.x.max;
@@ -1119,6 +1580,23 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
   const handlePanMove = (event) => {
     const chart = plotInstanceRef.current;
     const panState = panStateRef.current;
+    if (pendingLabelMode === "range" && selectionDragRef.current) {
+      const point = getRelativeChartPoint(event.clientX, event.clientY);
+      if (!point) return;
+      const currentX = point.x + chart.bbox.left;
+      const currentY = point.y + chart.bbox.top;
+      const startX = selectionDragRef.current.startX;
+      const startY = selectionDragRef.current.startY;
+      const nextSelectionBox = {
+        left: Math.min(startX, currentX),
+        top: Math.min(startY, currentY),
+        width: Math.abs(currentX - startX),
+        height: Math.abs(currentY - startY),
+      };
+      selectionBoxRef.current = nextSelectionBox;
+      setSelectionBox(nextSelectionBox);
+      return;
+    }
     if (!chart || !panState.active || runTimestamps.length === 0) return;
 
     const dx = event.clientX - panState.startClientX;
@@ -1149,9 +1627,25 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
     }
 
     chart.setScale("x", { min: nextMin, max: nextMax });
+    setChartRevision((prev) => prev + 1);
   };
 
   const handlePanEnd = () => {
+    if (pendingLabelMode === "range" && selectionDragRef.current) {
+      const nextLabel = buildGroupLabelFromSelection(selectionBoxRef.current);
+      selectionDragRef.current = null;
+      selectionBoxRef.current = null;
+      if (nextLabel) {
+        setRunLabels((prev) => [...prev, nextLabel]);
+        setActiveLabelId(nextLabel.id);
+        setLabelDraftText("");
+      }
+      setSelectionBox(null);
+      setPendingLabelMode(null);
+      setPendingRangeStart(null);
+      return;
+    }
+
     if (!panStateRef.current.active) return;
     panStateRef.current = {
       active: false,
@@ -1207,11 +1701,63 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
     if (!(nextMax > nextMin)) return;
 
     chart.setScale("x", { min: nextMin, max: nextMax });
+    setChartRevision((prev) => prev + 1);
   };
 
   const resetZoom = () => {
     setVisibleRange(getInitialRange(selectedRun));
   };
+
+  const handleLabelPointerDown = (event, labelId) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const label = runLabels.find((entry) => entry.id === labelId);
+    if (!label) return;
+
+    setActiveLabelId(labelId);
+    setLabelDraftText(label.text || "");
+    draggingLabelRef.current = {
+      labelId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startDx: label.dx,
+      startDy: label.dy,
+    };
+  };
+
+  useEffect(() => {
+    const handlePointerMove = (event) => {
+      const dragState = draggingLabelRef.current;
+      if (!dragState) return;
+
+      const nextDx = dragState.startDx + (event.clientX - dragState.startClientX);
+      const nextDy = dragState.startDy + (event.clientY - dragState.startClientY);
+      setRunLabels((prev) =>
+        prev.map((label) =>
+          label.id === dragState.labelId
+            ? {
+                ...label,
+                dx: nextDx,
+                dy: nextDy,
+                updatedAt: new Date().toISOString(),
+              }
+            : label
+        )
+      );
+    };
+
+    const handlePointerUp = () => {
+      draggingLabelRef.current = null;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, []);
 
   const addComparisonRun = async () => {
     if (!comparisonRunId || comparisonRuns.some((run) => run._id === comparisonRunId)) return;
@@ -1536,6 +2082,122 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
 
       <details className="card">
         <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
+          <strong>Labels</strong>
+          <span className={`badge ${pendingLabelMode ? "bg-primary" : "bg-secondary"}`}>
+            {runLabels.length} saved
+          </span>
+        </summary>
+        <div className="card-body">
+          <label className="list-group-item list-group-item-action d-flex align-items-center mb-3">
+            <input
+              className="form-check-input me-2"
+              type="checkbox"
+              checked={showLabels}
+              onChange={(event) => setShowLabels(event.target.checked)}
+            />
+            <span>Show labels on graph</span>
+          </label>
+
+          <div className="mb-3">
+            <small className="text-muted d-block mb-2">
+              Choose one or more traces, then label a single reading or a timestamp range.
+            </small>
+            <div className="list-group">
+              {chartModel.series.length === 0 && <div className="text-muted small">No traces available</div>}
+              {chartModel.series.map((seriesItem) => (
+                <label key={seriesItem.traceKey} className="list-group-item list-group-item-action d-flex align-items-center">
+                  <input
+                    className="form-check-input me-2"
+                    type="checkbox"
+                    checked={selectedLabelTraceKeys.includes(seriesItem.traceKey)}
+                    onChange={() => toggleLabelTraceSelection(seriesItem.traceKey)}
+                  />
+                  <span>{seriesItem.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="d-flex gap-2 mb-3">
+            <button
+              type="button"
+              className={`btn btn-sm ${pendingLabelMode === "single" ? "btn-primary" : "btn-outline-primary"} flex-fill`}
+              disabled={selectedLabelTraceKeys.length === 0}
+              onClick={pendingLabelMode === "single" ? cancelAddLabel : beginAddSingleLabel}
+            >
+              {pendingLabelMode === "single" ? "Click Graph For Reading" : "Single Reading"}
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${pendingLabelMode === "range" ? "btn-primary" : "btn-outline-primary"} flex-fill`}
+              disabled={selectedLabelTraceKeys.length === 0}
+              onClick={pendingLabelMode === "range" ? cancelAddLabel : beginAddRangeLabel}
+            >
+              {pendingLabelMode === "range" ? "Drag Box On Graph" : "Group Selected Points"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-secondary"
+              onClick={() => setSelectedLabelTraceKeys([])}
+              disabled={selectedLabelTraceKeys.length === 0}
+            >
+              Clear
+            </button>
+          </div>
+
+          {pendingLabelMode && (
+            <div className="alert alert-info py-2 px-3">
+              {pendingLabelMode === "single"
+                ? "Click the graph to attach the label to the nearest reading."
+                : "Drag a box over the graph to select the data points for one group label."}
+            </div>
+          )}
+
+          {activeLabelId && (
+            <div className="uplot-prototype__label-editor mb-3">
+              <label className="form-label mb-1">Label text</label>
+              <textarea
+                className="form-control form-control-sm"
+                rows={3}
+                value={labelDraftText}
+                onChange={(event) => setLabelDraftText(event.target.value)}
+                onBlur={commitDraftToActiveLabel}
+              />
+              <div className="d-flex gap-2 mt-2">
+                <button type="button" className="btn btn-sm btn-outline-primary" onClick={commitDraftToActiveLabel}>
+                  Save Text
+                </button>
+                <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => deleteLabel(activeLabelId)}>
+                  Delete Label
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="list-group">
+            {runLabels.length === 0 && <div className="text-muted small">No labels created yet</div>}
+            {runLabels.map((label) => (
+              <button
+                key={label.id}
+                type="button"
+                className={`list-group-item list-group-item-action text-start ${activeLabelId === label.id ? "active" : ""}`}
+                onClick={() => setActiveLabelId(label.id)}
+              >
+                <div className="d-flex justify-content-between align-items-center gap-2">
+                  <span>{label.text?.trim() || "Untitled label"}</span>
+                  <span className="badge bg-secondary">{label.kind === "range" ? "Range" : "Single"}</span>
+                </div>
+                <small className="text-muted d-block mt-1">
+                  {buildLabelReadingCount(label)} readings across {label.traceKeys.length} trace{label.traceKeys.length === 1 ? "" : "s"}
+                </small>
+              </button>
+            ))}
+          </div>
+        </div>
+      </details>
+
+      <details className="card">
+        <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
           <strong>Highlights</strong>
           <span className={`badge ${showHighlightSections ? "bg-success" : "bg-secondary"}`}>
             {showHighlightSections ? "On" : "Off"}
@@ -1590,6 +2252,55 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
           onMouseLeave={handlePanEnd}
           onWheel={handleWheelZoom}
         >
+          {showLabels && labelPointMarkers.map((point) => (
+            <div
+              key={point.id}
+              className="uplot-prototype__label-point"
+              style={{ left: `${point.left}px`, top: `${point.top}px` }}
+            />
+          ))}
+          {showLabels && labelHighlightSections.map((section) => (
+            <div
+              key={section.id}
+              className={`uplot-prototype__label-range ${section.dimmed ? "is-dimmed" : ""}`}
+              style={{ left: `${section.left}px`, width: `${section.width}px` }}
+            />
+          ))}
+          {pendingLabelMode === "range" && selectionBox && (
+            <div
+              className="uplot-prototype__selection-box"
+              style={{
+                left: `${selectionBox.left}px`,
+                top: `${selectionBox.top}px`,
+                width: `${selectionBox.width}px`,
+                height: `${selectionBox.height}px`,
+              }}
+            />
+          )}
+          {showLabels && labelRenderItems.map((label) => (
+            <div key={label.id}>
+              <div
+                className={`uplot-prototype__label-anchor ${label.allHidden ? "is-dimmed" : ""}`}
+                style={{
+                  left: `${label.anchorLeft}px`,
+                  top: `${label.anchorTop}px`,
+                }}
+              />
+              <button
+                type="button"
+                className={`uplot-prototype__label ${activeLabelId === label.id ? "is-active" : ""} ${label.allHidden ? "is-dimmed" : ""}`}
+                style={{ left: `${label.left}px`, top: `${label.top}px` }}
+                onPointerDown={(event) => handleLabelPointerDown(event, label.id)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setActiveLabelId(label.id);
+                }}
+              >
+                <span className="uplot-prototype__label-kind">{label.kind === "range" ? "Range" : "Point"}</span>
+                <span>{label.text?.trim() || "Untitled label"}</span>
+              </button>
+            </div>
+          ))}
         </div>
         {sliderReadout.length > 0 && (
           <div className="uplot-prototype__readout">

@@ -5,6 +5,7 @@ import { checkRunVideoExists } from './api';
 const componentsMap = {
     info: React.lazy(() => import('./Infovisualizer')),
     graph: React.lazy(() => import('./UPlotGraph')),
+    echart: React.lazy(() => import('./EChartGraph')),
     video: React.lazy(() => import('./VideoVisualizer')),
     model: React.lazy(() => import('./Modelvisualizer')),
 };
@@ -112,6 +113,7 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
             <div className='flex gap-4'>
                 {/* <button className='btn btn-primary' onClick={() => addComponent('info')} style={{margin: '5px'}}>Add Info</button> */}
                 <button className='btn btn-primary' onClick={() => addComponent('graph')} style={{margin: '5px'}}>Add Graph</button>
+                <button className='btn btn-outline-primary' onClick={() => addComponent('echart')} style={{margin: '5px'}}>Add EChart</button>
                 {hasVideoForRun && (
                     <button className='btn btn-primary' onClick={() => addComponent('video')} style={{margin: '5px'}}>Add Video</button>
                 )}
@@ -121,7 +123,13 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
                 <div className='flex flex-wrap' style={{ flex: 1, width: '100%' }}>
                     {selectedComponent.filter((component) => component.type !== 'video' || hasVideoForRun).map((component, index, visibleComponents) => {
                         const Component = componentsMap[component.type];
-                        const wrapperClass = component.type === 'graph' ? 'graph-wrapper' : component.type === 'model' ? 'model-wrapper' : component.type === 'video' ? 'video-wrapper' : 'component-wrapper';
+                        const wrapperClass = component.type === 'graph' || component.type === 'echart'
+                            ? 'graph-wrapper'
+                            : component.type === 'model'
+                                ? 'model-wrapper'
+                                : component.type === 'video'
+                                    ? 'video-wrapper'
+                                    : 'component-wrapper';
                         const isLastComponent = index === visibleComponents.length - 1;
                         
                         return (

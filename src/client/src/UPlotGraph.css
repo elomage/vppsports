@@ -125,6 +125,96 @@
     z-index: 2;
 }
 
+.uplot-prototype__label-anchor {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    margin-left: -4px;
+    margin-top: -4px;
+    border-radius: 999px;
+    background: #0d6efd;
+    border: 2px solid rgba(255, 255, 255, 0.95);
+    box-shadow: 0 4px 12px rgba(13, 110, 253, 0.25);
+    pointer-events: none;
+}
+
+.uplot-prototype__label-range {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: rgba(13, 110, 253, 0.12);
+    border-left: 1px solid rgba(13, 110, 253, 0.28);
+    border-right: 1px solid rgba(13, 110, 253, 0.28);
+    pointer-events: none;
+}
+
+.uplot-prototype__label-point {
+    position: absolute;
+    width: 5px;
+    height: 5px;
+    margin-left: -2.5px;
+    margin-top: -2.5px;
+    border-radius: 999px;
+    background: #0d6efd;
+    border: 1px solid #ffffff;
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.14);
+    pointer-events: none;
+}
+
+.uplot-prototype__selection-box {
+    position: absolute;
+    border: 1px dashed rgba(13, 110, 253, 0.9);
+    background: rgba(13, 110, 253, 0.12);
+    pointer-events: none;
+}
+
+.uplot-prototype__label {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 120px;
+    max-width: 220px;
+    padding: 8px 10px;
+    border: 1px solid rgba(13, 110, 253, 0.2);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.96);
+    color: #0f172a;
+    text-align: left;
+    font-size: 0.82rem;
+    line-height: 1.35;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+    transform: translate(8px, -8px);
+    cursor: grab;
+}
+
+.uplot-prototype__label-kind {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #0d6efd;
+}
+
+.uplot-prototype__label.is-active {
+    border-color: #0d6efd;
+    box-shadow: 0 14px 32px rgba(13, 110, 253, 0.18);
+}
+
+.uplot-prototype__label.is-dimmed,
+.uplot-prototype__label-range.is-dimmed,
+.uplot-prototype__label-anchor.is-dimmed {
+    opacity: 0.5;
+}
+
+.uplot-prototype__label:active {
+    cursor: grabbing;
+}
+
+.uplot-prototype__label-editor textarea {
+    resize: vertical;
+}
+
 .uplot-prototype__cursor {
     position: absolute;
     top: 0;

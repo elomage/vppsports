@@ -25,6 +25,41 @@ const runSchema = new mongoose.Schema({
     required: true,
   },
   weather: { type: String, default: "" },
+  labels: {
+    type: [
+      new mongoose.Schema(
+        {
+          id: { type: String, required: true },
+          kind: { type: String, enum: ["single", "range"], required: true },
+          text: { type: String, default: "" },
+          traceKeys: { type: [String], default: [] },
+          points: {
+            type: [
+              new mongoose.Schema(
+                {
+                  traceKey: { type: String, required: true },
+                  timestamp: { type: Number, required: true },
+                  yValue: { type: Number, required: true },
+                },
+                { _id: false }
+              ),
+            ],
+            default: [],
+          },
+          startTimestamp: { type: Number, required: true },
+          endTimestamp: { type: Number, required: true },
+          anchorTimestamp: { type: Number, required: true },
+          anchorY: { type: Number, required: true },
+          dx: { type: Number, default: 0 },
+          dy: { type: Number, default: 0 },
+          createdAt: { type: Date, default: Date.now },
+          updatedAt: { type: Date, default: Date.now },
+        },
+        { _id: false }
+      ),
+    ],
+    default: [],
+  },
 });
 
 const sensorReadingSchema = new mongoose.Schema({
@@ -635,6 +670,15 @@ const getRunSensors = async (runid) => {
   }
 };
 
+const updateRunLabels = async (runid, labels) => {
+  const run = await Run.findByIdAndUpdate(
+    runid,
+    { $set: { labels } },
+    { new: true, runValidators: true }
+  );
+  return withRunName(run);
+};
+
 module.exports = {
   getAllRunsDB,
   getSingleRunDB,
@@ -648,6 +692,7 @@ module.exports = {
   getRunSensorReadings,
   getRunSensorReadingsAll,
   getRunSensors,
+  updateRunLabels,
 };
 const withRunName = (run) => {
   if (!run) return run;

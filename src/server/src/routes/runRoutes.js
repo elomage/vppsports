@@ -4,6 +4,7 @@ const sensorRouter = express.Router({ mergeParams: true });
 const sensorDataRouter = express.Router({ mergeParams: true });
 
 const runController = require("../controllers/runController");
+const runService = require("../services/runService");
 const trackController = require("../controllers/trackController");
 const driverController = require("../controllers/driverController");
 const { parseApiDataObject } = require("../controllers/sensorDataController");
@@ -33,6 +34,90 @@ const SENSOR_TYPE_CONFIG = Object.freeze({
   },
 });
 const DEFAULT_SENSOR_TYPE = "accelerometer";
+
+const normalizeLabelNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const parseFiniteNumber = (...values) => {
+  for (const value of values) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+};
+
+const normalizeRunLabels = (labels) => {
+  if (!Array.isArray(labels)) {
+    throw new Error("Labels must be an array.");
+  }
+
+  return labels.map((label, index) => {
+    const id = String(label?.id || "").trim();
+    const legacyXTimestamp = parseFiniteNumber(label?.xTimestamp);
+    const legacyYValue = parseFiniteNumber(label?.yValue);
+    const kind = String(label?.kind || (legacyXTimestamp !== null ? "single" : ""))
+      .trim()
+      .toLowerCase();
+    const text = String(label?.text || "").trim();
+    const traceKeys = Array.isArray(label?.traceKeys)
+      ? label.traceKeys.map((traceKey) => String(traceKey).trim()).filter(Boolean)
+      : [];
+    const points = Array.isArray(label?.points)
+      ? label.points
+          .map((point) => {
+            const traceKey = String(point?.traceKey || "").trim();
+            const timestamp = parseFiniteNumber(point?.timestamp);
+            const yValue = parseFiniteNumber(point?.yValue);
+            if (!traceKey || timestamp === null || yValue === null) {
+              return null;
+            }
+            return { traceKey, timestamp, yValue };
+          })
+          .filter(Boolean)
+      : [];
+    const startTimestamp = parseFiniteNumber(label?.startTimestamp, legacyXTimestamp);
+    const endTimestamp = parseFiniteNumber(label?.endTimestamp, legacyXTimestamp);
+    const anchorTimestamp = parseFiniteNumber(label?.anchorTimestamp, legacyXTimestamp);
+    const anchorY = parseFiniteNumber(label?.anchorY, legacyYValue);
+
+    if (!id) {
+      throw new Error(`Label ${index + 1} is missing an id.`);
+    }
+
+    if (!["single", "range"].includes(kind)) {
+      throw new Error(`Label ${index + 1} has invalid kind.`);
+    }
+
+    if (
+      startTimestamp === null ||
+      endTimestamp === null ||
+      anchorTimestamp === null ||
+      anchorY === null
+    ) {
+      throw new Error(`Label ${index + 1} has invalid sensor grouping coordinates.`);
+    }
+
+    return {
+      id,
+      kind,
+      text,
+      traceKeys,
+      points,
+      startTimestamp: Math.min(startTimestamp, endTimestamp),
+      endTimestamp: Math.max(startTimestamp, endTimestamp),
+      anchorTimestamp,
+      anchorY,
+      dx: normalizeLabelNumber(label?.dx, 0),
+      dy: normalizeLabelNumber(label?.dy, 0),
+      createdAt: label?.createdAt ? new Date(label.createdAt) : new Date(),
+      updatedAt: new Date(),
+    };
+  });
+};
 
 const normalizeContext = (value) => {
   const normalized = String(value || "")
@@ -194,6 +279,25 @@ runRouter.get("/:runid", async (req, res) => {
     res
       .status(500)
       .json({ message: "Error fetching run", error: error.message });
+  }
+});
+
+runRouter.put("/:runid/labels", async (req, res) => {
+  try {
+    const runid = req.params.runid;
+    const authorizedRun = await findRunForUser(runid, req.user).catch(() => null);
+    if (!authorizedRun) {
+      return res.status(404).json({ message: "Run not found." });
+    }
+
+    const labels = normalizeRunLabels(req.body?.labels);
+    const updatedRun = await runService.updateRunLabels(runid, labels);
+    return res.json({ labels: updatedRun?.labels || [] });
+  } catch (error) {
+    return res.status(400).json({
+      message: "Failed to update run labels.",
+      error: error.message,
+    });
   }
 });
 
