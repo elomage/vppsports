@@ -105,8 +105,9 @@ const normalizeRunLabels = (labels) => {
       id,
       kind,
       text,
+      color: String(label?.color || "#0d6efd").trim() || "#0d6efd",
       traceKeys,
-      points,
+      points: kind === "single" ? points : [],
       startTimestamp: Math.min(startTimestamp, endTimestamp),
       endTimestamp: Math.max(startTimestamp, endTimestamp),
       anchorTimestamp,
@@ -328,6 +329,7 @@ runRouter.delete("/:runid", async (req, res) => {
     const sensorDeleteResult = await sensorReadingsColl.deleteMany({
       runId: runObjectId,
     });
+    await runService.deleteRunLabels(runid);
     const runDeleteResult = await runsColl.deleteOne({ _id: runObjectId });
     const runVideoDirectory = getRunVideoDirectory(runid);
 

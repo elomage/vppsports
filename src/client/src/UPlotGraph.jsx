@@ -210,6 +210,17 @@ const buildTraceKey = ({ runId, sensorId, axisIndex, useFilteredData }) =>
 const createLabelId = () =>
   `label-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
+const serializeLabelForSave = (label) => ({
+  ...label,
+  points:
+    label?.kind === "single"
+      ? Array.isArray(label?.points)
+        ? label.points
+        : []
+      : [],
+  updatedAt: new Date().toISOString(),
+});
+
 const normalizeLabel = (label) => {
   const kind = String(label?.kind || "").trim().toLowerCase();
   const startTimestamp = Number(label?.startTimestamp);
@@ -1004,10 +1015,7 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
 
     labelSaveTimeoutRef.current = window.setTimeout(async () => {
       try {
-        const payload = runLabels.map((label) => ({
-          ...label,
-          updatedAt: new Date().toISOString(),
-        }));
+        const payload = runLabels.map(serializeLabelForSave);
         const response = await updateRunLabels(selectedRun._id, payload);
         const normalized = Array.isArray(response?.labels)
           ? response.labels.map(normalizeLabel).filter(Boolean)

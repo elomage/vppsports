@@ -182,6 +182,122 @@ const createLabelId = () =>
   `label-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const labelsEqual = (left, right) =>
   JSON.stringify(left) === JSON.stringify(right);
+const serializeLabelForSave = (label) => ({
+  ...label,
+  points:
+    label?.kind === "single"
+      ? Array.isArray(label?.points)
+        ? label.points
+        : []
+      : [],
+  updatedAt: new Date().toISOString(),
+});
+
+const HIGHLIGHT_LABEL_COLOR = "#0d6efd";
+const HIGHLIGHT_LABEL_PREFIX = "Detected section";
+
+const buildHighlightSectionsFromReadings = (readings, syncOffset = 0) => {
+  if (!Array.isArray(readings) || readings.length === 0) return [];
+
+  const sections = [];
+  let active = false;
+  let sectionStart = null;
+
+  readings.forEach((reading, index) => {
+    const zValue = reading?.data?.[2];
+    if (typeof zValue !== "number") return;
+
+    if (zValue > 1.2 && !active) {
+      active = true;
+      sectionStart = index;
+      return;
+    }
+
+    if (zValue < 1.1 && active) {
+      active = false;
+      const x0 = readings[sectionStart]?.timestamp + syncOffset;
+      const x1 = readings[index]?.timestamp + syncOffset;
+      if (Number.isFinite(x0) && Number.isFinite(x1) && x1 >= x0) {
+        sections.push({
+          x0,
+          x1,
+          color: "rgba(13, 110, 253, 0.12)",
+        });
+      }
+    }
+  });
+
+  if (active && sectionStart !== null) {
+    const x0 = readings[sectionStart]?.timestamp + syncOffset;
+    const x1 = readings[readings.length - 1]?.timestamp + syncOffset;
+    if (Number.isFinite(x0) && Number.isFinite(x1) && x1 >= x0) {
+      sections.push({
+        x0,
+        x1,
+        color: "rgba(13, 110, 253, 0.12)",
+      });
+    }
+  }
+
+  return sections;
+};
+
+const buildHighlightLabelId = (entryKey, startTimestamp, endTimestamp) =>
+  `highlight-${entryKey}-${Math.round(startTimestamp * 1000)}-${Math.round(endTimestamp * 1000)}`;
+
+const buildRangeLabelFromSection = ({
+  section,
+  sectionIndex,
+  sourceEntryKey,
+  seriesItems,
+}) => {
+  if (!section || !Array.isArray(seriesItems) || seriesItems.length === 0) {
+    return null;
+  }
+
+  const selectedPoints = seriesItems.flatMap((seriesItem) =>
+    (seriesItem.points || [])
+      .filter(
+        (point) =>
+          Number.isFinite(point?.x) &&
+          Number.isFinite(point?.y) &&
+          point.x >= section.x0 &&
+          point.x <= section.x1,
+      )
+      .map((point) => ({
+        traceKey: seriesItem.traceKey,
+        timestamp: point.x,
+        yValue: point.y,
+      })),
+  );
+
+  if (selectedPoints.length === 0) {
+    return null;
+  }
+
+  const orderedPoints = [...selectedPoints].sort(
+    (left, right) => left.timestamp - right.timestamp,
+  );
+  const firstPoint = orderedPoints[0];
+  const traceKeys = [...new Set(selectedPoints.map((point) => point.traceKey))];
+
+  return normalizeLabel({
+    id: buildHighlightLabelId(sourceEntryKey, section.x0, section.x1),
+    kind: "range",
+    text: `${HIGHLIGHT_LABEL_PREFIX} ${sectionIndex + 1}`,
+    color: HIGHLIGHT_LABEL_COLOR,
+    traceKeys,
+    points: [],
+    startTimestamp: section.x0,
+    endTimestamp: section.x1,
+    anchorTimestamp: firstPoint.timestamp,
+    anchorY: firstPoint.yValue,
+    dx: 0,
+    dy: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+};
 
 const normalizeLabel = (label) => {
   const kind = String(label?.kind || "")
@@ -977,27 +1093,7 @@ export default function EChartGraph({
         : 0;
     const syncOffset =
       getSensorOffset(sensorSyncOffsets, entry.key) + alignmentOffset;
-    const sections = [];
-    let active = false;
-    let sectionStart = null;
-
-    readings.forEach((reading, index) => {
-      const zValue = reading?.data?.[2];
-      if (typeof zValue !== "number") return;
-      if (zValue > 1.2 && !active) {
-        active = true;
-        sectionStart = index;
-      } else if (zValue < 1.1 && active) {
-        active = false;
-        const x0 = readings[sectionStart]?.timestamp + syncOffset;
-        const x1 = readings[index]?.timestamp + syncOffset;
-        if (Number.isFinite(x0) && Number.isFinite(x1)) {
-          sections.push({ x0, x1, color: "rgba(13, 110, 253, 0.12)" });
-        }
-      }
-    });
-
-    return sections;
+    return buildHighlightSectionsFromReadings(readings, syncOffset);
   }, [
     comparisonRawSeriesByRun,
     comparisonRuns,
@@ -1040,10 +1136,7 @@ export default function EChartGraph({
 
     labelSaveTimeoutRef.current = window.setTimeout(async () => {
       try {
-        const payload = runLabels.map((label) => ({
-          ...label,
-          updatedAt: new Date().toISOString(),
-        }));
+        const payload = runLabels.map(serializeLabelForSave);
         const response = await updateRunLabels(selectedRun._id, payload);
         const normalized = Array.isArray(response?.labels)
           ? response.labels.map(normalizeLabel).filter(Boolean)
@@ -1542,7 +1635,7 @@ export default function EChartGraph({
         text: "",
         color: "#0d6efd",
         traceKeys: [...new Set(selectedPoints.map((point) => point.traceKey))],
-        points: selectedPoints,
+        points: [],
         startTimestamp: Math.min(...timestamps),
         endTimestamp: Math.max(...timestamps),
         anchorTimestamp: firstPoint.timestamp,
@@ -1555,6 +1648,80 @@ export default function EChartGraph({
     },
     [chartModel.series, computePixelPoint, selectedLabelTraceKeys],
   );
+  const analyzeHighlightSections = useCallback(() => {
+    if (selectedSensorEntries.length === 0) return;
+
+    const sourceEntry = selectedSensorEntries[0];
+    const sourceReadings = sourceEntry.isPrimary
+      ? rawSeriesBySensor[sourceEntry.sensorId]
+      : comparisonRawSeriesByRun[sourceEntry.runId]?.[sourceEntry.sensorId];
+
+    if (!Array.isArray(sourceReadings) || sourceReadings.length === 0) return;
+
+    const currentBaseTimestamp = selectedRun?.totalTimestamps?.[0];
+    const entryBaseTimestamp = sourceEntry.isPrimary
+      ? currentBaseTimestamp
+      : comparisonRuns.find((run) => run._id === sourceEntry.runId)
+          ?.totalTimestamps?.[0];
+    const alignmentOffset =
+      !sourceEntry.isPrimary &&
+      Number.isFinite(currentBaseTimestamp) &&
+      Number.isFinite(entryBaseTimestamp)
+        ? currentBaseTimestamp - entryBaseTimestamp
+        : 0;
+    const syncOffset =
+      getSensorOffset(sensorSyncOffsets, sourceEntry.key) + alignmentOffset;
+    const sections = buildHighlightSectionsFromReadings(
+      sourceReadings,
+      syncOffset,
+    );
+
+    if (sections.length === 0) return;
+
+    const targetTraceKeys =
+      selectedLabelTraceKeys.length > 0
+        ? new Set(selectedLabelTraceKeys)
+        : new Set(chartModel.series.map((seriesItem) => seriesItem.traceKey));
+    const targetSeries = chartModel.series.filter((seriesItem) =>
+      targetTraceKeys.has(seriesItem.traceKey),
+    );
+
+    if (targetSeries.length === 0) return;
+
+    const nextLabels = sections
+      .map((section, index) =>
+        buildRangeLabelFromSection({
+          section,
+          sectionIndex: index,
+          sourceEntryKey: sourceEntry.key,
+          seriesItems: targetSeries,
+        }),
+      )
+      .filter(Boolean);
+
+    if (nextLabels.length === 0) return;
+
+    setShowHighlightSections(true);
+    setPendingLabelMode(null);
+    setSelectionBox(null);
+    setRunLabels((prev) => {
+      const nextById = new Map(nextLabels.map((label) => [label.id, label]));
+      const preserved = prev.filter((label) => !nextById.has(label.id));
+      return [...preserved, ...nextLabels].sort(
+        (left, right) => left.startTimestamp - right.startTimestamp,
+      );
+    });
+    setActiveLabelId(nextLabels[0].id);
+  }, [
+    chartModel.series,
+    comparisonRawSeriesByRun,
+    comparisonRuns,
+    rawSeriesBySensor,
+    selectedLabelTraceKeys,
+    selectedRun,
+    selectedSensorEntries,
+    sensorSyncOffsets,
+  ]);
   const addComparisonRun = async () => {
     if (
       !comparisonRunId ||
@@ -1990,6 +2157,17 @@ export default function EChartGraph({
                 />
                 <span>Show green/red highlight sections</span>
               </label>
+              <button
+                type="button"
+                className="btn btn-sm btn-outline-primary mt-3 w-100"
+                onClick={analyzeHighlightSections}
+                disabled={
+                  selectedSensorEntries.length === 0 ||
+                  chartModel.series.length === 0
+                }
+              >
+                Analyze Highlights To Labels
+              </button>
             </div>
           </div>
           <div className="card">
@@ -2085,7 +2263,6 @@ export default function EChartGraph({
                     className="uplot-prototype__label-kind"
                     style={{ color: label.color }}
                   >
-                    {/* {label.kind === "range" ? "Range" : "Point"} */}
                   </span>
                   <span>{label.text?.trim() || "Untitled label"}</span>
                 </button>

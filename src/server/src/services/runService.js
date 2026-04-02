@@ -26,41 +26,52 @@ const runSchema = new mongoose.Schema({
   },
   weather: { type: String, default: "" },
   labels: {
-    type: [
-      new mongoose.Schema(
-        {
-          id: { type: String, required: true },
-          kind: { type: String, enum: ["single", "range"], required: true },
-          text: { type: String, default: "" },
-          traceKeys: { type: [String], default: [] },
-          points: {
-            type: [
-              new mongoose.Schema(
-                {
-                  traceKey: { type: String, required: true },
-                  timestamp: { type: Number, required: true },
-                  yValue: { type: Number, required: true },
-                },
-                { _id: false }
-              ),
-            ],
-            default: [],
-          },
-          startTimestamp: { type: Number, required: true },
-          endTimestamp: { type: Number, required: true },
-          anchorTimestamp: { type: Number, required: true },
-          anchorY: { type: Number, required: true },
-          dx: { type: Number, default: 0 },
-          dy: { type: Number, default: 0 },
-          createdAt: { type: Date, default: Date.now },
-          updatedAt: { type: Date, default: Date.now },
-        },
-        { _id: false }
-      ),
-    ],
-    default: [],
+    type: Array,
+    default: undefined,
+    select: false,
   },
 });
+
+const runLabelSchema = new mongoose.Schema(
+  {
+    runId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Run",
+      required: true,
+      index: true,
+    },
+    id: { type: String, required: true },
+    kind: { type: String, enum: ["single", "range"], required: true },
+    text: { type: String, default: "" },
+    color: { type: String, default: "#0d6efd" },
+    traceKeys: { type: [String], default: [] },
+    points: {
+      type: [
+        new mongoose.Schema(
+          {
+            traceKey: { type: String, required: true },
+            timestamp: { type: Number, required: true },
+            yValue: { type: Number, required: true },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
+    },
+    startTimestamp: { type: Number, required: true },
+    endTimestamp: { type: Number, required: true },
+    anchorTimestamp: { type: Number, required: true },
+    anchorY: { type: Number, required: true },
+    dx: { type: Number, default: 0 },
+    dy: { type: Number, default: 0 },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now },
+  },
+  {
+    versionKey: false,
+  }
+);
+runLabelSchema.index({ runId: 1, id: 1 }, { unique: true });
 
 const sensorReadingSchema = new mongoose.Schema({
   sensorId: {
@@ -79,12 +90,13 @@ const sensorReadingSchema = new mongoose.Schema({
   },
 });
 
-const Run = mongoose.model("Run", runSchema);
-const SensorReading = mongoose.model(
-  "SensorReading",
-  sensorReadingSchema,
-  "sensor_readings"
-);
+const Run = mongoose.models.Run || mongoose.model("Run", runSchema, "runs");
+const RunLabel =
+  mongoose.models.RunLabel ||
+  mongoose.model("RunLabel", runLabelSchema, "run_labels");
+const SensorReading =
+  mongoose.models.SensorReading ||
+  mongoose.model("SensorReading", sensorReadingSchema, "sensor_readings");
 
 const fs = require("fs").promises;
 const path = require("path");
@@ -395,7 +407,7 @@ const getSingleRunDB = async (runid) => {
   // const result = await coll.findOne({ _id: objectId });
 
   const run = await Run.findById(runid);
-  return withRunName(run);
+  return withRunName(await hydrateRunLabels(run));
 };
 
 /**
@@ -671,12 +683,46 @@ const getRunSensors = async (runid) => {
 };
 
 const updateRunLabels = async (runid, labels) => {
-  const run = await Run.findByIdAndUpdate(
-    runid,
-    { $set: { labels } },
-    { new: true, runValidators: true }
-  );
-  return withRunName(run);
+  const runObjectId = new ObjectId(String(runid));
+  await Run.updateOne({ _id: runObjectId }, { $unset: { labels: "" } });
+  await RunLabel.deleteMany({ runId: runObjectId });
+
+  if (Array.isArray(labels) && labels.length > 0) {
+    await RunLabel.insertMany(
+      labels.map((label) => ({
+        ...label,
+        runId: runObjectId,
+      }))
+    );
+  }
+
+  const run = await Run.findById(runid);
+  return withRunName(await hydrateRunLabels(run));
+};
+
+const getRunLabels = async (runid) => {
+  const runObjectId = new ObjectId(String(runid));
+  const labels = await RunLabel.find({ runId: runObjectId })
+    .sort({ startTimestamp: 1, createdAt: 1 })
+    .lean();
+  if (labels.length > 0) {
+    return labels.map(({ _id, runId, ...label }) => label);
+  }
+
+  const legacyRun = await Run.findById(runid).select("+labels").lean();
+  const legacyLabels = Array.isArray(legacyRun?.labels) ? legacyRun.labels : [];
+
+  if (legacyLabels.length === 0) {
+    return [];
+  }
+
+  await migrateLegacyRunLabels(runObjectId, legacyLabels);
+  return legacyLabels;
+};
+
+const deleteRunLabels = async (runid) => {
+  const runObjectId = new ObjectId(String(runid));
+  return RunLabel.deleteMany({ runId: runObjectId });
 };
 
 module.exports = {
@@ -692,8 +738,11 @@ module.exports = {
   getRunSensorReadings,
   getRunSensorReadingsAll,
   getRunSensors,
+  getRunLabels,
   updateRunLabels,
+  deleteRunLabels,
 };
+
 const withRunName = (run) => {
   if (!run) return run;
   const normalized =
@@ -705,4 +754,31 @@ const withRunName = (run) => {
       ? String(normalized.name).trim()
       : `Run ${fallbackId}`;
   return normalized;
+};
+
+const hydrateRunLabels = async (run) => {
+  if (!run) return run;
+  const normalized =
+    typeof run.toObject === "function" ? run.toObject() : { ...run };
+  const labels = await getRunLabels(normalized._id);
+  normalized.labels = labels;
+  return normalized;
+};
+
+const migrateLegacyRunLabels = async (runObjectId, legacyLabels) => {
+  try {
+    await RunLabel.insertMany(
+      legacyLabels.map((label) => ({
+        ...label,
+        runId: runObjectId,
+      })),
+      { ordered: false }
+    );
+  } catch (error) {
+    if (error?.code !== 11000) {
+      throw error;
+    }
+  }
+
+  await Run.updateOne({ _id: runObjectId }, { $unset: { labels: "" } });
 };
