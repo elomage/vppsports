@@ -26,6 +26,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
   const [existingRunId, setExistingRunId] = useState('');
   const [runName, setRunName] = useState('');
   const [selectedContextId, setSelectedContextId] = useState('');
+  const [metadataJson, setMetadataJson] = useState('');
   const [sensorType, setSensorType] = useState('accelerometer');
   const [selectedFileType, setSelectedFileType] = useState('');
   const [status, setStatus] = useState({ type: 'idle', message: '' });
@@ -110,6 +111,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
 
     const trimmedRunName = runName.trim();
     const trimmedExistingRunId = existingRunId.trim();
+    const trimmedMetadataJson = metadataJson.trim();
     if (uploadMode === 'existing' && !trimmedExistingRunId) {
       setStatus({ type: 'error', message: 'Enter an existing run ID before uploading.' });
       return;
@@ -122,6 +124,18 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
       setStatus({ type: 'error', message: 'Choose a context before uploading.' });
       return;
     }
+    if (trimmedMetadataJson) {
+      try {
+        const parsedMetadata = JSON.parse(trimmedMetadataJson);
+        if (!parsedMetadata || Array.isArray(parsedMetadata) || typeof parsedMetadata !== 'object') {
+          throw new Error('Metadata JSON must be an object.');
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Metadata JSON is invalid.';
+        setStatus({ type: 'error', message });
+        return;
+      }
+    }
 
     setIsUploading(true);
     setStatus({ type: 'info', message: 'Uploading file...' });
@@ -129,8 +143,8 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
     try {
       const uploadOptions =
         uploadMode === 'existing'
-          ? { runId: trimmedExistingRunId, sensorType }
-          : { name: trimmedRunName, sensorType, contextId: selectedContextId.trim() };
+          ? { runId: trimmedExistingRunId, sensorType, metadata: trimmedMetadataJson }
+          : { name: trimmedRunName, sensorType, contextId: selectedContextId.trim(), metadata: trimmedMetadataJson };
       const response =
         selectedFileType === 'csv'
           ? await uploadSensorDataCsv(selectedFile, uploadOptions)
@@ -147,6 +161,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
       setRunName('');
       setExistingRunId('');
       setSelectedContextId('');
+      setMetadataJson('');
       setInputKey((prev) => prev + 1);
       if (response?.createdRun) {
         onRunCreated?.(response);
@@ -267,6 +282,14 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
             ))}
           </>
           )}
+          <div className="upload-file-meta">Optional run metadata JSON</div>
+          <textarea
+            className="form-control"
+            rows={8}
+            value={metadataJson}
+            onChange={(event) => setMetadataJson(event.target.value)}
+            placeholder={`{\n  "discipline": "luge",\n  "athlete": "Reinis",\n  "track": "Sigulda",\n  "weather": {\n    "airTempC": -3\n  }\n}`}
+          />
           <select
             className="form-control"
             value={sensorType}
@@ -321,6 +344,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
                 setRunName('');
                 setExistingRunId('');
                 setSelectedContextId('');
+                setMetadataJson('');
                 setStatus({ type: 'idle', message: '' });
                 setInputKey((prev) => prev + 1);
               }}

@@ -1,5 +1,8 @@
 import React from 'react';
 
+const hasMetadata = (metadata) =>
+  metadata && typeof metadata === 'object' && !Array.isArray(metadata) && Object.keys(metadata).length > 0;
+
 const InfoVisualizer = ({ selectedRun }) => (
   <>
     {/* <h1>Info</h1> */}
@@ -11,7 +14,16 @@ const InfoVisualizer = ({ selectedRun }) => (
         {selectedRun.date && <li>File Date: {selectedRun.date}</li>}
         {selectedRun.description && <li>Description: {selectedRun.description}</li>}
         {selectedRun.weather && <li>Weather: {selectedRun.weather}</li>}
+        {selectedRun.time ? <li>Run Time: {selectedRun.time}</li> : null}
       </ul>
+      {hasMetadata(selectedRun.metadata) && (
+        <>
+          <b>
+            <figcaption id="run-info-metadata-title">Run Metadata</figcaption>
+          </b>
+          <pre className="upload-format-block">{JSON.stringify(selectedRun.metadata, null, 2)}</pre>
+        </>
+      )}
       {selectedRun.Track && (
         <>
           <b>

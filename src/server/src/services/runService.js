@@ -12,17 +12,19 @@ const runSchema = new mongoose.Schema({
     default: null,
   },
   date: { type: Date, required: true, default: Date.now },
+  time: { type: Number, default: 0 },
   sensorCount: { type: Number, default: 0 },
   description: { type: String, default: "" },
+  metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
   driverid: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Driver",
-    required: true,
+    required: false,
   },
   trackid: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Track",
-    required: true,
+    required: false,
   },
   weather: { type: String, default: "" },
   labels: {

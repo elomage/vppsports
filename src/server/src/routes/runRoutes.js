@@ -238,6 +238,25 @@ const parseInteger = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const hasText = (value) => String(value || "").trim().length > 0;
+
+const parseRunMetadata = (value) => {
+  if (!hasText(value)) return null;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(String(value));
+  } catch (error) {
+    throw new Error("metadata must be valid JSON.");
+  }
+
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+    throw new Error("metadata must be a JSON object.");
+  }
+
+  return parsed;
+};
+
 const normalizeCsvHeader = (value) =>
   String(value || "")
     .trim()
@@ -597,6 +616,7 @@ runRouter.post("/upload", async (req, res) => {
       trackId,
       runDate,
       runTime,
+      metadata,
       sensorType,
       sensorId,
       uploadFormat,
@@ -662,6 +682,13 @@ runRouter.post("/upload", async (req, res) => {
     let resolvedRunName = String(name || runName || "").trim();
     let resolvedContext = normalizeContext(context);
     let resolvedContextId = null;
+    let metadataUpdate = null;
+
+    try {
+      metadataUpdate = parseRunMetadata(metadata);
+    } catch (error) {
+      return res.status(400).json({ message: error.message });
+    }
 
     if (runId) {
       try {
@@ -689,6 +716,17 @@ runRouter.post("/upload", async (req, res) => {
         resolvedRunName ||
         (existingRun.name && String(existingRun.name).trim()) ||
         `Run ${resolvedRunId.toString()}`;
+
+      const runUpdates = {};
+      if (metadataUpdate) {
+        runUpdates.metadata = {
+          ...(existingRun.metadata && typeof existingRun.metadata === "object" ? existingRun.metadata : {}),
+          ...metadataUpdate,
+        };
+      }
+      if (Object.keys(runUpdates).length > 0) {
+        await runsColl.updateOne({ _id: resolvedRunId }, { $set: runUpdates });
+      }
     } else {
       if (!contextId || !ObjectId.isValid(contextId)) {
         return res.status(400).json({
@@ -726,7 +764,7 @@ runRouter.post("/upload", async (req, res) => {
         if (!existingDriver) {
           return res.status(400).json({ message: "driverId not found." });
         }
-      } else {
+      } else if (hasText(driverName) || hasText(licenseNumber) || hasText(driverAge)) {
         const resolvedLicense =
           (licenseNumber && String(licenseNumber).trim()) || "UNKNOWN";
         let driver = await driversColl.findOne({
@@ -756,7 +794,7 @@ runRouter.post("/upload", async (req, res) => {
         if (!existingTrack) {
           return res.status(400).json({ message: "trackId not found." });
         }
-      } else {
+      } else if (hasText(trackName) || hasText(trackLocation) || hasText(trackLength)) {
         const resolvedTrackName =
           (trackName && String(trackName).trim()) || "Unknown Track";
         let track = await tracksColl.findOne({ name: resolvedTrackName });
@@ -787,6 +825,7 @@ runRouter.post("/upload", async (req, res) => {
         driverId: resolvedDriverId,
         trackId: resolvedTrackId,
         time: timeOverride ?? 0,
+        metadata: metadataUpdate || {},
       });
       runCreated = true;
     }
