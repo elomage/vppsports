@@ -206,6 +206,23 @@ const interpolateSeriesValue = (points, target) => {
   return left.y + (right.y - left.y) * ratio;
 };
 
+const interpolateSeriesValueWithinBounds = (points, target) => {
+  if (!Array.isArray(points) || points.length === 0 || !Number.isFinite(target)) {
+    return null;
+  }
+
+  const firstPoint = points[0];
+  const lastPoint = points[points.length - 1];
+  if (!Number.isFinite(firstPoint?.x) || !Number.isFinite(lastPoint?.x)) {
+    return null;
+  }
+  if (target < firstPoint.x || target > lastPoint.x) {
+    return null;
+  }
+
+  return interpolateSeriesValue(points, target);
+};
+
 const buildTraceKey = ({ runId, sensorId, axisIndex, useFilteredData }) =>
   `${runId}:${sensorId}:${axisIndex}:${useFilteredData ? "filtered" : "raw"}`;
 
@@ -988,6 +1005,30 @@ export default function EChartGraph({
     const readoutEntries = [];
     const traceColorByLabel = new Map();
     const currentBaseTimestamp = selectedRun?.totalTimestamps?.[0];
+    const visibleTimestamps = runTimestamps.filter(
+      (timestamp) =>
+        timestamp >= visibleRange.start && timestamp <= visibleRange.end,
+    );
+    const displayResolution = Math.max(
+      2,
+      Math.min(plotResolution, Math.max(visibleTimestamps.length, 2)),
+    );
+    const fallbackStart = Number.isFinite(visibleRange.start)
+      ? visibleRange.start
+      : runTimestamps[0];
+    const fallbackEnd = Number.isFinite(visibleRange.end)
+      ? visibleRange.end
+      : runTimestamps[runTimestamps.length - 1];
+    const xValues =
+      visibleTimestamps.length > 1
+        ? visibleTimestamps
+        : fallbackEnd > fallbackStart
+          ? Array.from({ length: displayResolution }, (_, index) => {
+              const ratio =
+                displayResolution === 1 ? 0 : index / (displayResolution - 1);
+              return fallbackStart + (fallbackEnd - fallbackStart) * ratio;
+            })
+          : [];
 
     selectedSensorEntries.forEach((entry) => {
       const payload = entry.isPrimary
@@ -1027,6 +1068,10 @@ export default function EChartGraph({
           .filter(
             (point) => Number.isFinite(point.x) && Number.isFinite(point.y),
           );
+        const renderData = xValues.map((timestamp) => [
+          timestamp,
+          interpolateSeriesValueWithinBounds(points, timestamp),
+        ]);
 
         series.push({
           traceKey,
@@ -1037,6 +1082,7 @@ export default function EChartGraph({
           runId: entry.runId,
           runName: entry.runName,
           points,
+          renderData,
         });
       }
 
@@ -1074,12 +1120,13 @@ export default function EChartGraph({
       });
     });
 
-    return { series, readoutEntries };
+    return { series, readoutEntries, xValues };
   }, [
     comparisonPlotSeriesByRun,
     comparisonRawSeriesByRun,
     comparisonRuns,
     currentTimestamp,
+    plotResolution,
     plotSeriesBySensor,
     rawSeriesBySensor,
     selectedRun,
@@ -1087,6 +1134,9 @@ export default function EChartGraph({
     sensorSyncOffsets,
     traceVisibility,
     useFilteredData,
+    visibleRange.end,
+    visibleRange.start,
+    runTimestamps,
   ]);
 
   const seriesByTraceKey = useMemo(
@@ -1364,7 +1414,8 @@ export default function EChartGraph({
           progressiveThreshold: 10000,
           hoverLayerThreshold: Infinity,
           lineStyle: { width: 1.5, color: seriesItem.color },
-          data: seriesItem.points.map((point) => [point.x, point.y]),
+          connectNulls: false,
+          data: seriesItem.renderData,
         })),
       ],
     };

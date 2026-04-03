@@ -204,6 +204,17 @@ const interpolateSeriesValue = (points, target) => {
   return left.y + (right.y - left.y) * ratio;
 };
 
+const interpolateSeriesValueWithinBounds = (points, target) => {
+  if (!Array.isArray(points) || points.length === 0 || !Number.isFinite(target)) return null;
+
+  const firstPoint = points[0];
+  const lastPoint = points[points.length - 1];
+  if (!Number.isFinite(firstPoint?.x) || !Number.isFinite(lastPoint?.x)) return null;
+  if (target < firstPoint.x || target > lastPoint.x) return null;
+
+  return interpolateSeriesValue(points, target);
+};
+
 const buildTraceKey = ({ runId, sensorId, axisIndex, useFilteredData }) =>
   `${runId}:${sensorId}:${axisIndex}:${useFilteredData ? "filtered" : "raw"}`;
 
@@ -847,7 +858,7 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
           runId: entry.runId,
           runName: entry.runName,
           points: interpolationPoints,
-          values: xValues.map((timestamp) => interpolateSeriesValue(interpolationPoints, timestamp)),
+          values: xValues.map((timestamp) => interpolateSeriesValueWithinBounds(interpolationPoints, timestamp)),
         });
       }
 

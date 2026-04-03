@@ -8,6 +8,11 @@ const CSV_FORMATS = {
     example: ['0.000000', '0.014', '-0.021', '1.032'],
     notes: 'Values are imported exactly as provided. Use seconds from run start for timestamps.',
   },
+  gyroscope: {
+    columns: ['timestamp', 'x', 'y', 'z'],
+    example: ['0.000000', '0.125', '-0.083', '0.041'],
+    notes: 'Provide angular-rate readings per axis. Use seconds from run start for timestamps.',
+  },
   strainGauge: {
     columns: ['timestamp', 'ch1', 'ch2', 'ch3', 'ch4', 'ch5', 'ch6', 'ch7', 'ch8'],
     example: ['0.000000', '124', '118', '121', '119', '115', '111', '109', '113'],
@@ -28,6 +33,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
   const [selectedContextId, setSelectedContextId] = useState('');
   const [metadataJson, setMetadataJson] = useState('');
   const [sensorType, setSensorType] = useState('accelerometer');
+  const [sensorId, setSensorId] = useState('');
   const [selectedFileType, setSelectedFileType] = useState('');
   const [status, setStatus] = useState({ type: 'idle', message: '' });
   const [isUploading, setIsUploading] = useState(false);
@@ -143,8 +149,8 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
     try {
       const uploadOptions =
         uploadMode === 'existing'
-          ? { runId: trimmedExistingRunId, sensorType, metadata: trimmedMetadataJson }
-          : { name: trimmedRunName, sensorType, contextId: selectedContextId.trim(), metadata: trimmedMetadataJson };
+          ? { runId: trimmedExistingRunId, sensorType, sensorId: sensorId.trim(), metadata: trimmedMetadataJson }
+          : { name: trimmedRunName, sensorType, sensorId: sensorId.trim(), contextId: selectedContextId.trim(), metadata: trimmedMetadataJson };
       const response =
         selectedFileType === 'csv'
           ? await uploadSensorDataCsv(selectedFile, uploadOptions)
@@ -162,6 +168,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
       setExistingRunId('');
       setSelectedContextId('');
       setMetadataJson('');
+      setSensorId('');
       setInputKey((prev) => prev + 1);
       if (response?.createdRun) {
         onRunCreated?.(response);
@@ -296,9 +303,19 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
             onChange={(event) => setSensorType(event.target.value)}
           >
             <option value="accelerometer">Accelerometer</option>
+            <option value="gyroscope">Gyroscope</option>
             <option value="strainGauge">Strain Gauge</option>
             <option value="gps">GPS</option>
           </select>
+          <input
+            className="form-control"
+            type="number"
+            min="1"
+            step="1"
+            value={sensorId}
+            onChange={(event) => setSensorId(event.target.value)}
+            placeholder="Optional sensor ID (use unique IDs for multiple sensors of the same type)"
+          />
           <input
             key={inputKey}
             className="form-control"
@@ -345,6 +362,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
                 setExistingRunId('');
                 setSelectedContextId('');
                 setMetadataJson('');
+                setSensorId('');
                 setStatus({ type: 'idle', message: '' });
                 setInputKey((prev) => prev + 1);
               }}

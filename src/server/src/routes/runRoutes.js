@@ -16,11 +16,17 @@ const fs = require("fs");
 const DEFAULT_SENSITIVITY = 19.5;
 const SENSOR_TYPE_TO_ID = Object.freeze({
   accelerometer: 3,
+  gyroscope: 2,
   strainGauge: 5,
   gps: 6,
 });
 const SENSOR_TYPE_CONFIG = Object.freeze({
   accelerometer: {
+    recordSizeBytes: 16,
+    dataAxis: 3,
+    csvColumns: ["timestamp", "x", "y", "z"],
+  },
+  gyroscope: {
     recordSizeBytes: 16,
     dataAxis: 3,
     csvColumns: ["timestamp", "x", "y", "z"],
@@ -52,6 +58,11 @@ const CSV_VALUE_ALIASES = Object.freeze({
     ["x", "accelx", "xaxis"],
     ["y", "accely", "yaxis"],
     ["z", "accelz", "zaxis"],
+  ],
+  gyroscope: [
+    ["x", "gyrox", "xaxis"],
+    ["y", "gyroy", "yaxis"],
+    ["z", "gyroz", "zaxis"],
   ],
   gps: [
     ["x", "latitude", "lat"],
@@ -257,6 +268,355 @@ const parseRunMetadata = (value) => {
   return parsed;
 };
 
+const DEFAULT_ARFF_RESAMPLE_POINTS = 64;
+
+const flattenMetadata = (value, prefix = "meta") => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.entries(value).reduce((acc, [key, entryValue]) => {
+    const normalizedKey = String(key || "")
+      .trim()
+      .replace(/[^a-zA-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .toLowerCase();
+    if (!normalizedKey) return acc;
+
+    const nextKey = `${prefix}_${normalizedKey}`;
+    if (
+      entryValue &&
+      typeof entryValue === "object" &&
+      !Array.isArray(entryValue)
+    ) {
+      Object.assign(acc, flattenMetadata(entryValue, nextKey));
+      return acc;
+    }
+
+    acc[nextKey] = entryValue;
+    return acc;
+  }, {});
+};
+
+const sanitizeArffAttributeName = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase() || "field";
+
+const escapeArffString = (value) =>
+  `'${String(value ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/\r?\n/g, " ")}'`;
+
+const toArffValue = (value, type) => {
+  if (
+    value === undefined ||
+    value === null ||
+    value === "" ||
+    (type === "NUMERIC" && !Number.isFinite(Number(value)))
+  ) {
+    return "?";
+  }
+
+  if (type === "NUMERIC") {
+    return String(Number(value));
+  }
+
+  return escapeArffString(value);
+};
+
+const buildArffDocument = (relationName, attributes, rows) => {
+  const header = [
+    `@relation ${sanitizeArffAttributeName(relationName)}`,
+    "",
+    ...attributes.map(
+      (attribute) =>
+        `@attribute ${sanitizeArffAttributeName(attribute.name)} ${attribute.type}`
+    ),
+    "",
+    "@data",
+  ];
+
+  const dataLines = rows.map((row) =>
+    attributes
+      .map((attribute) => toArffValue(row[attribute.name], attribute.type))
+      .join(",")
+  );
+
+  return `${header.join("\n")}\n${dataLines.join("\n")}\n`;
+};
+
+const parseTraceKey = (traceKey) => {
+  const [runId, sensorId, axisIndex, dataMode] = String(traceKey || "").split(":");
+  return {
+    runId: runId || "",
+    sensorId: Number.parseInt(sensorId, 10),
+    axisIndex: Number.parseInt(axisIndex, 10),
+    dataMode: dataMode || "raw",
+  };
+};
+
+const toRawTraceKey = (traceKey) => {
+  const parsed = parseTraceKey(traceKey);
+  if (!parsed.runId || !Number.isFinite(parsed.sensorId) || !Number.isFinite(parsed.axisIndex)) {
+    return String(traceKey || "");
+  }
+  return `${parsed.runId}:${parsed.sensorId}:${parsed.axisIndex}:raw`;
+};
+
+const normalizeClassValue = (label) => {
+  const raw = String(label?.text || "").trim();
+  if (!raw) return "unlabeled";
+  return raw.toLowerCase().replace(/\s+/g, "_");
+};
+
+const computeStats = (values) => {
+  if (!Array.isArray(values) || values.length === 0) {
+    return {
+      readingCount: 0,
+      minValue: null,
+      maxValue: null,
+      meanValue: null,
+      stdValue: null,
+      medianValue: null,
+      rangeValue: null,
+      firstValue: null,
+      lastValue: null,
+      deltaValue: null,
+      slope: null,
+      areaUnderCurve: null,
+      rmsValue: null,
+      peakValue: null,
+      peakTimeRatio: null,
+      zeroCrossings: 0,
+    };
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const readingCount = values.length;
+  const minValue = sorted[0];
+  const maxValue = sorted[sorted.length - 1];
+  const meanValue = values.reduce((sum, value) => sum + value, 0) / readingCount;
+  const variance =
+    values.reduce((sum, value) => sum + (value - meanValue) ** 2, 0) / readingCount;
+  const stdValue = Math.sqrt(variance);
+  const medianValue =
+    sorted.length % 2 === 0
+      ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+      : sorted[Math.floor(sorted.length / 2)];
+  const firstValue = values[0];
+  const lastValue = values[values.length - 1];
+  const deltaValue = lastValue - firstValue;
+  const rmsValue = Math.sqrt(
+    values.reduce((sum, value) => sum + value * value, 0) / readingCount
+  );
+
+  let peakValue = values[0];
+  let peakIndex = 0;
+  let zeroCrossings = 0;
+  for (let index = 1; index < values.length; index += 1) {
+    if (Math.abs(values[index]) > Math.abs(peakValue)) {
+      peakValue = values[index];
+      peakIndex = index;
+    }
+    if (
+      (values[index - 1] < 0 && values[index] >= 0) ||
+      (values[index - 1] > 0 && values[index] <= 0)
+    ) {
+      zeroCrossings += 1;
+    }
+  }
+
+  return {
+    readingCount,
+    minValue,
+    maxValue,
+    meanValue,
+    stdValue,
+    medianValue,
+    rangeValue: maxValue - minValue,
+    firstValue,
+    lastValue,
+    deltaValue,
+    slope: readingCount > 1 ? deltaValue / (readingCount - 1) : 0,
+    areaUnderCurve: values.reduce((sum, value) => sum + value, 0),
+    rmsValue,
+    peakValue,
+    peakTimeRatio: readingCount > 1 ? peakIndex / (readingCount - 1) : 0,
+    zeroCrossings,
+  };
+};
+
+const resampleSeries = (timestamps, values, pointCount) => {
+  if (
+    !Array.isArray(timestamps) ||
+    !Array.isArray(values) ||
+    timestamps.length === 0 ||
+    values.length === 0 ||
+    timestamps.length !== values.length
+  ) {
+    return new Array(pointCount).fill(null);
+  }
+
+  if (timestamps.length === 1) {
+    return new Array(pointCount).fill(values[0]);
+  }
+
+  const start = timestamps[0];
+  const end = timestamps[timestamps.length - 1];
+  if (!(end > start)) {
+    return new Array(pointCount).fill(values[0]);
+  }
+
+  const samples = [];
+  let cursor = 0;
+
+  for (let index = 0; index < pointCount; index += 1) {
+    const target =
+      start + ((end - start) * index) / Math.max(pointCount - 1, 1);
+
+    while (
+      cursor < timestamps.length - 2 &&
+      Number.isFinite(timestamps[cursor + 1]) &&
+      timestamps[cursor + 1] < target
+    ) {
+      cursor += 1;
+    }
+
+    const leftTs = timestamps[cursor];
+    const rightTs = timestamps[Math.min(cursor + 1, timestamps.length - 1)];
+    const leftValue = values[cursor];
+    const rightValue = values[Math.min(cursor + 1, values.length - 1)];
+
+    if (!Number.isFinite(leftTs) || !Number.isFinite(rightTs)) {
+      samples.push(null);
+      continue;
+    }
+
+    if (rightTs === leftTs) {
+      samples.push(leftValue);
+      continue;
+    }
+
+    const ratio = (target - leftTs) / (rightTs - leftTs);
+    samples.push(leftValue + (rightValue - leftValue) * ratio);
+  }
+
+  return samples;
+};
+
+const buildTraceSeriesMap = (runId, sensorReadings) => {
+  const map = new Map();
+
+  sensorReadings.forEach((reading) => {
+    const axisValues = Array.isArray(reading?.data) ? reading.data : [];
+    axisValues.forEach((value, axisIndex) => {
+      const traceKey = `${runId}:${reading.sensorId}:${axisIndex}:raw`;
+      const existing = map.get(traceKey) || {
+        traceKey,
+        sensorId: reading.sensorId,
+        axisIndex,
+        dataMode: "raw",
+        timestamps: [],
+        values: [],
+      };
+
+      existing.timestamps.push(reading.timestamp);
+      existing.values.push(Number(value));
+      map.set(traceKey, existing);
+    });
+  });
+
+  return map;
+};
+
+const collectLabelTraceRows = (runDocument, sensorReadings) => {
+  const runId = String(runDocument._id);
+  const traceSeriesMap = buildTraceSeriesMap(runId, sensorReadings);
+  const sensorTypeBySensorId = new Map();
+  sensorReadings.forEach((reading) => {
+    const sensorType =
+      reading?.sensorType ||
+      reading?.sensorDetails?.[0]?.type ||
+      "";
+    if (reading?.sensorId !== undefined && sensorType) {
+      sensorTypeBySensorId.set(Number(reading.sensorId), String(sensorType));
+    }
+  });
+  const metadata = flattenMetadata(runDocument.metadata);
+  const labels = Array.isArray(runDocument.labels) ? runDocument.labels : [];
+
+  return labels.flatMap((label) => {
+    const traceKeys = Array.isArray(label.traceKeys) ? label.traceKeys : [];
+
+    return traceKeys.map((traceKey) => {
+      const traceInfo =
+        traceSeriesMap.get(traceKey) ||
+        traceSeriesMap.get(toRawTraceKey(traceKey));
+      const parsedTrace = parseTraceKey(traceKey);
+      const rows = [];
+
+      if (label.kind === "single" && Array.isArray(label.points) && label.points.length > 0) {
+        label.points
+          .filter(
+            (point) =>
+              point.traceKey === traceKey ||
+              toRawTraceKey(point.traceKey) === toRawTraceKey(traceKey)
+          )
+          .forEach((point) => {
+            rows.push({
+              timestamp: Number(point.timestamp),
+              value: Number(point.yValue),
+            });
+          });
+      } else if (traceInfo) {
+        for (let index = 0; index < traceInfo.timestamps.length; index += 1) {
+          const timestamp = traceInfo.timestamps[index];
+          if (timestamp >= label.startTimestamp && timestamp <= label.endTimestamp) {
+            rows.push({
+              timestamp,
+              value: traceInfo.values[index],
+            });
+          }
+        }
+      }
+
+      const timestamps = rows.map((entry) => entry.timestamp);
+      const values = rows.map((entry) => entry.value);
+      const stats = computeStats(values);
+
+      return {
+        runId,
+        runName: runDocument.name || `Run ${runId}`,
+        runDate: runDocument.date ? new Date(runDocument.date).toISOString() : "",
+        runTime: Number.isFinite(Number(runDocument.time)) ? Number(runDocument.time) : null,
+        context: runDocument.context || "",
+        labelId: label.id,
+        labelText: label.text || "",
+        labelKind: label.kind,
+        traceKey,
+        sensorId: Number.isFinite(parsedTrace.sensorId) ? parsedTrace.sensorId : null,
+        sensorType: sensorTypeBySensorId.get(Number(parsedTrace.sensorId)) || "",
+        axisIndex: Number.isFinite(parsedTrace.axisIndex) ? parsedTrace.axisIndex : null,
+        dataMode: parsedTrace.dataMode,
+        startTimestamp: Number(label.startTimestamp),
+        endTimestamp: Number(label.endTimestamp),
+        duration: Number(label.endTimestamp) - Number(label.startTimestamp),
+        anchorTimestamp: Number(label.anchorTimestamp),
+        anchorY: Number(label.anchorY),
+        class: normalizeClassValue(label),
+        timestamps,
+        values,
+        ...stats,
+        ...metadata,
+      };
+    }).filter((row) => row.timestamps.length > 0);
+  });
+};
+
 const normalizeCsvHeader = (value) =>
   String(value || "")
     .trim()
@@ -445,6 +805,7 @@ const normalizeSensorType = (value) => {
   if (!value) return DEFAULT_SENSOR_TYPE;
   const normalized = String(value).trim().toLowerCase();
   if (normalized === "accelerometer") return "accelerometer";
+  if (normalized === "gyroscope" || normalized === "gyro") return "gyroscope";
   if (
     normalized === "straingauge" ||
     normalized === "strain_gauge" ||
@@ -518,6 +879,153 @@ runRouter.get("/:runid", async (req, res) => {
     res
       .status(500)
       .json({ message: "Error fetching run", error: error.message });
+  }
+});
+
+runRouter.get("/:runid/export/arff", async (req, res) => {
+  try {
+    const runid = req.params.runid;
+    const authorizedRun = await findRunForUser(runid, req.user).catch(() => null);
+    if (!authorizedRun) {
+      return res.status(404).json({ message: "Run not found." });
+    }
+
+    const variant = String(req.query.variant || "features").trim().toLowerCase();
+    if (!["features", "resampled"].includes(variant)) {
+      return res.status(400).json({
+        message: "Invalid variant. Supported values: features, resampled.",
+      });
+    }
+
+    const resamplePoints = Math.max(
+      8,
+      Math.min(
+        parseInteger(req.query.points, DEFAULT_ARFF_RESAMPLE_POINTS),
+        512
+      )
+    );
+
+    const runDocument = await runService.getSingleRunDB(runid);
+    const sensorReadings = await runService.getRunSensorReadingsAll(runid);
+    const rows = collectLabelTraceRows(runDocument, sensorReadings);
+
+    if (rows.length === 0) {
+      return res.status(400).json({
+        message: "Run has no labeled trace data to export.",
+      });
+    }
+
+    const metadataKeys = [...new Set(rows.flatMap((row) =>
+      Object.keys(row).filter((key) => key.startsWith("meta_"))
+    ))].sort();
+
+    let attributes;
+    let dataRows;
+
+    if (variant === "features") {
+      dataRows = rows.flatMap((row) =>
+        row.timestamps.map((timestamp, index) => ({
+          runId: row.runId,
+          runName: row.runName,
+          runDate: row.runDate,
+          runTime: row.runTime,
+          context: row.context,
+          sensorType: row.sensorType,
+          sensorId: row.sensorId,
+          axisIndex: row.axisIndex,
+          traceKey: row.traceKey,
+          timestamp,
+          readings: row.values[index],
+          labelId: row.labelId,
+          labelText: row.labelText,
+          labelKind: row.labelKind,
+          class: row.class,
+          ...Object.fromEntries(
+            metadataKeys.map((key) => [key, row[key] ?? ""])
+          ),
+        }))
+      );
+      if (dataRows.length === 0) {
+        return res.status(400).json({
+          message: "Run labels were found, but no matching sensor reading rows could be resolved for export.",
+        });
+      }
+
+      attributes = [
+        { name: "runId", type: "STRING" },
+        { name: "runName", type: "STRING" },
+        { name: "runDate", type: "STRING" },
+        { name: "runTime", type: "NUMERIC" },
+        { name: "context", type: "STRING" },
+        { name: "sensorType", type: "STRING" },
+        { name: "sensorId", type: "NUMERIC" },
+        { name: "axisIndex", type: "NUMERIC" },
+        { name: "traceKey", type: "STRING" },
+        { name: "timestamp", type: "NUMERIC" },
+        { name: "readings", type: "NUMERIC" },
+        { name: "labelId", type: "STRING" },
+        { name: "labelText", type: "STRING" },
+        { name: "labelKind", type: "STRING" },
+        ...metadataKeys.map((key) => ({ name: key, type: "STRING" })),
+        { name: "class", type: "STRING" },
+      ];
+    } else {
+      attributes = [
+        { name: "runId", type: "STRING" },
+        { name: "runName", type: "STRING" },
+        { name: "labelId", type: "STRING" },
+        { name: "labelText", type: "STRING" },
+        { name: "labelKind", type: "STRING" },
+        { name: "traceKey", type: "STRING" },
+        { name: "sensorId", type: "NUMERIC" },
+        { name: "axisIndex", type: "NUMERIC" },
+        { name: "readingCount", type: "NUMERIC" },
+        { name: "duration", type: "NUMERIC" },
+        ...metadataKeys.map((key) => ({ name: key, type: "STRING" })),
+        ...Array.from({ length: resamplePoints }, (_, index) => ({
+          name: `p${String(index + 1).padStart(3, "0")}`,
+          type: "NUMERIC",
+        })),
+        { name: "class", type: "STRING" },
+      ];
+
+      dataRows = rows.map((row) => {
+        const samples = resampleSeries(row.timestamps, row.values, resamplePoints);
+        const sampleFields = Object.fromEntries(
+          samples.map((value, index) => [
+            `p${String(index + 1).padStart(3, "0")}`,
+            value,
+          ])
+        );
+        return {
+          ...row,
+          ...sampleFields,
+        };
+      });
+      if (dataRows.length === 0) {
+        return res.status(400).json({
+          message: "Run labels were found, but no matching sensor reading rows could be resolved for export.",
+        });
+      }
+    }
+
+    const arff = buildArffDocument(
+      `run_${runid}_${variant}`,
+      attributes,
+      dataRows
+    );
+
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="run-${runid}-${variant}.arff"`
+    );
+    return res.status(200).send(arff);
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to export ARFF.",
+      error: error.message,
+    });
   }
 });
 
@@ -658,7 +1166,7 @@ runRouter.post("/upload", async (req, res) => {
     if (!resolvedSensorType) {
       return res.status(400).json({
         message:
-          "Invalid sensorType. Supported values: accelerometer, strainGauge, gps.",
+          "Invalid sensorType. Supported values: accelerometer, gyroscope, strainGauge, gps.",
       });
     }
 
@@ -832,6 +1340,9 @@ runRouter.post("/upload", async (req, res) => {
 
     const defaultSensorId = SENSOR_TYPE_TO_ID[resolvedSensorType];
     const resolvedSensorId = parseInteger(sensorId, defaultSensorId);
+    if (!Number.isFinite(resolvedSensorId)) {
+      return res.status(400).json({ message: "Invalid sensorId." });
+    }
 
     const sensorsColl = await getCollection(db, "sensors");
     await sensorsColl.updateOne(

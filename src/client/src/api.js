@@ -350,6 +350,53 @@ export async function deleteRun(runId) {
   });
 }
 
+export async function exportRunArff(runId, variant = "features", points) {
+  const params = new URLSearchParams();
+  if (variant) {
+    params.append("variant", variant);
+  }
+  if (points !== undefined && points !== null && points !== "") {
+    params.append("points", String(points));
+  }
+
+  const path = `/run/${runId}/export/arff${params.toString() ? `?${params.toString()}` : ""}`;
+  const headers = new Headers();
+  if (accessToken) {
+    headers.set("Authorization", `Bearer ${accessToken}`);
+  }
+
+  const response = await fetch(`${SERVER_URL}${path}`, {
+    method: "GET",
+    headers,
+    credentials: "include",
+  });
+
+  if (response.status === 401) {
+    notifyAuthFailure();
+    throw new UnauthorizedError();
+  }
+
+  if (!response.ok) {
+    const payload = await parseResponse(response);
+    const message =
+      typeof payload === "string"
+        ? payload
+        : payload?.error
+          ? `${payload?.message || `Request failed (${response.status})`}: ${payload.error}`
+          : payload?.message || `Request failed (${response.status})`;
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("content-disposition") || "";
+  const fileNameMatch = disposition.match(/filename=\"([^\"]+)\"/i);
+
+  return {
+    blob,
+    fileName: fileNameMatch?.[1] || `run-${runId}-${variant}.arff`,
+  };
+}
+
 export async function createUser(payload) {
   return request("/auth/users", {
     method: "POST",

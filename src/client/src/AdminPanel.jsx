@@ -3,6 +3,7 @@ import {
   createContext,
   createUser,
   deleteRun,
+  exportRunArff,
   fetchContexts,
   fetchDeletedContexts,
   fetchDeletedUsers,
@@ -52,6 +53,7 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
     message: "",
   });
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [newContext, setNewContext] = useState("");
   const [storedContexts, setStoredContexts] = useState([]);
   const [deletedContexts, setDeletedContexts] = useState([]);
@@ -406,6 +408,47 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
     }
   };
 
+  const handleExport = async (variant) => {
+    if (!selectedRunId || isExporting) return;
+
+    setIsExporting(true);
+    setDeleteStatus({
+      type: "info",
+      message:
+        variant === "resampled"
+          ? "Preparing resampled ARFF export..."
+          : "Preparing feature ARFF export...",
+    });
+
+    try {
+      const { blob, fileName } = await exportRunArff(selectedRunId, variant);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      setDeleteStatus({
+        type: "success",
+        message:
+          variant === "resampled"
+            ? "Resampled ARFF export downloaded."
+            : "Feature ARFF export downloaded.",
+      });
+    } catch (error) {
+      setDeleteStatus({
+        type: "error",
+        message:
+          error instanceof Error ? error.message : "Failed to export run.",
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const handleSaveUser = async (event) => {
     event.preventDefault();
     if (isSavingUser) return;
@@ -511,7 +554,7 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
             className="form-control"
             value={selectedRunId}
             onChange={(event) => setSelectedRunId(event.target.value)}
-            disabled={isDeleting}
+            disabled={isDeleting || isExporting}
           >
             <option value="">Select run to delete</option>
             {sortedRuns.map((run) => (
@@ -526,9 +569,25 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
               className="btn btn-outline-danger"
               type="button"
               onClick={handleDelete}
-              disabled={!selectedRunId || isDeleting}
+              disabled={!selectedRunId || isDeleting || isExporting}
             >
               {isDeleting ? "Deleting..." : "Delete run"}
+            </button>
+            <button
+              className="btn btn-outline-primary"
+              type="button"
+              onClick={() => handleExport("features")}
+              disabled={!selectedRunId || isDeleting || isExporting}
+            >
+              {isExporting ? "Exporting..." : "Export ARFF"}
+            </button>
+            <button
+              className="btn btn-outline-secondary"
+              type="button"
+              onClick={() => handleExport("resampled")}
+              disabled={!selectedRunId || isDeleting || isExporting}
+            >
+              Resampled ARFF
             </button>
           </div>
           {deleteStatus.message && (
