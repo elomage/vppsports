@@ -272,6 +272,81 @@ const normalizeLabel = (label) => {
 
 const labelsEqual = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 
+const getLabelSeries = (traceKeys, seriesByTraceKey) =>
+  [...new Set((traceKeys || []).map((traceKey) => String(traceKey).trim()).filter(Boolean))]
+    .map((traceKey) => seriesByTraceKey.get(traceKey))
+    .filter(Boolean);
+
+const rebuildSingleLabel = (label, traceKeys, seriesByTraceKey) => {
+  const linkedSeries = getLabelSeries(traceKeys, seriesByTraceKey);
+  if (linkedSeries.length === 0) return label;
+
+  const anchorTimestamp = Number.isFinite(Number(label?.anchorTimestamp))
+    ? Number(label.anchorTimestamp)
+    : Number(label?.startTimestamp);
+  if (!Number.isFinite(anchorTimestamp)) return label;
+
+  const points = linkedSeries
+    .map((seriesItem) => {
+      const nearest = getNearestReading(
+        seriesItem.points.map((point) => ({ timestamp: point.x, data: [point.y] })),
+        anchorTimestamp
+      );
+      if (!nearest) return null;
+      return {
+        traceKey: seriesItem.traceKey,
+        timestamp: nearest.timestamp,
+        yValue: nearest.data[0],
+      };
+    })
+    .filter(Boolean);
+
+  const anchorY =
+    points.length > 0
+      ? points.reduce((sum, point) => sum + point.yValue, 0) / points.length
+      : label.anchorY;
+
+  return normalizeLabel({
+    ...label,
+    traceKeys: linkedSeries.map((seriesItem) => seriesItem.traceKey),
+    points,
+    startTimestamp: anchorTimestamp,
+    endTimestamp: anchorTimestamp,
+    anchorTimestamp,
+    anchorY,
+    updatedAt: new Date().toISOString(),
+  });
+};
+
+const rebuildRangeLabel = (label, traceKeys, startTimestamp, endTimestamp, seriesByTraceKey) => {
+  const linkedSeries = getLabelSeries(traceKeys, seriesByTraceKey);
+  if (linkedSeries.length === 0) return label;
+
+  const rangeStart = Math.min(startTimestamp, endTimestamp);
+  const rangeEnd = Math.max(startTimestamp, endTimestamp);
+  if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd)) return label;
+
+  const anchorTimestamp = (rangeStart + rangeEnd) / 2;
+  const anchorValues = linkedSeries
+    .map((seriesItem) => interpolateSeriesValue(seriesItem.points, anchorTimestamp))
+    .filter((value) => Number.isFinite(value));
+  const anchorY =
+    anchorValues.length > 0
+      ? anchorValues.reduce((sum, value) => sum + value, 0) / anchorValues.length
+      : label.anchorY;
+
+  return normalizeLabel({
+    ...label,
+    traceKeys: linkedSeries.map((seriesItem) => seriesItem.traceKey),
+    points: [],
+    startTimestamp: rangeStart,
+    endTimestamp: rangeEnd,
+    anchorTimestamp,
+    anchorY,
+    updatedAt: new Date().toISOString(),
+  });
+};
+
 const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }) => {
   const [useFilteredData, setUseFilteredData] = useState(false);
   const [selectedFilters, setSelectedFilters] = useState([]);
@@ -831,6 +906,10 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
     () => new Map(chartModel.series.map((seriesItem) => [seriesItem.traceKey, seriesItem])),
     [chartModel.series]
   );
+  const activeLabel = useMemo(
+    () => runLabels.find((label) => label.id === activeLabelId) || null,
+    [activeLabelId, runLabels]
+  );
 
   const labelRenderItems = useMemo(() => {
     const chart = plotInstanceRef.current;
@@ -1258,6 +1337,46 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
     updateLabelText(activeLabelId, labelDraftText);
   };
 
+  const updateLabelRange = (labelId, field, rawValue) => {
+    const nextValue = Number(rawValue);
+    if (!Number.isFinite(nextValue)) return;
+
+    setRunLabels((prev) =>
+      prev.map((label) => {
+        if (label.id !== labelId || label.kind !== "range") return label;
+        const nextLabel = rebuildRangeLabel(
+          label,
+          label.traceKeys,
+          field === "startTimestamp" ? nextValue : label.startTimestamp,
+          field === "endTimestamp" ? nextValue : label.endTimestamp,
+          seriesByTraceKey
+        );
+        return nextLabel || label;
+      })
+    );
+  };
+
+  const toggleActiveLabelTrace = (traceKey) => {
+    if (!activeLabel) return;
+
+    const nextTraceKeys = activeLabel.traceKeys.includes(traceKey)
+      ? activeLabel.traceKeys.filter((key) => key !== traceKey)
+      : [...activeLabel.traceKeys, traceKey];
+
+    if (nextTraceKeys.length === 0) return;
+
+    setRunLabels((prev) =>
+      prev.map((label) => {
+        if (label.id !== activeLabel.id) return label;
+        const nextLabel =
+          label.kind === "range"
+            ? rebuildRangeLabel(label, nextTraceKeys, label.startTimestamp, label.endTimestamp, seriesByTraceKey)
+            : rebuildSingleLabel(label, nextTraceKeys, seriesByTraceKey);
+        return nextLabel || label;
+      })
+    );
+  };
+
   const getClickTimestamp = (event) => {
     const chart = plotInstanceRef.current;
     if (!chart) return null;
@@ -1506,20 +1625,25 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
     if (pendingLabelMode === "single" && selectedLabelTraceKeys.length > 0) {
       const anchor = findNearestPointForLabel(event);
       if (anchor) {
-        const nextLabel = normalizeLabel({
-          id: createLabelId(),
-          kind: "single",
-          text: "",
-          traceKeys: selectedLabelTraceKeys,
-          startTimestamp: anchor.xTimestamp,
-          endTimestamp: anchor.xTimestamp,
-          anchorTimestamp: anchor.xTimestamp,
-          anchorY: anchor.yValue,
-          dx: 0,
-          dy: 0,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
+        const nextLabel = rebuildSingleLabel(
+          {
+            id: createLabelId(),
+            kind: "single",
+            text: "",
+            traceKeys: selectedLabelTraceKeys,
+            points: [],
+            startTimestamp: anchor.xTimestamp,
+            endTimestamp: anchor.xTimestamp,
+            anchorTimestamp: anchor.xTimestamp,
+            anchorY: anchor.yValue,
+            dx: 0,
+            dy: 0,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+          selectedLabelTraceKeys,
+          seriesByTraceKey
+        );
         if (nextLabel) {
           setRunLabels((prev) => [...prev, nextLabel]);
           setActiveLabelId(nextLabel.id);
@@ -2161,7 +2285,7 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
             </div>
           )}
 
-          {activeLabelId && (
+          {activeLabel && (
             <div className="uplot-prototype__label-editor mb-3">
               <label className="form-label mb-1">Label text</label>
               <textarea
@@ -2175,9 +2299,50 @@ const UPlotGraph = ({ selectedRun, sliderValue, setSliderValue, removeFunction }
                 <button type="button" className="btn btn-sm btn-outline-primary" onClick={commitDraftToActiveLabel}>
                   Save Text
                 </button>
-                <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => deleteLabel(activeLabelId)}>
+                <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => deleteLabel(activeLabel.id)}>
                   Delete Label
                 </button>
+              </div>
+              {activeLabel.kind === "range" && (
+                <div className="row g-2 mt-2">
+                  <div className="col-6">
+                    <label className="form-label mb-1">Start timestamp</label>
+                    <input
+                      className="form-control form-control-sm"
+                      type="number"
+                      step="any"
+                      value={activeLabel.startTimestamp}
+                      onChange={(event) => updateLabelRange(activeLabel.id, "startTimestamp", event.target.value)}
+                    />
+                  </div>
+                  <div className="col-6">
+                    <label className="form-label mb-1">End timestamp</label>
+                    <input
+                      className="form-control form-control-sm"
+                      type="number"
+                      step="any"
+                      value={activeLabel.endTimestamp}
+                      onChange={(event) => updateLabelRange(activeLabel.id, "endTimestamp", event.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+              <div className="mt-3">
+                <label className="form-label mb-1">Traces in label</label>
+                <div className="list-group">
+                  {chartModel.series.map((seriesItem) => (
+                    <label key={`active-label-${seriesItem.traceKey}`} className="list-group-item list-group-item-action d-flex align-items-center">
+                      <input
+                        className="form-check-input me-2"
+                        type="checkbox"
+                        checked={activeLabel.traceKeys.includes(seriesItem.traceKey)}
+                        onChange={() => toggleActiveLabelTrace(seriesItem.traceKey)}
+                        disabled={activeLabel.traceKeys.length === 1 && activeLabel.traceKeys.includes(seriesItem.traceKey)}
+                      />
+                      <span>{seriesItem.label}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
           )}

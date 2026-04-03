@@ -23,17 +23,52 @@ const SENSOR_TYPE_CONFIG = Object.freeze({
   accelerometer: {
     recordSizeBytes: 16,
     dataAxis: 3,
+    csvColumns: ["timestamp", "x", "y", "z"],
   },
   strainGauge: {
     recordSizeBytes: 36,
     dataAxis: 8,
+    csvColumns: ["timestamp", "ch1", "ch2", "ch3", "ch4", "ch5", "ch6", "ch7", "ch8"],
   },
   gps: {
     recordSizeBytes: 16,
     dataAxis: 3,
+    csvColumns: ["timestamp", "x", "y", "z"],
   },
 });
 const DEFAULT_SENSOR_TYPE = "accelerometer";
+const CSV_TIMESTAMP_ALIASES = Object.freeze([
+  "timestamp",
+  "timestampseconds",
+  "timestamps",
+  "timestampsec",
+  "timestampus",
+  "timestampmicroseconds",
+  "timestampms",
+  "timestampmilliseconds",
+]);
+const CSV_VALUE_ALIASES = Object.freeze({
+  accelerometer: [
+    ["x", "accelx", "xaxis"],
+    ["y", "accely", "yaxis"],
+    ["z", "accelz", "zaxis"],
+  ],
+  gps: [
+    ["x", "latitude", "lat"],
+    ["y", "longitude", "lon", "lng"],
+    ["z", "altitude", "alt"],
+  ],
+  strainGauge: [
+    ["ch1", "channel1", "v1", "value1"],
+    ["ch2", "channel2", "v2", "value2"],
+    ["ch3", "channel3", "v3", "value3"],
+    ["ch4", "channel4", "v4", "value4"],
+    ["ch5", "channel5", "v5", "value5"],
+    ["ch6", "channel6", "v6", "value6"],
+    ["ch7", "channel7", "v7", "value7"],
+    ["ch8", "channel8", "v8", "value8"],
+  ],
+});
 
 const normalizeLabelNumber = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -203,6 +238,190 @@ const parseInteger = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const normalizeCsvHeader = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+
+const parseCsvLine = (line) => {
+  const values = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const nextChar = line[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      values.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  values.push(current.trim());
+  return values;
+};
+
+const parseCsvRows = (csvText) => {
+  const normalizedText = String(csvText || "").replace(/^\uFEFF/, "");
+  const lines = normalizedText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    throw new Error("CSV upload requires a header row and at least one data row.");
+  }
+
+  const headerCells = parseCsvLine(lines[0]).map(normalizeCsvHeader);
+  if (headerCells.length === 0 || headerCells.every((cell) => !cell)) {
+    throw new Error("CSV header row is empty.");
+  }
+
+  const rows = lines.slice(1).map((line, index) => {
+    const cells = parseCsvLine(line);
+    const row = {};
+    headerCells.forEach((header, cellIndex) => {
+      if (header) {
+        row[header] = cells[cellIndex] ?? "";
+      }
+    });
+    row.__rowNumber = index + 2;
+    return row;
+  });
+
+  return { headerCells, rows };
+};
+
+const getCsvFieldValue = (row, aliases) => {
+  for (const alias of aliases) {
+    if (row[alias] !== undefined && row[alias] !== null && row[alias] !== "") {
+      return row[alias];
+    }
+  }
+  return null;
+};
+
+const parseCsvNumberField = (row, aliases, label, rowNumber) => {
+  const rawValue = getCsvFieldValue(row, aliases);
+  if (rawValue === null) {
+    throw new Error(`CSV row ${rowNumber} is missing required column ${label}.`);
+  }
+
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`CSV row ${rowNumber} has invalid numeric value for ${label}.`);
+  }
+
+  return parsed;
+};
+
+const parseCsvTimestamp = (row, rowNumber) => {
+  if (row.timestamp !== undefined && row.timestamp !== null && row.timestamp !== "") {
+    return parseCsvNumberField(row, ["timestamp"], "timestamp", rowNumber);
+  }
+  if (
+    row.timestampseconds !== undefined &&
+    row.timestampseconds !== null &&
+    row.timestampseconds !== ""
+  ) {
+    return parseCsvNumberField(
+      row,
+      ["timestampseconds"],
+      "timestampSeconds",
+      rowNumber
+    );
+  }
+  if (row.timestamps !== undefined && row.timestamps !== null && row.timestamps !== "") {
+    return parseCsvNumberField(row, ["timestamps"], "timestamp_s", rowNumber);
+  }
+  if (row.timestampsec !== undefined && row.timestampsec !== null && row.timestampsec !== "") {
+    return parseCsvNumberField(row, ["timestampsec"], "timestampSec", rowNumber);
+  }
+  if (row.timestampms !== undefined && row.timestampms !== null && row.timestampms !== "") {
+    return (
+      parseCsvNumberField(row, ["timestampms"], "timestamp_ms", rowNumber) / 1000
+    );
+  }
+  if (
+    row.timestampmilliseconds !== undefined &&
+    row.timestampmilliseconds !== null &&
+    row.timestampmilliseconds !== ""
+  ) {
+    return (
+      parseCsvNumberField(
+        row,
+        ["timestampmilliseconds"],
+        "timestampMilliseconds",
+        rowNumber
+      ) / 1000
+    );
+  }
+  if (row.timestampus !== undefined && row.timestampus !== null && row.timestampus !== "") {
+    return (
+      parseCsvNumberField(row, ["timestampus"], "timestamp_us", rowNumber) /
+      1_000_000
+    );
+  }
+  if (
+    row.timestampmicroseconds !== undefined &&
+    row.timestampmicroseconds !== null &&
+    row.timestampmicroseconds !== ""
+  ) {
+    return (
+      parseCsvNumberField(
+        row,
+        ["timestampmicroseconds"],
+        "timestampMicroseconds",
+        rowNumber
+      ) / 1_000_000
+    );
+  }
+
+  throw new Error(
+    `CSV row ${rowNumber} is missing a timestamp column. Expected one of: ${CSV_TIMESTAMP_ALIASES.join(", ")}.`
+  );
+};
+
+const buildCsvSensorReadings = (csvText, sensorType) => {
+  const { rows } = parseCsvRows(csvText);
+  const aliasesByAxis = CSV_VALUE_ALIASES[sensorType];
+  if (!aliasesByAxis) {
+    throw new Error(`CSV import is not configured for sensorType ${sensorType}.`);
+  }
+
+  const readings = rows.map((row) => {
+    const rowNumber = row.__rowNumber;
+    const timestamp = parseCsvTimestamp(row, rowNumber);
+    const data = aliasesByAxis.map((aliases, axisIndex) =>
+      parseCsvNumberField(
+        row,
+        aliases.map(normalizeCsvHeader),
+        SENSOR_TYPE_CONFIG[sensorType].csvColumns[axisIndex + 1],
+        rowNumber
+      )
+    );
+
+    return { timestamp, data };
+  });
+
+  return readings.sort((left, right) => left.timestamp - right.timestamp);
+};
+
 const normalizeSensorType = (value) => {
   if (!value) return DEFAULT_SENSOR_TYPE;
   const normalized = String(value).trim().toLowerCase();
@@ -364,12 +583,6 @@ runRouter.delete("/:runid", async (req, res) => {
 
 runRouter.post("/upload", async (req, res) => {
   try {
-    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
-      return res.status(400).json({
-        message: "Upload requires application/octet-stream body with .BIN data.",
-      });
-    }
-
     const {
       runId,
       name,
@@ -386,12 +599,40 @@ runRouter.post("/upload", async (req, res) => {
       runTime,
       sensorType,
       sensorId,
+      uploadFormat,
       sensX,
       sensY,
       sensZ,
       context,
       contextId,
     } = req.query;
+
+    const contentType = String(req.headers["content-type"] || "").toLowerCase();
+    const requestedFormat = String(uploadFormat || "").trim().toLowerCase();
+    const isCsvUpload =
+      requestedFormat === "csv" ||
+      contentType.includes("text/csv") ||
+      contentType.includes("application/csv") ||
+      contentType.includes("text/plain") ||
+      contentType.includes("application/vnd.ms-excel");
+    const isBinUpload = !isCsvUpload && Buffer.isBuffer(req.body);
+    const csvBodyText =
+      typeof req.body === "string"
+        ? req.body
+        : Buffer.isBuffer(req.body)
+          ? req.body.toString("utf8")
+          : "";
+
+    if (
+      (!isBinUpload && !isCsvUpload) ||
+      (isBinUpload && req.body.length === 0) ||
+      (isCsvUpload && csvBodyText.trim().length === 0)
+    ) {
+      return res.status(400).json({
+        message:
+          "Upload requires either application/octet-stream .BIN data or text/csv data.",
+      });
+    }
 
     const resolvedSensorType = normalizeSensorType(sensorType);
     if (!resolvedSensorType) {
@@ -402,8 +643,7 @@ runRouter.post("/upload", async (req, res) => {
     }
 
     const sensorConfig = SENSOR_TYPE_CONFIG[resolvedSensorType];
-
-    if (req.body.length % sensorConfig.recordSizeBytes !== 0) {
+    if (isBinUpload && req.body.length % sensorConfig.recordSizeBytes !== 0) {
       return res.status(400).json({
         message: `Invalid .BIN length (${req.body.length}). Expected multiple of ${sensorConfig.recordSizeBytes} for sensorType ${resolvedSensorType}.`,
       });
@@ -583,6 +823,56 @@ runRouter.post("/upload", async (req, res) => {
         ? parseNumber(sensZ, DEFAULT_SENSITIVITY)
         : 1;
 
+    const readings = isBinUpload
+      ? (() => {
+          const parsedReadings = [];
+          for (
+            let offset = 0;
+            offset < req.body.length;
+            offset += sensorConfig.recordSizeBytes
+          ) {
+            const tsUs = req.body.readUInt32LE(offset);
+            const timestampSeconds = tsUs / 1_000_000.0;
+
+            let parsedData;
+            if (resolvedSensorType === "strainGauge") {
+              parsedData = [
+                req.body.readInt32LE(offset + 4),
+                req.body.readInt32LE(offset + 8),
+                req.body.readInt32LE(offset + 12),
+                req.body.readInt32LE(offset + 16),
+                req.body.readInt32LE(offset + 20),
+                req.body.readInt32LE(offset + 24),
+                req.body.readInt32LE(offset + 28),
+                req.body.readInt32LE(offset + 32),
+              ];
+            } else {
+              const x = req.body.readInt32LE(offset + 4);
+              const y = req.body.readInt32LE(offset + 8);
+              const z = req.body.readInt32LE(offset + 12);
+
+              parsedData = [
+                (x * sensitivityX) / 1_000_000.0,
+                (y * sensitivityY) / 1_000_000.0,
+                (z * sensitivityZ) / 1_000_000.0,
+              ];
+            }
+
+            parsedReadings.push({
+              timestamp: timestampSeconds,
+              data: parsedData,
+            });
+          }
+          return parsedReadings;
+        })()
+      : buildCsvSensorReadings(csvBodyText, resolvedSensorType);
+
+    if (!Array.isArray(readings) || readings.length === 0) {
+      return res.status(400).json({
+        message: "Upload did not contain any sensor readings.",
+      });
+    }
+
     let firstTimestamp = null;
     let lastTimestamp = null;
     const batch = [];
@@ -594,47 +884,16 @@ runRouter.post("/upload", async (req, res) => {
       batch.length = 0;
     };
 
-    for (
-      let offset = 0;
-      offset < req.body.length;
-      offset += sensorConfig.recordSizeBytes
-    ) {
-      const tsUs = req.body.readUInt32LE(offset);
-
-      const timestampSeconds = tsUs / 1_000_000.0;
-      if (firstTimestamp === null) firstTimestamp = timestampSeconds;
-      lastTimestamp = timestampSeconds;
-
-      let parsedData;
-      if (resolvedSensorType === "strainGauge") {
-        parsedData = [
-          req.body.readInt32LE(offset + 4),
-          req.body.readInt32LE(offset + 8),
-          req.body.readInt32LE(offset + 12),
-          req.body.readInt32LE(offset + 16),
-          req.body.readInt32LE(offset + 20),
-          req.body.readInt32LE(offset + 24),
-          req.body.readInt32LE(offset + 28),
-          req.body.readInt32LE(offset + 32),
-        ];
-      } else {
-        const x = req.body.readInt32LE(offset + 4);
-        const y = req.body.readInt32LE(offset + 8);
-        const z = req.body.readInt32LE(offset + 12);
-
-        parsedData = [
-          (x * sensitivityX) / 1_000_000.0,
-          (y * sensitivityY) / 1_000_000.0,
-          (z * sensitivityZ) / 1_000_000.0,
-        ];
-      }
+    for (const reading of readings) {
+      if (firstTimestamp === null) firstTimestamp = reading.timestamp;
+      lastTimestamp = reading.timestamp;
 
       batch.push({
         runId: resolvedRunId,
         sensorId: resolvedSensorId,
         sensorType: resolvedSensorType,
-        timestamp: timestampSeconds,
-        data: parsedData,
+        timestamp: reading.timestamp,
+        data: reading.data,
       });
 
       if (batch.length >= batchSize) {
@@ -662,8 +921,8 @@ runRouter.post("/upload", async (req, res) => {
 
     return res.status(runCreated ? 201 : 200).json({
       message: runCreated
-        ? "Run uploaded successfully."
-        : "Sensor data uploaded to existing run successfully.",
+        ? `Run created and ${isCsvUpload ? "CSV" : "BIN"} data uploaded successfully.`
+        : `${isCsvUpload ? "CSV" : "BIN"} sensor data uploaded to existing run successfully.`,
       runId: resolvedRunId,
       name: resolvedRunName || `Run ${resolvedRunId.toString()}`,
       context: resolvedContext,

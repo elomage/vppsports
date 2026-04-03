@@ -1,6 +1,24 @@
 import React, { useMemo, useState } from 'react';
 import './UploadSensorData.css';
-import { uploadRunVideo, uploadSensorDataBin } from './api';
+import { uploadRunVideo, uploadSensorDataBin, uploadSensorDataCsv } from './api';
+
+const CSV_FORMATS = {
+  accelerometer: {
+    columns: ['timestamp', 'x', 'y', 'z'],
+    example: ['0.000000', '0.014', '-0.021', '1.032'],
+    notes: 'Values are imported exactly as provided. Use seconds from run start for timestamps.',
+  },
+  strainGauge: {
+    columns: ['timestamp', 'ch1', 'ch2', 'ch3', 'ch4', 'ch5', 'ch6', 'ch7', 'ch8'],
+    example: ['0.000000', '124', '118', '121', '119', '115', '111', '109', '113'],
+    notes: 'Provide one numeric channel value per column. Use seconds from run start for timestamps.',
+  },
+  gps: {
+    columns: ['timestamp', 'x', 'y', 'z'],
+    example: ['0.000000', '56.9496', '24.1052', '14.2'],
+    notes: 'Preferred mapping is x=latitude, y=longitude, z=altitude. Use seconds from run start for timestamps.',
+  },
+};
 
 const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -9,6 +27,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
   const [runName, setRunName] = useState('');
   const [selectedContextId, setSelectedContextId] = useState('');
   const [sensorType, setSensorType] = useState('accelerometer');
+  const [selectedFileType, setSelectedFileType] = useState('');
   const [status, setStatus] = useState({ type: 'idle', message: '' });
   const [isUploading, setIsUploading] = useState(false);
   const [inputKey, setInputKey] = useState(0);
@@ -31,23 +50,36 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
     [runs]
   );
 
+  const csvFormat = CSV_FORMATS[sensorType];
+  const selectedFileExtension = selectedFileType === 'csv' ? '.CSV' : '.BIN';
+
   const handleFileChange = (event) => {
     const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
     setStatus({ type: 'idle', message: '' });
 
     if (!file) {
       setSelectedFile(null);
+      setSelectedFileType('');
       return;
     }
 
-    if (!file.name.toLowerCase().endsWith('.bin')) {
+    const lowerName = file.name.toLowerCase();
+    const nextFileType = lowerName.endsWith('.csv')
+      ? 'csv'
+      : lowerName.endsWith('.bin')
+        ? 'bin'
+        : '';
+
+    if (!nextFileType) {
       setSelectedFile(null);
-      setStatus({ type: 'error', message: 'Please select a .BIN file.' });
+      setSelectedFileType('');
+      setStatus({ type: 'error', message: 'Please select a .BIN or .CSV file.' });
       setInputKey((prev) => prev + 1);
       return;
     }
 
     setSelectedFile(file);
+    setSelectedFileType(nextFileType);
   };
 
   const handleVideoFileChange = (event) => {
@@ -72,7 +104,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
   const handleUpload = async (event) => {
     event.preventDefault();
     if (!selectedFile) {
-      setStatus({ type: 'error', message: 'Choose a .BIN file before uploading.' });
+      setStatus({ type: 'error', message: 'Choose a .BIN or .CSV file before uploading.' });
       return;
     }
 
@@ -99,15 +131,19 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
         uploadMode === 'existing'
           ? { runId: trimmedExistingRunId, sensorType }
           : { name: trimmedRunName, sensorType, contextId: selectedContextId.trim() };
-      const response = await uploadSensorDataBin(selectedFile, uploadOptions);
+      const response =
+        selectedFileType === 'csv'
+          ? await uploadSensorDataCsv(selectedFile, uploadOptions)
+          : await uploadSensorDataBin(selectedFile, uploadOptions);
       setStatus({
         type: 'success',
         message:
           uploadMode === 'existing'
-            ? 'Upload complete. Sensor data was added to the existing run.'
-            : 'Upload complete. New run created and data uploaded.',
+            ? `Upload complete. ${selectedFileExtension} sensor data was added to the existing run.`
+            : `Upload complete. New run created and ${selectedFileExtension} data uploaded.`,
       });
       setSelectedFile(null);
+      setSelectedFileType('');
       setRunName('');
       setExistingRunId('');
       setSelectedContextId('');
@@ -158,7 +194,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
       <div className="upload-card">
         <h2>Upload Sensor Data</h2>
         <p className="upload-hint">
-          Upload a sensor export in .BIN format to either create a new run or append data to an existing run.
+          Upload a sensor export in `.BIN` or `.CSV` format to either create a new run or append data to an existing run.
           Existing runs are limited to the contexts assigned to your account.
         </p>
         <form className="upload-form" onSubmit={handleUpload}>
@@ -244,7 +280,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
             key={inputKey}
             className="form-control"
             type="file"
-            accept=".bin"
+            accept=".bin,.csv,text/csv"
             onChange={handleFileChange}
           />
           {selectedFile && (
@@ -252,6 +288,16 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
               Selected: {selectedFile.name} ({Math.round(selectedFile.size / 1024)} KB)
             </div>
           )}
+          <div className="upload-file-meta">Accepted CSV header for {sensorType}:</div>
+          <pre className="upload-format-block">
+            {csvFormat.columns.join(',')}
+            {'\n'}
+            {csvFormat.example.join(',')}
+          </pre>
+          <div className="upload-file-meta">{csvFormat.notes}</div>
+          <div className="upload-file-meta">
+            Alternate timestamp columns also accepted: `timestamp_ms` and `timestamp_us`.
+          </div>
           <div className="upload-actions">
             <button
               className="btn btn-primary"
@@ -271,6 +317,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
               type="button"
               onClick={() => {
                 setSelectedFile(null);
+                setSelectedFileType('');
                 setRunName('');
                 setExistingRunId('');
                 setSelectedContextId('');

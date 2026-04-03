@@ -290,8 +290,25 @@ export async function checkRunVideoExists(videoName, retry = true) {
 }
 
 export async function uploadSensorDataBin(file, options = {}) {
+  return uploadSensorDataFile(file, {
+    ...options,
+    uploadFormat: "bin",
+    contentType: "application/octet-stream",
+  });
+}
+
+export async function uploadSensorDataCsv(file, options = {}) {
+  return uploadSensorDataFile(file, {
+    ...options,
+    uploadFormat: "csv",
+    contentType: "text/csv",
+  });
+}
+
+async function uploadSensorDataFile(file, options = {}) {
   const params = new URLSearchParams();
-  Object.entries(options).forEach(([key, value]) => {
+  const { contentType, ...queryOptions } = options;
+  Object.entries(queryOptions).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") {
       params.append(key, value);
     }

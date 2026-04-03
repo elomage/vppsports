@@ -49,6 +49,12 @@ app.use(
 app.use(express.static(path.join(__dirname, "public")));
 
 app.use(bodyParser.raw({ type: "application/octet-stream", limit: "50mb" }));
+app.use(
+  bodyParser.text({
+    type: ["text/csv", "application/csv", "text/plain", "application/vnd.ms-excel"],
+    limit: "50mb",
+  })
+);
 
 app.use(cookieParser());
 app.use(express.json());

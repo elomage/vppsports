@@ -355,7 +355,7 @@ const getSingleRunKalmanFilter = async (runid) => {
       throw new Error("Invalid run data structure");
     }
 
-    convertSensorData(run.data, convertToG);
+    // convertSensorData(run.data, convertToG);
 
     run.data.forEach((sensorData) => {
       if (sensorData._id === "accelerometer" && sensorData.readings) {
@@ -511,7 +511,7 @@ const getSingleRunMovingAverage = async (runid) => {
       throw new Error("Invalid run data structure");
     }
 
-    convertSensorData(run.data, convertToG);
+    // convertSensorData(run.data, convertToG);
 
     // Apply moving average to accelerometer data
     run.data.forEach((sensorData) => {

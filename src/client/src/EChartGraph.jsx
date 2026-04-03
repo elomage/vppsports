@@ -175,6 +175,37 @@ const getNearestReading = (readings, target) => {
     : previous;
 };
 
+const interpolateSeriesValue = (points, target) => {
+  if (!Array.isArray(points) || points.length === 0 || !Number.isFinite(target)) {
+    return null;
+  }
+
+  let lo = 0;
+  let hi = points.length - 1;
+
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (points[mid].x < target) lo = mid + 1;
+    else hi = mid;
+  }
+
+  if (lo === 0) return points[0]?.y ?? null;
+
+  const right = points[lo];
+  const left = points[lo - 1];
+  if (!right) return left?.y ?? null;
+  if (!left) return right?.y ?? null;
+  if (!Number.isFinite(left.y) || !Number.isFinite(right.y)) {
+    return Number.isFinite(left.y) ? left.y : Number.isFinite(right.y) ? right.y : null;
+  }
+
+  const span = right.x - left.x;
+  if (!(span > 0)) return left.y;
+
+  const ratio = (target - left.x) / span;
+  return left.y + (right.y - left.y) * ratio;
+};
+
 const buildTraceKey = ({ runId, sensorId, axisIndex, useFilteredData }) =>
   `${runId}:${sensorId}:${axisIndex}:${useFilteredData ? "filtered" : "raw"}`;
 
@@ -207,7 +238,7 @@ const buildHighlightSectionsFromReadings = (readings, syncOffset = 0) => {
     const zValue = reading?.data?.[2];
     if (typeof zValue !== "number") return;
 
-    if (zValue > 1.2 && !active) {
+    if (zValue > 1.25 && !active) {
       active = true;
       sectionStart = index;
       return;
@@ -354,6 +385,81 @@ const normalizeLabel = (label) => {
     createdAt: label?.createdAt || new Date().toISOString(),
     updatedAt: label?.updatedAt || new Date().toISOString(),
   };
+};
+
+const getLabelSeries = (traceKeys, seriesByTraceKey) =>
+  [...new Set((traceKeys || []).map((traceKey) => String(traceKey).trim()).filter(Boolean))]
+    .map((traceKey) => seriesByTraceKey.get(traceKey))
+    .filter(Boolean);
+
+const rebuildSingleLabel = (label, traceKeys, seriesByTraceKey) => {
+  const linkedSeries = getLabelSeries(traceKeys, seriesByTraceKey);
+  if (linkedSeries.length === 0) return label;
+
+  const anchorTimestamp = Number.isFinite(Number(label?.anchorTimestamp))
+    ? Number(label.anchorTimestamp)
+    : Number(label?.startTimestamp);
+  if (!Number.isFinite(anchorTimestamp)) return label;
+
+  const points = linkedSeries
+    .map((seriesItem) => {
+      const nearest = getNearestReading(
+        seriesItem.points.map((point) => ({ timestamp: point.x, data: [point.y] })),
+        anchorTimestamp,
+      );
+      if (!nearest) return null;
+      return {
+        traceKey: seriesItem.traceKey,
+        timestamp: nearest.timestamp,
+        yValue: nearest.data[0],
+      };
+    })
+    .filter(Boolean);
+
+  const anchorY =
+    points.length > 0
+      ? points.reduce((sum, point) => sum + point.yValue, 0) / points.length
+      : label.anchorY;
+
+  return normalizeLabel({
+    ...label,
+    traceKeys: linkedSeries.map((seriesItem) => seriesItem.traceKey),
+    points,
+    startTimestamp: anchorTimestamp,
+    endTimestamp: anchorTimestamp,
+    anchorTimestamp,
+    anchorY,
+    updatedAt: new Date().toISOString(),
+  });
+};
+
+const rebuildRangeLabel = (label, traceKeys, startTimestamp, endTimestamp, seriesByTraceKey) => {
+  const linkedSeries = getLabelSeries(traceKeys, seriesByTraceKey);
+  if (linkedSeries.length === 0) return label;
+
+  const rangeStart = Math.min(startTimestamp, endTimestamp);
+  const rangeEnd = Math.max(startTimestamp, endTimestamp);
+  if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd)) return label;
+
+  const anchorTimestamp = (rangeStart + rangeEnd) / 2;
+  const anchorValues = linkedSeries
+    .map((seriesItem) => interpolateSeriesValue(seriesItem.points, anchorTimestamp))
+    .filter((value) => Number.isFinite(value));
+  const anchorY =
+    anchorValues.length > 0
+      ? anchorValues.reduce((sum, value) => sum + value, 0) / anchorValues.length
+      : label.anchorY;
+
+  return normalizeLabel({
+    ...label,
+    traceKeys: linkedSeries.map((seriesItem) => seriesItem.traceKey),
+    points: [],
+    startTimestamp: rangeStart,
+    endTimestamp: rangeEnd,
+    anchorTimestamp,
+    anchorY,
+    updatedAt: new Date().toISOString(),
+  });
 };
 
 export default function EChartGraph({
@@ -993,6 +1099,10 @@ export default function EChartGraph({
       ),
     [chartModel.series],
   );
+  const activeLabel = useMemo(
+    () => runLabels.find((label) => label.id === activeLabelId) || null,
+    [activeLabelId, runLabels],
+  );
 
   const computePixelPoint = useCallback(
     (x, y) => {
@@ -1347,24 +1457,28 @@ export default function EChartGraph({
           .filter(Boolean);
 
         if (anchor && selectedPoints.length > 0) {
-          const nextLabel = normalizeLabel({
-            id: createLabelId(),
-            kind: "single",
-            text: "",
-            color: "#0d6efd",
-            traceKeys: [
-              ...new Set(selectedPoints.map((point) => point.traceKey)),
-            ],
-            points: selectedPoints,
-            startTimestamp: anchor.xTimestamp,
-            endTimestamp: anchor.xTimestamp,
-            anchorTimestamp: anchor.xTimestamp,
-            anchorY: anchor.yValue,
-            dx: 0,
-            dy: 0,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          });
+          const nextLabel = rebuildSingleLabel(
+            {
+              id: createLabelId(),
+              kind: "single",
+              text: "",
+              color: "#0d6efd",
+              traceKeys: [
+                ...new Set(selectedPoints.map((point) => point.traceKey)),
+              ],
+              points: [],
+              startTimestamp: anchor.xTimestamp,
+              endTimestamp: anchor.xTimestamp,
+              anchorTimestamp: anchor.xTimestamp,
+              anchorY: anchor.yValue,
+              dx: 0,
+              dy: 0,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+            selectedLabelTraceKeys,
+            seriesByTraceKey,
+          );
           if (nextLabel) {
             setRunLabels((prev) => [...prev, nextLabel]);
             setActiveLabelId(nextLabel.id);
@@ -1498,6 +1612,50 @@ export default function EChartGraph({
       updateLabelText(activeLabelId, labelDraftText);
       updateLabelColor(activeLabelId, labelDraftColor);
     }
+  };
+  const updateLabelRange = (labelId, field, rawValue) => {
+    const nextValue = Number(rawValue);
+    if (!Number.isFinite(nextValue)) return;
+
+    setRunLabels((prev) =>
+      prev.map((label) => {
+        if (label.id !== labelId || label.kind !== "range") return label;
+        const nextLabel = rebuildRangeLabel(
+          label,
+          label.traceKeys,
+          field === "startTimestamp" ? nextValue : label.startTimestamp,
+          field === "endTimestamp" ? nextValue : label.endTimestamp,
+          seriesByTraceKey,
+        );
+        return nextLabel || label;
+      }),
+    );
+  };
+  const toggleActiveLabelTrace = (traceKey) => {
+    if (!activeLabel) return;
+
+    const nextTraceKeys = activeLabel.traceKeys.includes(traceKey)
+      ? activeLabel.traceKeys.filter((key) => key !== traceKey)
+      : [...activeLabel.traceKeys, traceKey];
+
+    if (nextTraceKeys.length === 0) return;
+
+    setRunLabels((prev) =>
+      prev.map((label) => {
+        if (label.id !== activeLabel.id) return label;
+        const nextLabel =
+          label.kind === "range"
+            ? rebuildRangeLabel(
+                label,
+                nextTraceKeys,
+                label.startTimestamp,
+                label.endTimestamp,
+                seriesByTraceKey,
+              )
+            : rebuildSingleLabel(label, nextTraceKeys, seriesByTraceKey);
+        return nextLabel || label;
+      }),
+    );
   };
   const toggleFilter = (filterId) =>
     setPendingFilters((prev) =>
@@ -1843,10 +2001,14 @@ export default function EChartGraph({
         <div
           className={`uplot-prototype__overlay-controls ${isConfigOpen ? "is-open" : ""}`}
         >
-          <div className="card mb-3">
-            <div className="card-header">
+          <div className="plot-configuration">
+          <details className="card sensors-collapsible" open>
+            <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
               <strong>Sensors</strong>
-            </div>
+              <span className="badge bg-secondary">
+                {selectedSensorKeys.length} / {availableSensorEntries.length}
+              </span>
+            </summary>
             <div className="card-body">
               <div className="list-group">
                 {availableSensorEntries.map((entry) => (
@@ -1870,11 +2032,14 @@ export default function EChartGraph({
                 ))}
               </div>
             </div>
-          </div>
-          <div className="card mb-3">
-            <div className="card-header">
+          </details>
+          <details className="card sync-collapsible">
+            <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
               <strong>Synchronization</strong>
-            </div>
+              <span className="badge bg-secondary">
+                {selectedSensorEntries.filter((entry) => getSensorOffset(sensorSyncOffsets, entry.key) !== 0).length} shifted
+              </span>
+            </summary>
             <div className="card-body">
               {selectedSensorEntries.map((entry) => (
                 <div key={entry.key} className="sync-offset-row">
@@ -1918,11 +2083,14 @@ export default function EChartGraph({
                 Reset All Offsets
               </button>
             </div>
-          </div>
-          <div className="card mb-3">
-            <div className="card-header">
+          </details>
+          <details className="card filters-collapsible">
+            <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
               <strong>Filters</strong>
-            </div>
+              <span className={`badge ${useFilteredData ? "bg-success" : "bg-secondary"}`}>
+                {useFilteredData ? "Active" : "Inactive"} ({pendingFilters.length} selected)
+              </span>
+            </summary>
             <div className="card-body">
               {FILTERS.map((filter) => (
                 <label
@@ -1959,11 +2127,12 @@ export default function EChartGraph({
                 )}
               </div>
             </div>
-          </div>
-          <div className="card mb-3">
-            <div className="card-header">
+          </details>
+          <details className="card">
+            <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
               <strong>Compare Runs</strong>
-            </div>
+              <span className="badge bg-secondary">{comparisonRuns.length} overlayed</span>
+            </summary>
             <div className="card-body">
               <div className="uplot-prototype__compare-controls">
                 <select
@@ -2013,11 +2182,14 @@ export default function EChartGraph({
                 </div>
               )}
             </div>
-          </div>
-          <div className="card mb-3">
-            <div className="card-header">
+          </details>
+          <details className="card" open>
+            <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
               <strong>Labels</strong>
-            </div>
+              <span className={`badge ${pendingLabelMode ? "bg-primary" : "bg-secondary"}`}>
+                {runLabels.length} saved
+              </span>
+            </summary>
             <div className="card-body">
               <label className="list-group-item list-group-item-action d-flex align-items-center mb-3">
                 <input
@@ -2078,7 +2250,7 @@ export default function EChartGraph({
                     : "Group Selected Points"}
                 </button>
               </div>
-              {activeLabelId && (
+              {activeLabel && (
                 <div className="uplot-prototype__label-editor mb-3">
                   <label className="form-label mb-1">Label text</label>
                   <textarea
@@ -2096,6 +2268,71 @@ export default function EChartGraph({
                     onChange={(event) => setLabelDraftColor(event.target.value)}
                     onBlur={commitDraftToActiveLabel}
                   />
+                  {activeLabel.kind === "range" && (
+                    <div className="row g-2 mt-2">
+                      <div className="col-6">
+                        <label className="form-label mb-1">Start timestamp</label>
+                        <input
+                          className="form-control form-control-sm"
+                          type="number"
+                          step="any"
+                          value={activeLabel.startTimestamp}
+                          onChange={(event) =>
+                            updateLabelRange(
+                              activeLabel.id,
+                              "startTimestamp",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </div>
+                      <div className="col-6">
+                        <label className="form-label mb-1">End timestamp</label>
+                        <input
+                          className="form-control form-control-sm"
+                          type="number"
+                          step="any"
+                          value={activeLabel.endTimestamp}
+                          onChange={(event) =>
+                            updateLabelRange(
+                              activeLabel.id,
+                              "endTimestamp",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <div className="mt-3">
+                    <label className="form-label mb-1">Traces in label</label>
+                    <div className="list-group">
+                      {chartModel.series.map((seriesItem) => (
+                        <label
+                          key={`active-label-${seriesItem.traceKey}`}
+                          className="list-group-item list-group-item-action d-flex align-items-center"
+                        >
+                          <input
+                            className="form-check-input me-2"
+                            type="checkbox"
+                            checked={activeLabel.traceKeys.includes(
+                              seriesItem.traceKey,
+                            )}
+                            onChange={() =>
+                              toggleActiveLabelTrace(seriesItem.traceKey)
+                            }
+                            disabled={
+                              activeLabel.traceKeys.length === 1 &&
+                              activeLabel.traceKeys.includes(
+                                seriesItem.traceKey,
+                              )
+                            }
+                          />
+                          <span>{seriesItem.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                   <div className="d-flex gap-2 mt-2">
                     <button
                       type="button"
@@ -2107,7 +2344,7 @@ export default function EChartGraph({
                     <button
                       type="button"
                       className="btn btn-sm btn-outline-danger"
-                      onClick={() => deleteLabel(activeLabelId)}
+                      onClick={() => deleteLabel(activeLabel.id)}
                     >
                       Delete Label
                     </button>
@@ -2140,11 +2377,14 @@ export default function EChartGraph({
                 ))}
               </div>
             </div>
-          </div>
-          <div className="card mb-3">
-            <div className="card-header">
+          </details>
+          <details className="card">
+            <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
               <strong>Highlights</strong>
-            </div>
+              <span className={`badge ${showHighlightSections ? "bg-success" : "bg-secondary"}`}>
+                {showHighlightSections ? "On" : "Off"}
+              </span>
+            </summary>
             <div className="card-body">
               <label className="list-group-item list-group-item-action d-flex align-items-center">
                 <input
@@ -2169,11 +2409,14 @@ export default function EChartGraph({
                 Analyze Highlights To Labels
               </button>
             </div>
-          </div>
-          <div className="card">
-            <div className="card-header">
+          </details>
+          <details className="card traces-collapsible">
+            <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
               <strong>Traces</strong>
-            </div>
+              <span className="badge bg-secondary">
+                {chartModel.series.filter((seriesItem) => traceVisibility[seriesItem.label] ?? true).length} visible
+              </span>
+            </summary>
             <div className="card-body">
               <div className="list-group">
                 {chartModel.series.map((seriesItem) => (
@@ -2192,6 +2435,7 @@ export default function EChartGraph({
                 ))}
               </div>
             </div>
+          </details>
           </div>
         </div>
         <div ref={chartContainerRef} className="uplot-prototype__chart" />
