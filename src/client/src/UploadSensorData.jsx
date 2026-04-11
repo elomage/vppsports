@@ -295,7 +295,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
             rows={8}
             value={metadataJson}
             onChange={(event) => setMetadataJson(event.target.value)}
-            placeholder={`{\n  "discipline": "luge",\n  "athlete": "Reinis",\n  "track": "Sigulda",\n  "weather": {\n    "airTempC": -3\n  }\n}`}
+            placeholder={`{\n  "discipline": "luge",\n  "athlete": "Name",\n  "track": "Track",\n  "weather": {\n    "airTempC": -3\n  }\n}`}
           />
           <select
             className="form-control"

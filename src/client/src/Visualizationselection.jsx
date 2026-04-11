@@ -13,9 +13,9 @@ const componentsMap = {
 export default function ComponentSelector({ selectedRun, sliderValue, setSliderValue }) {
     const [selectedComponent, setSelectedComponent] = useState([
         // { id: 1, type: 'info', flexGrow: 1 },
-        { id: 1, type: 'graph', flexGrow: 1 },
+        { id: 1, type: 'echart', flexGrow: 1 },
         { id: 2, type: 'video', flexGrow: 1 },
-        { id: 3, type: 'model', flexGrow: 1 },
+        // { id: 3, type: 'model', flexGrow: 1 },
     ]);
     const [hasVideoForRun, setHasVideoForRun] = useState(true);
     const [containerSize, setContainerSize] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -112,12 +112,12 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
             {/* <h1 className='text-2xl font-bold mb-4'>Visualization</h1> */}
             <div className='flex gap-4'>
                 {/* <button className='btn btn-primary' onClick={() => addComponent('info')} style={{margin: '5px'}}>Add Info</button> */}
-                <button className='btn btn-primary' onClick={() => addComponent('graph')} style={{margin: '5px'}}>Add Graph</button>
-                <button className='btn btn-outline-primary' onClick={() => addComponent('echart')} style={{margin: '5px'}}>Add EChart</button>
+                {/* <button className='btn btn-primary' onClick={() => addComponent('graph')} style={{margin: '5px'}}>Add Graph</button> */}
+                <button className='btn btn-primary' onClick={() => addComponent('echart')} style={{margin: '5px'}}>Add Graph</button>
                 {hasVideoForRun && (
                     <button className='btn btn-primary' onClick={() => addComponent('video')} style={{margin: '5px'}}>Add Video</button>
                 )}
-                <button className='btn btn-primary' onClick={() => addComponent('model')} style={{margin: '5px'}}>Add Model</button>
+                {/* <button className='btn btn-primary' onClick={() => addComponent('model')} style={{margin: '5px'}}>Add Model</button> */}
             </div>
             <div className='flex flex-col items-center p-6' id='visualization-component-wrapper' style={{ '--graph-count': graphCount }}>
                 <div className='flex flex-wrap' style={{ flex: 1, width: '100%' }}>
@@ -154,13 +154,6 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
                                             setSliderValue={setSliderValue}
                                         />
                                     </React.Suspense>
-                                    <button 
-                                        className='btn btn-danger' 
-                                        style={{margin: 0}} 
-                                        onClick={() => removeComponent(component.id)}
-                                    >
-                                        Remove
-                                    </button>
                                 </div>
                                 {!isLastComponent && (
                                         <ResizeHandle

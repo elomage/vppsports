@@ -2017,7 +2017,7 @@ export default function EChartGraph({
     <div className="uplot-prototype">
       <div className="uplot-prototype__header">
         <div>
-          <strong>ECharts Sensor Graph</strong>
+          <strong>Sensor Graph</strong>
         </div>
         <button
           type="button"

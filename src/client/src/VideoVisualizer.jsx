@@ -23,7 +23,7 @@ const findClosestTimestampIndex = (timestamps, target) => {
   return Math.abs(current - target) < Math.abs(previous - target) ? lo : lo - 1;
 };
 
-const VideoVisualizer = ({ selectedRun, sliderValue, setSliderValue }) => {
+const VideoVisualizer = ({ selectedRun, sliderValue, setSliderValue, removeFunction }) => {
   const [videoUrl, setVideoUrl] = useState('');
   const [videoError, setVideoError] = useState(null);
 
@@ -187,6 +187,18 @@ const VideoVisualizer = ({ selectedRun, sliderValue, setSliderValue }) => {
 
   return (
     <>
+      <div className="uplot-prototype__header">
+        <div>
+          <strong>Video</strong>
+        </div>
+        <button
+          type="button"
+          className="btn btn-sm btn-outline-danger"
+          onClick={removeFunction}
+        >
+          Remove
+        </button>
+      </div>
       {videoUrl && !videoError ? (
         <>
           <video ref={videoRef} controls src={videoUrl}>
