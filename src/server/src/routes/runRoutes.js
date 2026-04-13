@@ -1127,6 +1127,7 @@ runRouter.post("/upload", async (req, res) => {
       metadata,
       sensorType,
       sensorId,
+      sensorName,
       uploadFormat,
       sensX,
       sensY,
@@ -1338,10 +1339,38 @@ runRouter.post("/upload", async (req, res) => {
       runCreated = true;
     }
 
-    const defaultSensorId = SENSOR_TYPE_TO_ID[resolvedSensorType];
-    const resolvedSensorId = parseInteger(sensorId, defaultSensorId);
-    if (!Number.isFinite(resolvedSensorId)) {
-      return res.status(400).json({ message: "Invalid sensorId." });
+    const resolvedSensorName = String(sensorName || "").trim();
+    const runSensorsColl = await getCollection(db, "run_sensors");
+
+    let resolvedSensorId;
+    if (sensorId !== undefined && sensorId !== null && String(sensorId).trim() !== "") {
+      // Explicit sensorId provided (e.g. from hub or API client).
+      resolvedSensorId = parseInteger(sensorId, null);
+      if (resolvedSensorId === null) {
+        return res.status(400).json({ message: "Invalid sensorId." });
+      }
+    } else if (resolvedSensorName) {
+      // Look up whether a sensor with this name already exists in the run.
+      const existingRunSensor = await runSensorsColl.findOne({
+        runId: resolvedRunId,
+        name: resolvedSensorName,
+      });
+      if (existingRunSensor) {
+        resolvedSensorId = existingRunSensor.sensorId;
+      } else {
+        // Auto-assign: prefer the type-default ID if unused, otherwise max + 1.
+        const defaultSensorId = SENSOR_TYPE_TO_ID[resolvedSensorType];
+        const existingRunSensors = await runSensorsColl.find({ runId: resolvedRunId }).toArray();
+        const usedIds = existingRunSensors.map((s) => s.sensorId);
+        if (!usedIds.includes(defaultSensorId)) {
+          resolvedSensorId = defaultSensorId;
+        } else {
+          resolvedSensorId = usedIds.length > 0 ? Math.max(...usedIds) + 1 : defaultSensorId;
+        }
+      }
+    } else {
+      // No name and no explicit ID: fall back to the type-default.
+      resolvedSensorId = SENSOR_TYPE_TO_ID[resolvedSensorType];
     }
 
     const sensorsColl = await getCollection(db, "sensors");
@@ -1357,6 +1386,16 @@ runRouter.post("/upload", async (req, res) => {
           id: resolvedSensorId,
         },
       },
+      { upsert: true }
+    );
+
+    const runSensorUpdate = { sensorType: resolvedSensorType };
+    if (resolvedSensorName) {
+      runSensorUpdate.name = resolvedSensorName;
+    }
+    await runSensorsColl.updateOne(
+      { runId: resolvedRunId, sensorId: resolvedSensorId },
+      { $set: runSensorUpdate },
       { upsert: true }
     );
 

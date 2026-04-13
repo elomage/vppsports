@@ -226,6 +226,15 @@ const interpolateSeriesValueWithinBounds = (points, target) => {
 const buildTraceKey = ({ runId, sensorId, axisIndex, useFilteredData }) =>
   `${runId}:${sensorId}:${axisIndex}:${useFilteredData ? "filtered" : "raw"}`;
 
+const getSensorDisplayLabel = (entry) => {
+  const hasName = entry.sensorName && String(entry.sensorName).trim();
+  const hasType = entry.sensorType && String(entry.sensorType).trim();
+  if (hasType && hasName) return `${entry.sensorType} - ${entry.sensorName}`;
+  if (hasType) return `${entry.sensorType} (${entry.sensorId})`;
+  if (hasName) return entry.sensorName;
+  return `Sensor ${entry.sensorId}`;
+};
+
 const createLabelId = () =>
   `label-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const labelsEqual = (left, right) =>
@@ -517,6 +526,7 @@ export default function EChartGraph({
   const [labelDraftColor, setLabelDraftColor] = useState("#0d6efd");
   const [chartRevision, setChartRevision] = useState(0);
   const [showLabels, setShowLabels] = useState(true);
+  const [independentScales, setIndependentScales] = useState(false);
   const [selectionBox, setSelectionBox] = useState(null);
   const [visibleRange, setVisibleRange] = useState(() =>
     getInitialRange(selectedRun),
@@ -572,22 +582,36 @@ export default function EChartGraph({
   const currentRunName = selectedRun?.name || `Run ${selectedRun?._id}`;
 
   const availableSensorEntries = useMemo(() => {
-    const currentEntries = (availableSensors || []).map((sensorId) => ({
-      key: `${selectedRun?._id}:${sensorId}`,
-      runId: selectedRun?._id,
-      runName: currentRunName,
-      sensorId,
-      isPrimary: true,
-    }));
+    const currentEntries = (availableSensors || []).map((sensor) => {
+      const sensorId = typeof sensor === "object" ? sensor.sensorId : sensor;
+      const sensorName = typeof sensor === "object" ? sensor.name || "" : "";
+      const sensorType = typeof sensor === "object" ? sensor.sensorType || "" : "";
+      return {
+        key: `${selectedRun?._id}:${sensorId}`,
+        runId: selectedRun?._id,
+        runName: currentRunName,
+        sensorId,
+        sensorName,
+        sensorType,
+        isPrimary: true,
+      };
+    });
 
     const comparisonEntries = comparisonRuns.flatMap((run) =>
-      (comparisonSensorsByRun[run._id] || []).map((sensorId) => ({
-        key: `${run._id}:${sensorId}`,
-        runId: run._id,
-        runName: run.name || `Run ${run._id}`,
-        sensorId,
-        isPrimary: false,
-      })),
+      (comparisonSensorsByRun[run._id] || []).map((sensor) => {
+        const sensorId = typeof sensor === "object" ? sensor.sensorId : sensor;
+        const sensorName = typeof sensor === "object" ? sensor.name || "" : "";
+        const sensorType = typeof sensor === "object" ? sensor.sensorType || "" : "";
+        return {
+          key: `${run._id}:${sensorId}`,
+          runId: run._id,
+          runName: run.name || `Run ${run._id}`,
+          sensorId,
+          sensorName,
+          sensorType,
+          isPrimary: false,
+        };
+      }),
     );
 
     return [...currentEntries, ...comparisonEntries];
@@ -1051,7 +1075,7 @@ export default function EChartGraph({
       const offset = getSensorOffset(sensorSyncOffsets, entry.key);
 
       for (let axisIndex = 0; axisIndex < axisCount; axisIndex += 1) {
-        const label = `${entry.runName} Sensor ${entry.sensorId} ${getAxisLabel(axisIndex, axisCount)}${useFilteredData ? " (filtered)" : ""}`;
+        const label = `${entry.runName} ${getSensorDisplayLabel(entry)} ${getAxisLabel(axisIndex, axisCount)}${useFilteredData ? " (filtered)" : ""}`;
         const traceKey = buildTraceKey({
           runId: entry.runId,
           sensorId: entry.sensorId,
@@ -1094,7 +1118,7 @@ export default function EChartGraph({
 
       const axes = (nearest.data || [])
         .map((value, axisIndex) => {
-          const axisLabel = `${entry.runName} Sensor ${entry.sensorId} ${getAxisLabel(axisIndex, nearest.data.length)}${useFilteredData ? " (filtered)" : ""}`;
+          const axisLabel = `${entry.runName} ${getSensorDisplayLabel(entry)} ${getAxisLabel(axisIndex, nearest.data.length)}${useFilteredData ? " (filtered)" : ""}`;
           if (!(traceVisibility[axisLabel] ?? true)) return null;
           return {
             name: getAxisLabel(axisIndex, nearest.data.length).replace(
@@ -1111,6 +1135,8 @@ export default function EChartGraph({
 
       readoutEntries.push({
         sensorId: entry.sensorId,
+        sensorName: entry.sensorName,
+        sensorType: entry.sensorType,
         runId: entry.runId,
         runName: entry.runName,
         timelineTimestamp: currentTimestamp,
@@ -1332,6 +1358,39 @@ export default function EChartGraph({
       (seriesItem) => traceVisibility[seriesItem.label] ?? true,
     );
 
+    let yAxisConfig;
+    let seriesYAxisIndices;
+
+    if (independentScales && visibleSeries.length > 0) {
+      yAxisConfig = visibleSeries.map((seriesItem, idx) => {
+        const values = seriesItem.renderData
+          .map((pt) => pt[1])
+          .filter((v) => v !== null && Number.isFinite(v));
+        const min = values.length ? Math.min(...values) : 0;
+        const max = values.length ? Math.max(...values) : 1;
+        const padding = (max - min) * 0.05 || Math.abs(max) * 0.05 || 0.05;
+        return {
+          type: "value",
+          scale: true,
+          show: idx === 0,
+          min: min - padding,
+          max: max + padding,
+          splitLine: idx === 0 ? { lineStyle: { color: "#eef1f4" } } : { show: false },
+          axisLine: { show: false },
+          axisTick: { show: false },
+          axisLabel: idx === 0 ? {} : { show: false },
+        };
+      });
+      seriesYAxisIndices = visibleSeries.map((_, idx) => idx);
+    } else {
+      yAxisConfig = {
+        type: "value",
+        scale: true,
+        splitLine: { lineStyle: { color: "#eef1f4" } },
+      };
+      seriesYAxisIndices = visibleSeries.map(() => 0);
+    }
+
     return {
       animation: false,
       grid: { left: 52, right: 16, top: 24, bottom: 46 },
@@ -1342,11 +1401,7 @@ export default function EChartGraph({
         max: runTimestamps[runTimestamps.length - 1],
         splitLine: { lineStyle: { color: "#eef1f4" } },
       },
-      yAxis: {
-        type: "value",
-        scale: true,
-        splitLine: { lineStyle: { color: "#eef1f4" } },
-      },
+      yAxis: yAxisConfig,
       dataZoom: visibleSeries.length
         ? [
             {
@@ -1363,6 +1418,7 @@ export default function EChartGraph({
           type: "line",
           silent: true,
           data: [],
+          yAxisIndex: 0,
           lineStyle: { opacity: 0 },
           itemStyle: { opacity: 0 },
           markLine: Number.isFinite(currentTimestamp)
@@ -1402,9 +1458,10 @@ export default function EChartGraph({
                 }
               : undefined,
         },
-        ...visibleSeries.map((seriesItem) => ({
+        ...visibleSeries.map((seriesItem, idx) => ({
           name: seriesItem.label,
           type: "line",
+          yAxisIndex: seriesYAxisIndices[idx],
           showSymbol: false,
           large: true,
           largeThreshold: 2000,
@@ -1423,6 +1480,7 @@ export default function EChartGraph({
     chartModel.series,
     currentTimestamp,
     highlightSections,
+    independentScales,
     runLabels,
     runTimestamps,
     showHighlightSections,
@@ -2048,6 +2106,14 @@ export default function EChartGraph({
           >
             Reset Zoom
           </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${independentScales ? "btn-success" : "btn-outline-secondary"}`}
+            onClick={() => setIndependentScales((prev) => !prev)}
+            title="Scale each series independently so patterns are comparable regardless of magnitude"
+          >
+            Ind. Scale
+          </button>
         </div>
         <div
           className={`uplot-prototype__overlay-controls ${isConfigOpen ? "is-open" : ""}`}
@@ -2075,10 +2141,10 @@ export default function EChartGraph({
                         onChange={() => toggleSensor(entry.key)}
                       />
                       <span className="form-check-label">
-                        {entry.runName} Sensor {entry.sensorId}
+                        {entry.runName} - {getSensorDisplayLabel(entry)}
                       </span>
                     </div>
-                    <small className="text-muted">ID: {entry.sensorId}</small>
+                    {/* <small className="text-muted">ID: {entry.sensorId}</small> */}
                   </label>
                 ))}
               </div>
@@ -2096,7 +2162,7 @@ export default function EChartGraph({
                 <div key={entry.key} className="sync-offset-row">
                   <div>
                     <strong>
-                      {entry.runName} Sensor {entry.sensorId}
+                      {entry.runName} {getSensorDisplayLabel(entry)}
                     </strong>
                   </div>
                   <div className="sync-offset-controls">
@@ -2572,7 +2638,7 @@ export default function EChartGraph({
                 className="uplot-prototype__readout-item"
               >
                 <strong>{entry.runName} - </strong>
-                <strong>Sensor {entry.sensorId}</strong>
+                <strong>{getSensorDisplayLabel(entry)}</strong>
                 <span>Timeline: {entry.timelineTimestamp}</span>
                 <span>Sensor: {entry.sensorTimestamp}</span>
                 {entry.shift !== 0 && (

@@ -33,7 +33,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
   const [selectedContextId, setSelectedContextId] = useState('');
   const [metadataJson, setMetadataJson] = useState('');
   const [sensorType, setSensorType] = useState('accelerometer');
-  const [sensorId, setSensorId] = useState('');
+  const [sensorName, setSensorName] = useState('');
   const [selectedFileType, setSelectedFileType] = useState('');
   const [status, setStatus] = useState({ type: 'idle', message: '' });
   const [isUploading, setIsUploading] = useState(false);
@@ -149,8 +149,8 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
     try {
       const uploadOptions =
         uploadMode === 'existing'
-          ? { runId: trimmedExistingRunId, sensorType, sensorId: sensorId.trim(), metadata: trimmedMetadataJson }
-          : { name: trimmedRunName, sensorType, sensorId: sensorId.trim(), contextId: selectedContextId.trim(), metadata: trimmedMetadataJson };
+          ? { runId: trimmedExistingRunId, sensorType, sensorName: sensorName.trim(), metadata: trimmedMetadataJson }
+          : { name: trimmedRunName, sensorType, sensorName: sensorName.trim(), contextId: selectedContextId.trim(), metadata: trimmedMetadataJson };
       const response =
         selectedFileType === 'csv'
           ? await uploadSensorDataCsv(selectedFile, uploadOptions)
@@ -168,7 +168,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
       setExistingRunId('');
       setSelectedContextId('');
       setMetadataJson('');
-      setSensorId('');
+      setSensorName('');
       setInputKey((prev) => prev + 1);
       if (response?.createdRun) {
         onRunCreated?.(response);
@@ -309,12 +309,11 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
           </select>
           <input
             className="form-control"
-            type="number"
-            min="1"
-            step="1"
-            value={sensorId}
-            onChange={(event) => setSensorId(event.target.value)}
-            placeholder="Optional sensor ID (use unique IDs for multiple sensors of the same type)"
+            type="text"
+            value={sensorName}
+            maxLength={80}
+            onChange={(event) => setSensorName(event.target.value)}
+            placeholder="Sensor name — optional (e.g. front, rear, left arm)"
           />
           <input
             key={inputKey}
@@ -362,7 +361,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
                 setExistingRunId('');
                 setSelectedContextId('');
                 setMetadataJson('');
-                setSensorId('');
+                setSensorName('');
                 setStatus({ type: 'idle', message: '' });
                 setInputKey((prev) => prev + 1);
               }}

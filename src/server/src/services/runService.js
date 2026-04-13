@@ -92,6 +92,22 @@ const sensorReadingSchema = new mongoose.Schema({
   },
 });
 
+const runSensorSchema = new mongoose.Schema(
+  {
+    runId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Run",
+      required: true,
+      index: true,
+    },
+    sensorId: { type: Number, required: true },
+    name: { type: String, default: "" },
+    sensorType: { type: String, default: "" },
+  },
+  { versionKey: false }
+);
+runSensorSchema.index({ runId: 1, sensorId: 1 }, { unique: true });
+
 const Run = mongoose.models.Run || mongoose.model("Run", runSchema, "runs");
 const RunLabel =
   mongoose.models.RunLabel ||
@@ -99,6 +115,9 @@ const RunLabel =
 const SensorReading =
   mongoose.models.SensorReading ||
   mongoose.model("SensorReading", sensorReadingSchema, "sensor_readings");
+const RunSensor =
+  mongoose.models.RunSensor ||
+  mongoose.model("RunSensor", runSensorSchema, "run_sensors");
 
 const fs = require("fs").promises;
 const path = require("path");
@@ -677,8 +696,20 @@ const createRun = async (run) => {
 
 const getRunSensors = async (runid) => {
   try {
-    const sensors = await SensorReading.distinct("sensorId", { runId: runid });
-    return sensors;
+    const objectId = new ObjectId(String(runid));
+    const sensorIds = await SensorReading.distinct("sensorId", { runId: objectId });
+    const runSensors = await RunSensor.find(
+      { runId: objectId, sensorId: { $in: sensorIds } }
+    ).lean();
+    const runSensorMap = new Map(runSensors.map((rs) => [rs.sensorId, rs]));
+    return sensorIds.map((sensorId) => {
+      const meta = runSensorMap.get(sensorId) || {};
+      return {
+        sensorId,
+        name: meta.name || "",
+        sensorType: meta.sensorType || "",
+      };
+    });
   } catch (err) {
     throw new Error(err.message);
   }
