@@ -168,6 +168,11 @@
     pointer-events: none;
 }
 
+.uplot-prototype__selection-box--trim {
+    border-color: rgba(220, 53, 69, 0.9);
+    background: rgba(220, 53, 69, 0.12);
+}
+
 .uplot-prototype__label {
     position: absolute;
     display: flex;

@@ -132,29 +132,8 @@ const getSingleRunDB = async (runid) => {
     // const orientationData = await getRunSensorOrientationData(runid, 1, 2, 3);
     const orientationData = [];
 
-    const totalTimestamps = await runService.getTotalTimestamps(runid);
-
-    // run.totalTimestamps = totalTimestamps;
-
-    // run.totalTimestamps.push(
-    //   ...sensorData
-    //     // .find((item) => item._id === "accelerometer")
-    //     .find((item) => item.sensorId === 3)
-    //     .readings.map((r) => r.timestamp)
-    // );
-
-    // run.totalTimestamps.push(
-    //   ...sensorData
-    //     // .find((item) => item._id === "gyroscope")
-    //     .find((item) => item.sensorId === 2)
-    //     .readings.map((r) => r.timestamp)
-    // );
-    // run.totalTimestamps.push(
-    //   ...sensorData
-    //     // .find((item) => item._id === "magnetometer")
-    //     .find((item) => item.sensorId === 1)
-    //     .readings.map((r) => r.timestamp)
-    // )
+    const trims = await runService.getRunTrims(runid);
+    const totalTimestamps = await runService.getTotalTimestamps(runid, trims);
 
     const runObject =
       run && typeof run.toObject === "function" ? run.toObject() : run;
@@ -164,6 +143,7 @@ const getSingleRunDB = async (runid) => {
       data: sensorData,
       orientationData: orientationData,
       totalTimestamps: totalTimestamps,
+      trims: trims,
     };
 
     return response;
@@ -666,9 +646,11 @@ const getSingleRunSavitzkyGolayFilter = async (runid) => {
 
 const getRunSensorData = async (runid, sensorid, options = {}) => {
   try {
+    const trimRanges = await runService.getRunTrims(runid);
     const sensorData = await runService.getRunSensorReadings(runid, sensorid, {
       start: parseFiniteNumber(options.start),
       end: parseFiniteNumber(options.end),
+      trimRanges,
     });
     const filteredSensorData = filterSensorData(sensorData, options.filters);
 

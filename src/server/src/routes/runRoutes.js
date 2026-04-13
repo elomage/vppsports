@@ -166,6 +166,23 @@ const normalizeRunLabels = (labels) => {
   });
 };
 
+const normalizeRunTrims = (trims) => {
+  if (!Array.isArray(trims)) {
+    throw new Error("Trims must be an array.");
+  }
+  return trims.map((trim, index) => {
+    const startTimestamp = parseFiniteNumber(trim?.startTimestamp);
+    const endTimestamp = parseFiniteNumber(trim?.endTimestamp);
+    if (startTimestamp === null || endTimestamp === null) {
+      throw new Error(`Trim ${index + 1} has invalid timestamps.`);
+    }
+    return {
+      startTimestamp: Math.min(startTimestamp, endTimestamp),
+      endTimestamp: Math.max(startTimestamp, endTimestamp),
+    };
+  });
+};
+
 const normalizeContext = (value) => {
   const normalized = String(value || "")
     .trim()
@@ -1048,6 +1065,35 @@ runRouter.put("/:runid/labels", async (req, res) => {
   }
 });
 
+runRouter.get("/:runid/trims", async (req, res) => {
+  try {
+    const runid = req.params.runid;
+    const authorizedRun = await findRunForUser(runid, req.user).catch(() => null);
+    if (!authorizedRun) {
+      return res.status(404).json({ message: "Run not found." });
+    }
+    const trims = await runService.getRunTrims(runid);
+    return res.json({ trims });
+  } catch (error) {
+    return res.status(500).json({ message: "Failed to fetch run trims.", error: error.message });
+  }
+});
+
+runRouter.put("/:runid/trims", async (req, res) => {
+  try {
+    const runid = req.params.runid;
+    const authorizedRun = await findRunForUser(runid, req.user).catch(() => null);
+    if (!authorizedRun) {
+      return res.status(404).json({ message: "Run not found." });
+    }
+    const trims = normalizeRunTrims(req.body?.trims ?? []);
+    const updatedTrims = await runService.updateRunTrims(runid, trims);
+    return res.json({ trims: updatedTrims });
+  } catch (error) {
+    return res.status(400).json({ message: "Failed to update run trims.", error: error.message });
+  }
+});
+
 runRouter.delete("/:runid", async (req, res) => {
   try {
     const runid = req.params.runid;
@@ -1076,6 +1122,7 @@ runRouter.delete("/:runid", async (req, res) => {
       runId: runObjectId,
     });
     await runService.deleteRunLabels(runid);
+    await runService.deleteRunTrims(runid);
     const runDeleteResult = await runsColl.deleteOne({ _id: runObjectId });
     const runVideoDirectory = getRunVideoDirectory(runid);
 

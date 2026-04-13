@@ -202,6 +202,21 @@ export async function updateRunLabels(runId, labels) {
   });
 }
 
+export async function fetchRunTrims(runId) {
+  return request(`/run/${runId}/trims`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export async function updateRunTrims(runId, trims) {
+  return request(`/run/${runId}/trims`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ trims }),
+  });
+}
+
 export async function fetchSelectedRunFiltered(runId) {
   return request(`/run/${runId}?filterData=true`);
 }

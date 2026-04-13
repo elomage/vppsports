@@ -10,7 +10,7 @@ const componentsMap = {
     model: React.lazy(() => import('./Modelvisualizer')),
 };
 
-export default function ComponentSelector({ selectedRun, sliderValue, setSliderValue }) {
+export default function ComponentSelector({ selectedRun, sliderValue, setSliderValue, onEffectiveTimestampsChange }) {
     const [selectedComponent, setSelectedComponent] = useState([
         // { id: 1, type: 'info', flexGrow: 1 },
         { id: 1, type: 'echart', flexGrow: 1 },
@@ -146,12 +146,13 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
                                     }}
                                 >
                                     <React.Suspense fallback={<div>Loading...</div>}>
-                                        <Component 
-                                            selectedRun={selectedRun} 
-                                            sliderValue={sliderValue} 
-                                            removeFunction={() => removeComponent(component.id)} 
-                                            style={{width: '100%', height: '100%', flex: 1 }} 
+                                        <Component
+                                            selectedRun={selectedRun}
+                                            sliderValue={sliderValue}
+                                            removeFunction={() => removeComponent(component.id)}
+                                            style={{width: '100%', height: '100%', flex: 1}}
                                             setSliderValue={setSliderValue}
+                                            onEffectiveTimestampsChange={component.type === 'echart' ? onEffectiveTimestampsChange : undefined}
                                         />
                                     </React.Suspense>
                                 </div>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
 import "./UPlotGraph.css";
-import { fetchRuns, updateRunLabels } from "./api";
+import { fetchRuns, updateRunLabels, updateRunTrims } from "./api";
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL;
 const ACCESS_TOKEN_STORAGE_KEY = "vppsports_access_token";
@@ -493,6 +493,7 @@ export default function EChartGraph({
   sliderValue,
   setSliderValue,
   removeFunction,
+  onEffectiveTimestampsChange,
 }) {
   const [useFilteredData, setUseFilteredData] = useState(false);
   const [selectedFilters, setSelectedFilters] = useState([]);
@@ -531,6 +532,10 @@ export default function EChartGraph({
   const [visibleRange, setVisibleRange] = useState(() =>
     getInitialRange(selectedRun),
   );
+  const [runTrims, setRunTrims] = useState([]);
+  const [pendingTrimMode, setPendingTrimMode] = useState(false);
+  const [showTrims, setShowTrims] = useState(true);
+  const [trimRevision, setTrimRevision] = useState(0);
 
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
@@ -547,6 +552,8 @@ export default function EChartGraph({
   const draggingLabelRef = useRef(null);
   const selectionDragRef = useRef(null);
   const selectionBoxRef = useRef(null);
+  const trimSaveTimeoutRef = useRef(null);
+  const lastSavedTrimsRef = useRef([]);
 
   const getChartInstance = useCallback(() => {
     const container = chartContainerRef.current;
@@ -578,7 +585,15 @@ export default function EChartGraph({
 
   const filterKey = filterKeyFromSelection(useFilteredData, selectedFilters);
   const runTimestamps = selectedRun?.totalTimestamps ?? [];
-  const currentTimestamp = runTimestamps[sliderValue] ?? runTimestamps[0] ?? 0;
+
+  const effectiveTimestamps = useMemo(() => {
+    if (!runTrims.length) return runTimestamps;
+    return runTimestamps.filter(
+      (ts) => !runTrims.some((trim) => ts >= trim.startTimestamp && ts <= trim.endTimestamp),
+    );
+  }, [runTimestamps, runTrims]);
+
+  const currentTimestamp = effectiveTimestamps[sliderValue] ?? effectiveTimestamps[0] ?? 0;
   const currentRunName = selectedRun?.name || `Run ${selectedRun?._id}`;
 
   const availableSensorEntries = useMemo(() => {
@@ -669,6 +684,15 @@ export default function EChartGraph({
     [],
   );
 
+  useEffect(
+    () => () => {
+      if (trimSaveTimeoutRef.current !== null) {
+        window.clearTimeout(trimSaveTimeoutRef.current);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     const handleResize = () => setPlotResolution(getPlotResolution());
     window.addEventListener("resize", handleResize);
@@ -702,6 +726,10 @@ export default function EChartGraph({
     selectionDragRef.current = null;
     setPendingLabelMode(null);
     setActiveLabelId(null);
+    setPendingTrimMode(false);
+    setRunTrims([]);
+    lastSavedTrimsRef.current = [];
+    setTrimRevision(0);
   }, [selectedRun?._id]);
 
   useEffect(() => {
@@ -715,6 +743,12 @@ export default function EChartGraph({
       nextLabels.some((label) => label.id === prev) ? prev : null,
     );
   }, [selectedRun?.labels]);
+
+  useEffect(() => {
+    const nextTrims = Array.isArray(selectedRun?.trims) ? selectedRun.trims : [];
+    lastSavedTrimsRef.current = nextTrims;
+    setRunTrims(nextTrims);
+  }, [selectedRun?.trims]);
 
   useEffect(() => {
     fetchRuns()
@@ -828,6 +862,7 @@ export default function EChartGraph({
     plotResolution,
     primarySelectedSensorIds,
     selectedRun?._id,
+    trimRevision,
     visibleRange.end,
     visibleRange.start,
   ]);
@@ -876,7 +911,7 @@ export default function EChartGraph({
       }
       console.error("Error loading ECharts raw data:", error);
     });
-  }, [filterKey, primarySelectedSensorIds, selectedRun?._id]);
+  }, [filterKey, primarySelectedSensorIds, selectedRun?._id, trimRevision]);
 
   useEffect(() => {
     const requestId = ++requestIdRef.current.comparisonPlot;
@@ -1029,7 +1064,7 @@ export default function EChartGraph({
     const readoutEntries = [];
     const traceColorByLabel = new Map();
     const currentBaseTimestamp = selectedRun?.totalTimestamps?.[0];
-    const visibleTimestamps = runTimestamps.filter(
+    const visibleTimestamps = effectiveTimestamps.filter(
       (timestamp) =>
         timestamp >= visibleRange.start && timestamp <= visibleRange.end,
     );
@@ -1039,10 +1074,10 @@ export default function EChartGraph({
     );
     const fallbackStart = Number.isFinite(visibleRange.start)
       ? visibleRange.start
-      : runTimestamps[0];
+      : effectiveTimestamps[0];
     const fallbackEnd = Number.isFinite(visibleRange.end)
       ? visibleRange.end
-      : runTimestamps[runTimestamps.length - 1];
+      : effectiveTimestamps[effectiveTimestamps.length - 1];
     const xValues =
       visibleTimestamps.length > 1
         ? visibleTimestamps
@@ -1152,6 +1187,7 @@ export default function EChartGraph({
     comparisonRawSeriesByRun,
     comparisonRuns,
     currentTimestamp,
+    effectiveTimestamps,
     plotResolution,
     plotSeriesBySensor,
     rawSeriesBySensor,
@@ -1162,7 +1198,6 @@ export default function EChartGraph({
     useFilteredData,
     visibleRange.end,
     visibleRange.start,
-    runTimestamps,
   ]);
 
   const seriesByTraceKey = useMemo(
@@ -1345,6 +1380,58 @@ export default function EChartGraph({
   }, [runLabels, selectedRun?._id]);
 
   useEffect(() => {
+    if (typeof onEffectiveTimestampsChange === "function") {
+      onEffectiveTimestampsChange(effectiveTimestamps);
+    }
+  }, [effectiveTimestamps, onEffectiveTimestampsChange]);
+
+  useEffect(() => {
+    if (!selectedRun?._id) return;
+    if (JSON.stringify(runTrims) === JSON.stringify(lastSavedTrimsRef.current)) return;
+
+    if (trimSaveTimeoutRef.current !== null) {
+      window.clearTimeout(trimSaveTimeoutRef.current);
+    }
+
+    trimSaveTimeoutRef.current = window.setTimeout(async () => {
+      try {
+        const payload = runTrims.map(({ startTimestamp, endTimestamp }) => ({
+          startTimestamp,
+          endTimestamp,
+        }));
+        const response = await updateRunTrims(selectedRun._id, payload);
+        const savedTrims = Array.isArray(response?.trims) ? response.trims : runTrims;
+        lastSavedTrimsRef.current = savedTrims;
+        setRunTrims(savedTrims);
+        cacheRef.current = { plot: new Map(), raw: new Map() };
+        setTrimRevision((prev) => prev + 1);
+
+        // Adjust visible range to the new effective extent
+        const trimmedTs = runTimestamps.filter(
+          (ts) => !savedTrims.some((t) => ts >= t.startTimestamp && ts <= t.endTimestamp),
+        );
+        if (trimmedTs.length > 0) {
+          const nextRange = { start: trimmedTs[0], end: trimmedTs[trimmedTs.length - 1] };
+          setVisibleRange(nextRange);
+          const chart = getChartInstance();
+          if (chart) {
+            chart.dispatchAction({ type: "dataZoom", startValue: nextRange.start, endValue: nextRange.end });
+          }
+        }
+      } catch (error) {
+        console.error("Error saving run trims:", error);
+      }
+    }, 250);
+
+    return () => {
+      if (trimSaveTimeoutRef.current !== null) {
+        window.clearTimeout(trimSaveTimeoutRef.current);
+        trimSaveTimeoutRef.current = null;
+      }
+    };
+  }, [runTrims, selectedRun?._id]);
+
+  useEffect(() => {
     return () => {
       if (chartRef.current) {
         chartRef.current.dispose();
@@ -1397,8 +1484,8 @@ export default function EChartGraph({
       tooltip: { show: false },
       xAxis: {
         type: "value",
-        min: runTimestamps[0],
-        max: runTimestamps[runTimestamps.length - 1],
+        min: effectiveTimestamps[0],
+        max: effectiveTimestamps[effectiveTimestamps.length - 1],
         splitLine: { lineStyle: { color: "#eef1f4" } },
       },
       yAxis: yAxisConfig,
@@ -1430,7 +1517,7 @@ export default function EChartGraph({
               }
             : undefined,
           markArea:
-            showHighlightSections || showLabels
+            showHighlightSections || showLabels || (showTrims && runTrims.length > 0)
               ? {
                   silent: true,
                   data: [
@@ -1454,6 +1541,17 @@ export default function EChartGraph({
                         },
                         { xAxis: label.endTimestamp },
                       ]),
+                    ...(showTrims ? runTrims : []).map((trim) => [
+                      {
+                        xAxis: trim.startTimestamp,
+                        itemStyle: {
+                          color: "rgba(220, 53, 69, 0.15)",
+                          borderColor: "rgba(220, 53, 69, 0.5)",
+                          borderWidth: 1,
+                        },
+                      },
+                      { xAxis: trim.endTimestamp },
+                    ]),
                   ],
                 }
               : undefined,
@@ -1479,12 +1577,14 @@ export default function EChartGraph({
   }, [
     chartModel.series,
     currentTimestamp,
+    effectiveTimestamps,
     highlightSections,
     independentScales,
     runLabels,
-    runTimestamps,
+    runTrims,
     showHighlightSections,
     showLabels,
+    showTrims,
     traceVisibility,
     visibleRange.end,
     visibleRange.start,
@@ -1598,7 +1698,7 @@ export default function EChartGraph({
         return;
       }
       const xValue = chart.convertFromPixel({ xAxisIndex: 0 }, relativeX);
-      const nextIndex = getNearestIndex(runTimestamps, xValue);
+      const nextIndex = getNearestIndex(effectiveTimestamps, xValue);
       if (nextIndex >= 0) setSliderValue(nextIndex);
     };
 
@@ -1616,9 +1716,9 @@ export default function EChartGraph({
   }, [
     chartModel.series,
     computePixelPoint,
+    effectiveTimestamps,
     getChartInstance,
     pendingLabelMode,
-    runTimestamps,
     selectedLabelTraceKeys,
     setSliderValue,
   ]);
@@ -1676,6 +1776,7 @@ export default function EChartGraph({
     if (selectedLabelTraceKeys.length === 0) return;
     setActiveLabelId(null);
     setLabelDraftText("");
+    setPendingTrimMode(false);
     setPendingLabelMode("single");
   };
   const beginAddRangeLabel = () => {
@@ -1685,6 +1786,7 @@ export default function EChartGraph({
     selectionDragRef.current = null;
     selectionBoxRef.current = null;
     setSelectionBox(null);
+    setPendingTrimMode(false);
     setPendingLabelMode("range");
   };
   const cancelAddLabel = () => {
@@ -1692,6 +1794,25 @@ export default function EChartGraph({
     selectionDragRef.current = null;
     selectionBoxRef.current = null;
     setSelectionBox(null);
+  };
+  const beginAddTrim = () => {
+    setPendingLabelMode(null);
+    selectionDragRef.current = null;
+    selectionBoxRef.current = null;
+    setSelectionBox(null);
+    setPendingTrimMode(true);
+  };
+  const cancelAddTrim = () => {
+    setPendingTrimMode(false);
+    selectionDragRef.current = null;
+    selectionBoxRef.current = null;
+    setSelectionBox(null);
+  };
+  const deleteTrim = (trimId) => {
+    setRunTrims((prev) => prev.filter((t) => t.id !== trimId));
+  };
+  const revertAllTrims = () => {
+    setRunTrims([]);
   };
   const updateLabelText = (labelId, text) =>
     setRunLabels((prev) =>
@@ -1820,7 +1941,9 @@ export default function EChartGraph({
       Object.fromEntries(selectedSensorKeys.map((sensorKey) => [sensorKey, 0])),
     );
   const resetZoom = () => {
-    const nextRange = getInitialRange(selectedRun);
+    const nextRange = effectiveTimestamps.length > 0
+      ? { start: effectiveTimestamps[0], end: effectiveTimestamps[effectiveTimestamps.length - 1] }
+      : getInitialRange(selectedRun);
     setVisibleRange(nextRange);
     const chart = getChartInstance();
     if (chart)
@@ -2030,8 +2153,9 @@ export default function EChartGraph({
     );
   };
   const handleSelectionStart = (event) => {
-    if (pendingLabelMode !== "range" || selectedLabelTraceKeys.length === 0)
-      return;
+    const isRangeLabelActive = pendingLabelMode === "range" && selectedLabelTraceKeys.length > 0;
+    const isTrimActive = pendingTrimMode;
+    if (!isRangeLabelActive && !isTrimActive) return;
     const bounds = chartContainerRef.current?.getBoundingClientRect();
     if (!bounds) return;
     const startX = event.clientX - bounds.left;
@@ -2042,7 +2166,8 @@ export default function EChartGraph({
     setSelectionBox(nextSelectionBox);
   };
   const handleSelectionMove = (event) => {
-    if (pendingLabelMode !== "range" || !selectionDragRef.current) return;
+    if (pendingLabelMode !== "range" && !pendingTrimMode) return;
+    if (!selectionDragRef.current) return;
     const bounds = chartContainerRef.current?.getBoundingClientRect();
     if (!bounds) return;
     const currentX = event.clientX - bounds.left;
@@ -2058,7 +2183,33 @@ export default function EChartGraph({
     setSelectionBox(nextSelectionBox);
   };
   const handleSelectionEnd = () => {
-    if (pendingLabelMode !== "range" || !selectionDragRef.current) return;
+    if (!selectionDragRef.current) return;
+
+    if (pendingTrimMode) {
+      const chart = getChartInstance();
+      const box = selectionBoxRef.current;
+      if (chart && box && box.width > 5) {
+        const startTs = chart.convertFromPixel({ xAxisIndex: 0 }, box.left);
+        const endTs = chart.convertFromPixel({ xAxisIndex: 0 }, box.left + box.width);
+        if (Number.isFinite(startTs) && Number.isFinite(endTs) && endTs > startTs) {
+          setRunTrims((prev) => [
+            ...prev,
+            {
+              id: `trim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              startTimestamp: startTs,
+              endTimestamp: endTs,
+            },
+          ]);
+        }
+      }
+      selectionDragRef.current = null;
+      selectionBoxRef.current = null;
+      setSelectionBox(null);
+      setPendingTrimMode(false);
+      return;
+    }
+
+    if (pendingLabelMode !== "range") return;
     const nextLabel = buildGroupLabelFromSelection(selectionBoxRef.current);
     selectionDragRef.current = null;
     selectionBoxRef.current = null;
@@ -2293,6 +2444,67 @@ export default function EChartGraph({
                         onClick={() => removeComparisonRun(run._id)}
                       >
                         Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </details>
+          <details className="card">
+            <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
+              <strong>Trim Data</strong>
+              <span className={`badge ${runTrims.length > 0 ? "bg-danger" : "bg-secondary"}`}>
+                {runTrims.length} active
+              </span>
+            </summary>
+            <div className="card-body">
+              <label className="list-group-item list-group-item-action d-flex align-items-center mb-3">
+                <input
+                  className="form-check-input me-2"
+                  type="checkbox"
+                  checked={showTrims}
+                  onChange={(event) => setShowTrims(event.target.checked)}
+                />
+                <span>Show trim regions on graph</span>
+              </label>
+              <div className="d-flex gap-2 mb-3">
+                <button
+                  type="button"
+                  className={`btn btn-sm ${pendingTrimMode ? "btn-danger" : "btn-outline-danger"} flex-fill`}
+                  onClick={pendingTrimMode ? cancelAddTrim : beginAddTrim}
+                  disabled={selectedSensorEntries.length === 0}
+                >
+                  {pendingTrimMode ? "Drag to Select Trim (Cancel)" : "Add Trim"}
+                </button>
+                {runTrims.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-secondary"
+                    onClick={revertAllTrims}
+                    title="Remove all trims and restore data"
+                  >
+                    Revert All
+                  </button>
+                )}
+              </div>
+              {runTrims.length > 0 && (
+                <div className="list-group">
+                  {runTrims.map((trim, index) => (
+                    <div
+                      key={trim.id}
+                      className="list-group-item d-flex justify-content-between align-items-center py-1"
+                    >
+                      <small className="text-muted">
+                        Trim {index + 1}: {trim.startTimestamp.toFixed(2)}s &ndash; {trim.endTimestamp.toFixed(2)}s
+                      </small>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-danger py-0 px-1"
+                        onClick={() => deleteTrim(trim.id)}
+                        title="Remove this trim"
+                      >
+                        &times;
                       </button>
                     </div>
                   ))}
@@ -2559,7 +2771,7 @@ export default function EChartGraph({
         <div
           className="uplot-prototype__interaction-layer"
           style={{
-            pointerEvents: pendingLabelMode === "range" ? "auto" : "none",
+            pointerEvents: (pendingLabelMode === "range" || pendingTrimMode) ? "auto" : "none",
           }}
           onMouseDown={handleSelectionStart}
           onMouseMove={handleSelectionMove}
@@ -2579,9 +2791,9 @@ export default function EChartGraph({
                 }}
               />
             ))}
-          {pendingLabelMode === "range" && selectionBox && (
+          {(pendingLabelMode === "range" || pendingTrimMode) && selectionBox && (
             <div
-              className="uplot-prototype__selection-box"
+              className={`uplot-prototype__selection-box${pendingTrimMode ? " uplot-prototype__selection-box--trim" : ""}`}
               style={{
                 left: `${selectionBox.left}px`,
                 top: `${selectionBox.top}px`,

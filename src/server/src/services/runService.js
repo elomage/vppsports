@@ -108,6 +108,22 @@ const runSensorSchema = new mongoose.Schema(
 );
 runSensorSchema.index({ runId: 1, sensorId: 1 }, { unique: true });
 
+const runTrimSchema = new mongoose.Schema(
+  {
+    runId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Run",
+      required: true,
+      index: true,
+    },
+    startTimestamp: { type: Number, required: true },
+    endTimestamp: { type: Number, required: true },
+    createdAt: { type: Date, default: Date.now },
+  },
+  { versionKey: false }
+);
+runTrimSchema.index({ runId: 1, startTimestamp: 1 });
+
 const Run = mongoose.models.Run || mongoose.model("Run", runSchema, "runs");
 const RunLabel =
   mongoose.models.RunLabel ||
@@ -118,6 +134,9 @@ const SensorReading =
 const RunSensor =
   mongoose.models.RunSensor ||
   mongoose.model("RunSensor", runSensorSchema, "run_sensors");
+const RunTrim =
+  mongoose.models.RunTrim ||
+  mongoose.model("RunTrim", runTrimSchema, "run_trims");
 
 const fs = require("fs").promises;
 const path = require("path");
@@ -600,6 +619,12 @@ const getRunSensorReadings = async (runid, sensorid, options = {}) => {
     }
   }
 
+  if (Array.isArray(options.trimRanges) && options.trimRanges.length > 0) {
+    query.$nor = options.trimRanges.map((trim) => ({
+      timestamp: { $gte: trim.startTimestamp, $lte: trim.endTimestamp },
+    }));
+  }
+
   const sensorData = await SensorReading.find(query)
     .sort({ timestamp: 1 })
     .lean();
@@ -628,8 +653,16 @@ const getRunOrientationData = async (runid, gyroscopeSensorId) => {
   return result;
 };
 
-const getTotalTimestamps = async (runid) => {
-  const timestamps = await SensorReading.find({ runId: runid })
+const getTotalTimestamps = async (runid, trimRanges = []) => {
+  const query = { runId: runid };
+
+  if (Array.isArray(trimRanges) && trimRanges.length > 0) {
+    query.$nor = trimRanges.map((trim) => ({
+      timestamp: { $gte: trim.startTimestamp, $lte: trim.endTimestamp },
+    }));
+  }
+
+  const timestamps = await SensorReading.find(query)
     .select({ timestamp: 1 })
     .exec();
 
@@ -758,6 +791,35 @@ const deleteRunLabels = async (runid) => {
   return RunLabel.deleteMany({ runId: runObjectId });
 };
 
+const getRunTrims = async (runid) => {
+  const runObjectId = new ObjectId(String(runid));
+  const trims = await RunTrim.find({ runId: runObjectId })
+    .sort({ startTimestamp: 1 })
+    .lean();
+  return trims.map(({ _id, runId, ...trim }) => ({ ...trim, id: String(_id) }));
+};
+
+const updateRunTrims = async (runid, trims) => {
+  const runObjectId = new ObjectId(String(runid));
+  await RunTrim.deleteMany({ runId: runObjectId });
+  if (Array.isArray(trims) && trims.length > 0) {
+    await RunTrim.insertMany(
+      trims.map(({ startTimestamp, endTimestamp }) => ({
+        startTimestamp,
+        endTimestamp,
+        runId: runObjectId,
+        createdAt: new Date(),
+      }))
+    );
+  }
+  return getRunTrims(runid);
+};
+
+const deleteRunTrims = async (runid) => {
+  const runObjectId = new ObjectId(String(runid));
+  return RunTrim.deleteMany({ runId: runObjectId });
+};
+
 module.exports = {
   getAllRunsDB,
   getSingleRunDB,
@@ -774,6 +836,9 @@ module.exports = {
   getRunLabels,
   updateRunLabels,
   deleteRunLabels,
+  getRunTrims,
+  updateRunTrims,
+  deleteRunTrims,
 };
 
 const withRunName = (run) => {

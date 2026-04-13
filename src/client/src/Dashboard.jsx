@@ -1,14 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import './Dashboard.css';
 import VisualizationSelection from './Visualizationselection';
 import PlaybackControl from './PlaybackControl';
 
 const Dashboard = ({ selectedRun }) => {
     const [sliderValue, setSliderValue] = useState(0);
-    
+    const [overrideTimestamps, setOverrideTimestamps] = useState(null);
+
     useEffect(() => {
       setSliderValue(0);
+      setOverrideTimestamps(null);
     }, [selectedRun]);
+
+    const handleEffectiveTimestampsChange = useCallback((timestamps) => {
+      setOverrideTimestamps(timestamps && timestamps.length > 0 ? timestamps : null);
+    }, []);
+
+    const effectiveRun = overrideTimestamps
+      ? { ...selectedRun, totalTimestamps: overrideTimestamps }
+      : selectedRun;
 
     return (
       <div className="dashboard-container w-100">
@@ -17,7 +27,7 @@ const Dashboard = ({ selectedRun }) => {
             <>
               <div className="playback-control-container">
                 <PlaybackControl
-                  selectedRun={selectedRun}
+                  selectedRun={effectiveRun}
                   sliderValue={sliderValue}
                   setSliderValue={setSliderValue}
                 />
@@ -26,6 +36,7 @@ const Dashboard = ({ selectedRun }) => {
                 selectedRun={selectedRun}
                 sliderValue={sliderValue}
                 setSliderValue={setSliderValue}
+                onEffectiveTimestampsChange={handleEffectiveTimestampsChange}
               />
             </>
           )}
