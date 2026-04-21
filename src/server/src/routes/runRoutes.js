@@ -1675,7 +1675,7 @@ sensorRouter.get("/:sensorid", async (req, res) => {
 //TODO: Implement the filtering passing and array of filters to use and recieving filtered data
 sensorDataRouter.get("/data", async (req, res) => {
   try {
-    const { filters, start, end, resolution, mode } = req.query;
+    const { filters, start, end, resolution, mode, residual } = req.query;
     const runid = req.params.runid;
     const authorizedRun = await findRunForUser(runid, req.user).catch(() => null);
     if (!authorizedRun) {
@@ -1688,6 +1688,7 @@ sensorDataRouter.get("/data", async (req, res) => {
       end,
       resolution,
       mode,
+      residual,
     });
 
     res.json(sensorData);

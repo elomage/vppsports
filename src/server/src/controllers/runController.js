@@ -647,19 +647,22 @@ const getSingleRunSavitzkyGolayFilter = async (runid) => {
 const getRunSensorData = async (runid, sensorid, options = {}) => {
   try {
     const trimRanges = await runService.getRunTrims(runid);
-    const sensorData = await runService.getRunSensorReadings(runid, sensorid, {
+    const rawData = await runService.getRunSensorReadings(runid, sensorid, {
       start: parseFiniteNumber(options.start),
       end: parseFiniteNumber(options.end),
       trimRanges,
     });
-    const filteredSensorData = filterSensorData(sensorData, options.filters);
+    const filteredData = filterSensorData(rawData, options.filters);
+
+    const wantResidual = options.residual === true || options.residual === "true";
+    const outputData = wantResidual ? computeResidualReadings(rawData, filteredData) : filteredData;
 
     if (String(options.mode || "raw").toLowerCase() !== "plot") {
-      return filteredSensorData;
+      return outputData;
     }
 
     const resolution = normalizeResolution(options.resolution);
-    const decimated = decimateSensorData(filteredSensorData, resolution);
+    const decimated = decimateSensorData(outputData, resolution);
 
     return {
       mode: "plot",
@@ -668,7 +671,7 @@ const getRunSensorData = async (runid, sensorid, options = {}) => {
         end: parseFiniteNumber(options.end),
       },
       resolution,
-      sampleCountRaw: filteredSensorData.length,
+      sampleCountRaw: outputData.length,
       sampleCountReturned: decimated.length,
       readings: decimated,
     };
@@ -783,78 +786,147 @@ const getRunSensorOrientationData = async (
   }
 };
 
-const applyKalmanFilter = (sensorData) => {
-  const axisCount = sensorData.reduce((maxAxisCount, reading) => {
+const getReadingAxisCount = (sensorData) =>
+  sensorData.reduce((maxAxisCount, reading) => {
     const readingAxisCount = Array.isArray(reading?.data) ? reading.data.length : 0;
     return Math.max(maxAxisCount, readingAxisCount);
   }, 0);
-  const filters = Array.from(
-    { length: axisCount },
-    () => new KalmanFilter({ R: 0.01, Q: 1 })
-  );
+
+const applyKalmanFilter = (sensorData, params = {}) => {
+  const R = Number.isFinite(params.R) && params.R > 0 ? params.R : 0.01;
+  const Q = Number.isFinite(params.Q) && params.Q > 0 ? params.Q : 1;
+  const axisCount = getReadingAxisCount(sensorData);
+  const kfilters = Array.from({ length: axisCount }, () => new KalmanFilter({ R, Q }));
 
   sensorData.forEach((reading) => {
     if (reading.data && Array.isArray(reading.data)) {
       reading.data = reading.data.map((value, axisIndex) =>
-        filters[axisIndex].filter(value)
+        kfilters[axisIndex].filter(value)
       );
     }
   });
 };
 
-const filterSensorData = (sensorData, filters) => {
-  if (!sensorData || !filters) return sensorData;
-  const axisCount = sensorData.reduce((maxAxisCount, reading) => {
-    const readingAxisCount = Array.isArray(reading?.data) ? reading.data.length : 0;
-    return Math.max(maxAxisCount, readingAxisCount);
-  }, 0);
-  const filtersList = filters.split(",").map((f) => f.trim());
-  filtersList.forEach((filter) => {
-    switch (filter.toLowerCase()) {
-      case "kalman":
-        applyKalmanFilter(sensorData);
-        break;
-      case "movingaverage": {
-        const windowSize = 300;
-        const smoothedAxes = Array.from({ length: axisCount }, (_, axisIndex) =>
-          movingAverage(
-            sensorData.map((reading) => reading.data?.[axisIndex] ?? 0),
-            windowSize
-          )
-        );
-
-        sensorData.forEach((reading, idx) => {
-          if (reading.data && Array.isArray(reading.data)) {
-            reading.data = reading.data.map(
-              (_, axisIndex) => smoothedAxes[axisIndex][idx]
-            );
-          }
-        });
-        break;
-      }
-      case "savitzkygolay": {
-        const options = { windowSize: 401, polynomial: 3, derivative: 0 };
-        const sgSmoothedAxes = Array.from({ length: axisCount }, (_, axisIndex) =>
-          savitzkyGolay(
-            sensorData.map((reading) => reading.data?.[axisIndex] ?? 0),
-            1,
-            options
-          )
-        );
-
-        sensorData.forEach((reading, idx) => {
-          if (reading.data && Array.isArray(reading.data)) {
-            reading.data = reading.data.map(
-              (_, axisIndex) => sgSmoothedAxes[axisIndex][idx]
-            );
-          }
-        });
-        break;
-      }
+const applyMovingAverageFilter = (sensorData, params = {}) => {
+  const windowSize = Math.max(2, Math.round(Number.isFinite(params.windowSize) ? params.windowSize : 50));
+  const axisCount = getReadingAxisCount(sensorData);
+  const smoothedAxes = Array.from({ length: axisCount }, (_, axisIndex) =>
+    movingAverage(
+      sensorData.map((reading) => reading.data?.[axisIndex] ?? 0),
+      windowSize
+    )
+  );
+  sensorData.forEach((reading, idx) => {
+    if (reading.data && Array.isArray(reading.data)) {
+      reading.data = reading.data.map((_, axisIndex) => smoothedAxes[axisIndex][idx]);
     }
   });
+};
 
-  return sensorData;
+const applySavitzkyGolayFilter = (sensorData, params = {}) => {
+  let windowSize = Math.round(Number.isFinite(params.windowSize) ? params.windowSize : 51);
+  if (windowSize % 2 === 0) windowSize += 1; // must be odd
+  windowSize = Math.max(5, windowSize);
+  const polynomial = Math.max(2, Math.round(Number.isFinite(params.polynomial) ? params.polynomial : 3));
+  const options = { windowSize, polynomial, derivative: 0 };
+  const axisCount = getReadingAxisCount(sensorData);
+  const smoothedAxes = Array.from({ length: axisCount }, (_, axisIndex) =>
+    savitzkyGolay(
+      sensorData.map((reading) => reading.data?.[axisIndex] ?? 0),
+      1,
+      options
+    )
+  );
+  sensorData.forEach((reading, idx) => {
+    if (reading.data && Array.isArray(reading.data)) {
+      reading.data = reading.data.map((_, axisIndex) => smoothedAxes[axisIndex][idx]);
+    }
+  });
+};
+
+// First-order exponential low-pass filter.
+// alpha near 0 = heavy smoothing (passes low frequencies), alpha near 1 = minimal smoothing.
+const applyLowPassFilter = (sensorData, params = {}) => {
+  const alpha = Math.min(0.9999, Math.max(0.0001, Number.isFinite(params.alpha) ? params.alpha : 0.1));
+  const axisCount = getReadingAxisCount(sensorData);
+  const prev = new Array(axisCount).fill(null);
+
+  sensorData.forEach((reading) => {
+    if (!reading.data || !Array.isArray(reading.data)) return;
+    reading.data = reading.data.map((value, axisIndex) => {
+      const filtered = prev[axisIndex] === null ? value : alpha * value + (1 - alpha) * prev[axisIndex];
+      prev[axisIndex] = filtered;
+      return filtered;
+    });
+  });
+};
+
+// First-order high-pass filter: y[i] = alpha * (y[i-1] + x[i] - x[i-1]).
+// alpha near 1 = passes high frequencies, alpha near 0 = blocks low frequencies aggressively.
+const applyHighPassFilter = (sensorData, params = {}) => {
+  const alpha = Math.min(0.9999, Math.max(0.0001, Number.isFinite(params.alpha) ? params.alpha : 0.9));
+  const axisCount = getReadingAxisCount(sensorData);
+  const prevRaw = new Array(axisCount).fill(null);
+  const prevHP = new Array(axisCount).fill(0);
+
+  sensorData.forEach((reading) => {
+    if (!reading.data || !Array.isArray(reading.data)) return;
+    reading.data = reading.data.map((value, axisIndex) => {
+      const filtered =
+        prevRaw[axisIndex] === null
+          ? 0
+          : alpha * (prevHP[axisIndex] + value - prevRaw[axisIndex]);
+      prevRaw[axisIndex] = value;
+      prevHP[axisIndex] = filtered;
+      return filtered;
+    });
+  });
+};
+
+const filterRegistry = require("../filters/registry");
+
+// Parse the filters query param.
+// New format: JSON array of {type, params} objects.
+// Legacy format: comma-separated type names (backward compat).
+const parseFiltersPipeline = (filtersParam) => {
+  if (!filtersParam) return [];
+  try {
+    const parsed = JSON.parse(filtersParam);
+    if (Array.isArray(parsed)) return parsed;
+  } catch (_) {
+    // fall through to legacy
+  }
+  return filtersParam.split(",").map((f) => ({ type: f.trim(), params: {} }));
+};
+
+const computeResidualReadings = (rawReadings, filteredReadings) =>
+  rawReadings.map((raw, i) => {
+    const filtered = filteredReadings[i];
+    if (!filtered || !Array.isArray(raw.data) || !Array.isArray(filtered.data)) {
+      return raw;
+    }
+    return {
+      ...raw,
+      data: raw.data.map((v, j) =>
+        Number.isFinite(v) && Number.isFinite(filtered.data[j]) ? v - filtered.data[j] : null,
+      ),
+    };
+  });
+
+const filterSensorData = (sensorData, filtersParam) => {
+  if (!sensorData || !filtersParam) return sensorData;
+  const pipeline = parseFiltersPipeline(filtersParam);
+  let current = sensorData;
+  for (const { type, params = {} } of pipeline) {
+    const filter = filterRegistry.getFilter((type || "").toLowerCase());
+    if (!filter) continue;
+    try {
+      current = filter.apply(current, params);
+    } catch (err) {
+      console.error(`[filters] Error applying filter '${type}': ${err.message}`);
+    }
+  }
+  return current;
 };
 
 module.exports = {

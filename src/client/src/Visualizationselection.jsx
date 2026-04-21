@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './Visualizationselection.css';
-import { checkRunVideoExists } from './api';
+import { checkRunVideoExists, fetchPluginAssignments } from './api';
 
 const componentsMap = {
     info: React.lazy(() => import('./Infovisualizer')),
@@ -12,13 +12,17 @@ const componentsMap = {
 
 export default function ComponentSelector({ selectedRun, sliderValue, setSliderValue, onEffectiveTimestampsChange }) {
     const [selectedComponent, setSelectedComponent] = useState([
-        // { id: 1, type: 'info', flexGrow: 1 },
         { id: 1, type: 'echart', flexGrow: 1 },
         { id: 2, type: 'video', flexGrow: 1 },
-        // { id: 3, type: 'model', flexGrow: 1 },
     ]);
     const [hasVideoForRun, setHasVideoForRun] = useState(true);
     const [containerSize, setContainerSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+
+    // Plugin assignment state.
+    // vizPlugins: array of { id, enabled, order } or null when no config (all enabled).
+    // enabledFilterIds: array of enabled filter IDs or null (all enabled).
+    const [vizPlugins, setVizPlugins] = useState(null);
+    const [enabledFilterIds, setEnabledFilterIds] = useState(null);
 
     const addComponent = (value) => {
         const newComponents = [...selectedComponent, { id: Date.now(), type: value, flexGrow: 1 }];
@@ -81,6 +85,59 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
         };
     }, [selectedRun?._id]);
 
+    // Fetch plugin assignments whenever the run's context changes.
+    useEffect(() => {
+        const contextId = selectedRun?.contextId
+            ? String(selectedRun.contextId)
+            : null;
+
+        if (!contextId) {
+            setVizPlugins(null);
+            setEnabledFilterIds(null);
+            return;
+        }
+
+        let isCancelled = false;
+
+        fetchPluginAssignments(contextId, 'visualization')
+            .then((data) => {
+                if (isCancelled) return;
+                const plugins = Array.isArray(data?.plugins) ? data.plugins : null;
+                setVizPlugins(plugins);
+
+                if (plugins) {
+                    const disabledTypes = new Set(
+                        plugins.filter((p) => !p.enabled).map((p) => p.id)
+                    );
+                    if (disabledTypes.size > 0) {
+                        setSelectedComponent((prev) =>
+                            prev.filter((c) => !disabledTypes.has(c.type))
+                        );
+                    }
+                }
+            })
+            .catch(() => {
+                if (!isCancelled) setVizPlugins(null);
+            });
+
+        fetchPluginAssignments(contextId, 'filter')
+            .then((data) => {
+                if (isCancelled) return;
+                const plugins = Array.isArray(data?.plugins) ? data.plugins : null;
+                const ids = plugins
+                    ? plugins.filter((p) => p.enabled).map((p) => p.id)
+                    : null;
+                setEnabledFilterIds(ids);
+            })
+            .catch(() => {
+                if (!isCancelled) setEnabledFilterIds(null);
+            });
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [selectedRun?.contextId]);
+
     useEffect(() => {
         const handleResize = () => {
             const sidebarWidth = document.getElementById('sidebar') ? document.getElementById('sidebar').offsetWidth : 0;
@@ -107,17 +164,30 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
         };
     }, []);
 
+    // Set of viz plugin IDs that are enabled for the current context.
+    // null vizPlugins = no config loaded yet, default to all enabled.
+    const enabledVizTypes = vizPlugins
+        ? new Set(vizPlugins.filter((p) => p.enabled).map((p) => p.id))
+        : new Set(Object.keys(componentsMap));
+
     return (
         <>
-            {/* <h1 className='text-2xl font-bold mb-4'>Visualization</h1> */}
             <div className='flex gap-4'>
-                {/* <button className='btn btn-primary' onClick={() => addComponent('info')} style={{margin: '5px'}}>Add Info</button> */}
-                {/* <button className='btn btn-primary' onClick={() => addComponent('graph')} style={{margin: '5px'}}>Add Graph</button> */}
-                <button className='btn btn-primary' onClick={() => addComponent('echart')} style={{margin: '5px'}}>Add Graph</button>
-                {hasVideoForRun && (
+                {enabledVizTypes.has('echart') && (
+                    <button className='btn btn-primary' onClick={() => addComponent('echart')} style={{margin: '5px'}}>Add Graph</button>
+                )}
+                {hasVideoForRun && enabledVizTypes.has('video') && (
                     <button className='btn btn-primary' onClick={() => addComponent('video')} style={{margin: '5px'}}>Add Video</button>
                 )}
-                {/* <button className='btn btn-primary' onClick={() => addComponent('model')} style={{margin: '5px'}}>Add Model</button> */}
+                {enabledVizTypes.has('info') && (
+                    <button className='btn btn-primary' onClick={() => addComponent('info')} style={{margin: '5px'}}>Add Info</button>
+                )}
+                {enabledVizTypes.has('graph') && (
+                    <button className='btn btn-primary' onClick={() => addComponent('graph')} style={{margin: '5px'}}>Add uPlot</button>
+                )}
+                {enabledVizTypes.has('model') && (
+                    <button className='btn btn-primary' onClick={() => addComponent('model')} style={{margin: '5px'}}>Add Model</button>
+                )}
             </div>
             <div className='flex flex-col items-center p-6' id='visualization-component-wrapper' style={{ '--graph-count': graphCount }}>
                 <div className='flex flex-wrap' style={{ flex: 1, width: '100%' }}>
@@ -153,6 +223,7 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
                                             style={{width: '100%', height: '100%', flex: 1}}
                                             setSliderValue={setSliderValue}
                                             onEffectiveTimestampsChange={component.type === 'echart' ? onEffectiveTimestampsChange : undefined}
+                                            enabledFilterIds={component.type === 'echart' ? enabledFilterIds : undefined}
                                         />
                                     </React.Suspense>
                                 </div>

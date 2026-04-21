@@ -1,16 +1,51 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
 import "./UPlotGraph.css";
-import { fetchRuns, updateRunLabels, updateRunTrims } from "./api";
+import { fetchFilters, fetchRuns, updateRunLabels, updateRunTrims } from "./api";
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL;
 const ACCESS_TOKEN_STORAGE_KEY = "vppsports_access_token";
 const DEFAULT_PLOT_RESOLUTION = 1400;
 
-const FILTERS = [
-  { id: "kalman", label: "Kalman" },
-  { id: "movingaverage", label: "MovAvg" },
-  { id: "savitzkygolay", label: "SavGol" },
+// Fallback filter list shown before the server responds.
+const BUILTIN_FILTERS_FALLBACK = [
+  {
+    id: "kalman",
+    label: "Kalman",
+    params: [
+      { key: "R", label: "Measurement noise", default: 0.01, min: 0.0001, max: 10, step: 0.0001 },
+      { key: "Q", label: "Process noise", default: 1, min: 0.001, max: 100, step: 0.01 },
+    ],
+  },
+  {
+    id: "movingaverage",
+    label: "Mov Avg",
+    params: [
+      { key: "windowSize", label: "Window size", default: 50, min: 2, max: 2000, step: 1, integer: true },
+    ],
+  },
+  {
+    id: "savitzkygolay",
+    label: "Sav-Golay",
+    params: [
+      { key: "windowSize", label: "Window (odd)", default: 51, min: 5, max: 501, step: 2, integer: true },
+      { key: "polynomial", label: "Polynomial order", default: 3, min: 2, max: 6, step: 1, integer: true },
+    ],
+  },
+  {
+    id: "lowpass",
+    label: "Low-pass",
+    params: [
+      { key: "alpha", label: "Smoothing α (0–1)", default: 0.1, min: 0.001, max: 0.999, step: 0.001 },
+    ],
+  },
+  {
+    id: "highpass",
+    label: "High-pass",
+    params: [
+      { key: "alpha", label: "Cutoff α (0–1)", default: 0.9, min: 0.001, max: 0.999, step: 0.001 },
+    ],
+  },
 ];
 
 const TRACE_COLORS = [
@@ -53,6 +88,7 @@ const buildSensorDataUrl = (runId, sensorId, options = {}) => {
   if (Number.isFinite(options.end)) params.set("end", String(options.end));
   if (Number.isFinite(options.resolution))
     params.set("resolution", String(options.resolution));
+  if (options.residual) params.set("residual", "true");
   const query = params.toString();
   return `${SERVER_URL}/run/${runId}/sensor/${sensorId}/data${query ? `?${query}` : ""}`;
 };
@@ -118,11 +154,6 @@ const getCacheKey = (runId, sensorId, options = {}) => {
     resolution: Number.isFinite(options.resolution) ? options.resolution : "",
   };
   return `${runId}:${sensorId}:${normalized.mode}:${normalized.start}:${normalized.end}:${normalized.filters}:${normalized.resolution}`;
-};
-
-const filterKeyFromSelection = (useFilteredData, selectedFilters) => {
-  if (!useFilteredData || selectedFilters.length === 0) return "";
-  return selectedFilters.join(",");
 };
 
 const getSensorOffset = (offsetsBySensor, sensorId) => {
@@ -223,8 +254,8 @@ const interpolateSeriesValueWithinBounds = (points, target) => {
   return interpolateSeriesValue(points, target);
 };
 
-const buildTraceKey = ({ runId, sensorId, axisIndex, useFilteredData }) =>
-  `${runId}:${sensorId}:${axisIndex}:${useFilteredData ? "filtered" : "raw"}`;
+const buildTraceKey = ({ runId, sensorId, axisIndex, useFilteredData, useResidualData }) =>
+  `${runId}:${sensorId}:${axisIndex}:${useResidualData ? "residual" : useFilteredData ? "filtered" : "raw"}`;
 
 const getSensorDisplayLabel = (entry) => {
   const hasName = entry.sensorName && String(entry.sensorName).trim();
@@ -494,10 +525,19 @@ export default function EChartGraph({
   setSliderValue,
   removeFunction,
   onEffectiveTimestampsChange,
+  enabledFilterIds,
 }) {
-  const [useFilteredData, setUseFilteredData] = useState(false);
-  const [selectedFilters, setSelectedFilters] = useState([]);
-  const [pendingFilters, setPendingFilters] = useState([]);
+  const [availableFilters, setAvailableFilters] = useState(BUILTIN_FILTERS_FALLBACK);
+
+  // When the parent provides enabledFilterIds, restrict the picker to those filters.
+  // Existing pipeline steps still resolve against the full availableFilters list.
+  const displayFilters = useMemo(() => {
+    if (!enabledFilterIds || !Array.isArray(enabledFilterIds)) return availableFilters;
+    return availableFilters.filter((f) => enabledFilterIds.includes(f.id));
+  }, [availableFilters, enabledFilterIds]);
+
+  const [sensorFilterPipelines, setSensorFilterPipelines] = useState({});
+  const [sensorFiltersActive, setSensorFiltersActive] = useState({});
   const [availableSensors, setAvailableSensors] = useState([]);
   const [selectedSensorKeys, setSelectedSensorKeys] = useState([]);
   const [sensorSyncOffsets, setSensorSyncOffsets] = useState({});
@@ -536,6 +576,9 @@ export default function EChartGraph({
   const [pendingTrimMode, setPendingTrimMode] = useState(false);
   const [showTrims, setShowTrims] = useState(true);
   const [trimRevision, setTrimRevision] = useState(0);
+  const [showStatAnnotations, setShowStatAnnotations] = useState(false);
+  const [residualEnabledBySensor, setResidualEnabledBySensor] = useState({});
+  const [residualSeriesBySensor, setResidualSeriesBySensor] = useState({});
 
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
@@ -583,7 +626,15 @@ export default function EChartGraph({
     return instance;
   }, []);
 
-  const filterKey = filterKeyFromSelection(useFilteredData, selectedFilters);
+  const getSensorFilterPipeline = (sensorKey) => sensorFilterPipelines[sensorKey] || [];
+  const isSensorFilterActive = (sensorKey) =>
+    !!(sensorFiltersActive[sensorKey] && (sensorFilterPipelines[sensorKey]?.length ?? 0) > 0);
+  const getSensorFilterKey = (sensorKey) => {
+    if (!isSensorFilterActive(sensorKey)) return "";
+    const pipeline = getSensorFilterPipeline(sensorKey);
+    return JSON.stringify(pipeline.map(({ type, params }) => ({ type, params })));
+  };
+
   const runTimestamps = selectedRun?.totalTimestamps ?? [];
 
   const effectiveTimestamps = useMemo(() => {
@@ -730,6 +781,8 @@ export default function EChartGraph({
     setRunTrims([]);
     lastSavedTrimsRef.current = [];
     setTrimRevision(0);
+    setSensorFilterPipelines({});
+    setSensorFiltersActive({});
   }, [selectedRun?._id]);
 
   useEffect(() => {
@@ -749,6 +802,16 @@ export default function EChartGraph({
     lastSavedTrimsRef.current = nextTrims;
     setRunTrims(nextTrims);
   }, [selectedRun?.trims]);
+
+  useEffect(() => {
+    fetchFilters()
+      .then((filters) => {
+        if (Array.isArray(filters) && filters.length > 0) setAvailableFilters(filters);
+      })
+      .catch(() => {
+        // keep the fallback list — no action needed
+      });
+  }, []);
 
   useEffect(() => {
     fetchRuns()
@@ -822,11 +885,16 @@ export default function EChartGraph({
 
       const nextEntries = await Promise.all(
         primarySelectedSensorIds.map(async (sensorId) => {
+          const sensorKey = `${selectedRun._id}:${sensorId}`;
+          const sensorFilterKey = getSensorFilterKey(sensorKey);
+          const syncOffset = getSensorOffset(sensorSyncOffsets, sensorKey);
+          const fetchStart = Number.isFinite(visibleRange.start) ? visibleRange.start - syncOffset : visibleRange.start;
+          const fetchEnd = Number.isFinite(visibleRange.end) ? visibleRange.end - syncOffset : visibleRange.end;
           const cacheKey = getCacheKey(selectedRun._id, sensorId, {
             mode: "plot",
-            start: visibleRange.start,
-            end: visibleRange.end,
-            filters: filterKey,
+            start: fetchStart,
+            end: fetchEnd,
+            filters: sensorFilterKey,
             resolution: plotResolution,
           });
 
@@ -834,20 +902,46 @@ export default function EChartGraph({
           if (!cached) {
             cached = fetchSensorData(selectedRun._id, sensorId, {
               mode: "plot",
-              start: visibleRange.start,
-              end: visibleRange.end,
-              filters: filterKey || undefined,
+              start: fetchStart,
+              end: fetchEnd,
+              filters: sensorFilterKey || undefined,
               resolution: plotResolution,
             }).then(normalizeSeriesPayload);
             cacheRef.current.plot.set(cacheKey, cached);
           }
 
-          return [sensorId, await cached];
+          // Fetch residual alongside if enabled and filter is active
+          const wantResidual = residualEnabledBySensor[sensorKey] && !!sensorFilterKey;
+          let residualCached = null;
+          if (wantResidual) {
+            const residualCacheKey = `residual:${cacheKey}`;
+            residualCached = cacheRef.current.plot.get(residualCacheKey);
+            if (!residualCached) {
+              residualCached = fetchSensorData(selectedRun._id, sensorId, {
+                mode: "plot",
+                start: fetchStart,
+                end: fetchEnd,
+                filters: sensorFilterKey,
+                resolution: plotResolution,
+                residual: true,
+              }).then(normalizeSeriesPayload);
+              cacheRef.current.plot.set(residualCacheKey, residualCached);
+            }
+          }
+
+          return [sensorId, sensorKey, await cached, wantResidual ? await residualCached : null];
         }),
       );
 
       if (requestId !== requestIdRef.current.plot) return;
-      setPlotSeriesBySensor(Object.fromEntries(nextEntries));
+      setPlotSeriesBySensor(Object.fromEntries(nextEntries.map(([id, , data]) => [id, data])));
+      setResidualSeriesBySensor(
+        Object.fromEntries(
+          nextEntries
+            .filter(([, , , residual]) => residual !== null)
+            .map(([, key, , residual]) => [key, residual]),
+        ),
+      );
       setIsPlotLoading(false);
     };
 
@@ -858,10 +952,13 @@ export default function EChartGraph({
       console.error("Error loading ECharts plot data:", error);
     });
   }, [
-    filterKey,
     plotResolution,
     primarySelectedSensorIds,
+    residualEnabledBySensor,
     selectedRun?._id,
+    sensorFilterPipelines,
+    sensorFiltersActive,
+    sensorSyncOffsets,
     trimRevision,
     visibleRange.end,
     visibleRange.start,
@@ -881,16 +978,18 @@ export default function EChartGraph({
 
       const nextEntries = await Promise.all(
         primarySelectedSensorIds.map(async (sensorId) => {
+          const sensorKey = `${selectedRun._id}:${sensorId}`;
+          const sensorFilterKey = getSensorFilterKey(sensorKey);
           const cacheKey = getCacheKey(selectedRun._id, sensorId, {
             mode: "raw",
-            filters: filterKey,
+            filters: sensorFilterKey,
           });
 
           let cached = cacheRef.current.raw.get(cacheKey);
           if (!cached) {
             cached = fetchSensorData(selectedRun._id, sensorId, {
               mode: "raw",
-              filters: filterKey || undefined,
+              filters: sensorFilterKey || undefined,
             });
             cacheRef.current.raw.set(cacheKey, cached);
           }
@@ -911,7 +1010,8 @@ export default function EChartGraph({
       }
       console.error("Error loading ECharts raw data:", error);
     });
-  }, [filterKey, primarySelectedSensorIds, selectedRun?._id, trimRevision]);
+  }, [primarySelectedSensorIds, selectedRun?._id, sensorFilterPipelines, sensorFiltersActive, trimRevision]);
+
 
   useEffect(() => {
     const requestId = ++requestIdRef.current.comparisonPlot;
@@ -957,11 +1057,15 @@ export default function EChartGraph({
               comparisonSelectedEntriesByRun[comparisonRun._id].map(
                 async (entry) => {
                   const sensorId = entry.sensorId;
+                  const sensorFilterKey = getSensorFilterKey(entry.key);
+                  const syncOffset = getSensorOffset(sensorSyncOffsets, entry.key);
+                  const fetchStart = Number.isFinite(mappedStart) ? mappedStart - syncOffset : mappedStart;
+                  const fetchEnd = Number.isFinite(mappedEnd) ? mappedEnd - syncOffset : mappedEnd;
                   const cacheKey = getCacheKey(comparisonRun._id, sensorId, {
                     mode: "plot",
-                    start: mappedStart,
-                    end: mappedEnd,
-                    filters: filterKey,
+                    start: fetchStart,
+                    end: fetchEnd,
+                    filters: sensorFilterKey,
                     resolution: plotResolution,
                   });
 
@@ -969,9 +1073,9 @@ export default function EChartGraph({
                   if (!cached) {
                     cached = fetchSensorData(comparisonRun._id, sensorId, {
                       mode: "plot",
-                      start: mappedStart,
-                      end: mappedEnd,
-                      filters: filterKey || undefined,
+                      start: fetchStart,
+                      end: fetchEnd,
+                      filters: sensorFilterKey || undefined,
                       resolution: plotResolution,
                     }).then(normalizeSeriesPayload);
                     cacheRef.current.plot.set(cacheKey, cached);
@@ -996,9 +1100,11 @@ export default function EChartGraph({
   }, [
     comparisonSelectedEntriesByRun,
     comparisonRuns,
-    filterKey,
     plotResolution,
     selectedRun,
+    sensorFilterPipelines,
+    sensorFiltersActive,
+    sensorSyncOffsets,
     visibleRange.end,
     visibleRange.start,
   ]);
@@ -1026,16 +1132,17 @@ export default function EChartGraph({
               comparisonSelectedEntriesByRun[comparisonRun._id].map(
                 async (entry) => {
                   const sensorId = entry.sensorId;
+                  const sensorFilterKey = getSensorFilterKey(entry.key);
                   const cacheKey = getCacheKey(comparisonRun._id, sensorId, {
                     mode: "raw",
-                    filters: filterKey,
+                    filters: sensorFilterKey,
                   });
 
                   let cached = cacheRef.current.raw.get(cacheKey);
                   if (!cached) {
                     cached = fetchSensorData(comparisonRun._id, sensorId, {
                       mode: "raw",
-                      filters: filterKey || undefined,
+                      filters: sensorFilterKey || undefined,
                     });
                     cacheRef.current.raw.set(cacheKey, cached);
                   }
@@ -1057,7 +1164,7 @@ export default function EChartGraph({
     loadComparisonRawSeries().catch((error) => {
       console.error("Error loading comparison raw data:", error);
     });
-  }, [comparisonRuns, comparisonSelectedEntriesByRun, filterKey]);
+  }, [comparisonRuns, comparisonSelectedEntriesByRun, sensorFilterPipelines, sensorFiltersActive]);
 
   const chartModel = useMemo(() => {
     const series = [];
@@ -1109,13 +1216,14 @@ export default function EChartGraph({
           : 0;
       const offset = getSensorOffset(sensorSyncOffsets, entry.key);
 
+      const isFiltered = isSensorFilterActive(entry.key);
       for (let axisIndex = 0; axisIndex < axisCount; axisIndex += 1) {
-        const label = `${entry.runName} ${getSensorDisplayLabel(entry)} ${getAxisLabel(axisIndex, axisCount)}${useFilteredData ? " (filtered)" : ""}`;
+        const label = `${entry.runName} ${getSensorDisplayLabel(entry)} ${getAxisLabel(axisIndex, axisCount)}${isFiltered ? " (filtered)" : ""}`;
         const traceKey = buildTraceKey({
           runId: entry.runId,
           sensorId: entry.sensorId,
           axisIndex,
-          useFilteredData,
+          useFilteredData: isFiltered,
         });
         const color = TRACE_COLORS[series.length % TRACE_COLORS.length];
         traceColorByLabel.set(label, color);
@@ -1153,7 +1261,7 @@ export default function EChartGraph({
 
       const axes = (nearest.data || [])
         .map((value, axisIndex) => {
-          const axisLabel = `${entry.runName} ${getSensorDisplayLabel(entry)} ${getAxisLabel(axisIndex, nearest.data.length)}${useFilteredData ? " (filtered)" : ""}`;
+          const axisLabel = `${entry.runName} ${getSensorDisplayLabel(entry)} ${getAxisLabel(axisIndex, nearest.data.length)}${isSensorFilterActive(entry.key) ? " (filtered)" : ""}`;
           if (!(traceVisibility[axisLabel] ?? true)) return null;
           return {
             name: getAxisLabel(axisIndex, nearest.data.length).replace(
@@ -1181,6 +1289,60 @@ export default function EChartGraph({
       });
     });
 
+    // Residual traces (raw - filtered) for sensors where residual is enabled
+    selectedSensorEntries.forEach((entry) => {
+      if (!residualEnabledBySensor[entry.key] || !isSensorFilterActive(entry.key)) return;
+      const residualPayload = residualSeriesBySensor[entry.key];
+      const residualReadings = residualPayload?.readings;
+      if (!Array.isArray(residualReadings) || residualReadings.length === 0) return;
+
+      const axisCount = getAxisCount(residualReadings);
+      const offset = getSensorOffset(sensorSyncOffsets, entry.key);
+      const entryBaseTimestamp = entry.isPrimary
+        ? currentBaseTimestamp
+        : comparisonRuns.find((run) => run._id === entry.runId)?.totalTimestamps?.[0];
+      const alignmentOffset =
+        !entry.isPrimary && Number.isFinite(currentBaseTimestamp) && Number.isFinite(entryBaseTimestamp)
+          ? currentBaseTimestamp - entryBaseTimestamp
+          : 0;
+
+      for (let axisIndex = 0; axisIndex < axisCount; axisIndex += 1) {
+        const baseLabel = `${entry.runName} ${getSensorDisplayLabel(entry)} ${getAxisLabel(axisIndex, axisCount)}`;
+        const label = `${baseLabel} (residual)`;
+        const traceKey = buildTraceKey({
+          runId: entry.runId,
+          sensorId: entry.sensorId,
+          axisIndex,
+          useResidualData: true,
+        });
+        const baseColor = traceColorByLabel.get(`${baseLabel} (filtered)`) || traceColorByLabel.get(baseLabel) || TRACE_COLORS[series.length % TRACE_COLORS.length];
+        traceColorByLabel.set(label, baseColor);
+        const points = residualReadings
+          .map((reading) => ({
+            x: reading.timestamp + offset + alignmentOffset,
+            y: reading.data?.[axisIndex] ?? null,
+          }))
+          .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+        const renderData = xValues.map((timestamp) => [
+          timestamp,
+          interpolateSeriesValueWithinBounds(points, timestamp),
+        ]);
+
+        series.push({
+          traceKey,
+          sensorId: entry.sensorId,
+          axisIndex,
+          label,
+          color: baseColor,
+          runId: entry.runId,
+          runName: entry.runName,
+          points,
+          renderData,
+          isResidual: true,
+        });
+      }
+    });
+
     return { series, readoutEntries, xValues };
   }, [
     comparisonPlotSeriesByRun,
@@ -1191,11 +1353,14 @@ export default function EChartGraph({
     plotResolution,
     plotSeriesBySensor,
     rawSeriesBySensor,
+    residualEnabledBySensor,
+    residualSeriesBySensor,
     selectedRun,
     selectedSensorEntries,
     sensorSyncOffsets,
+    sensorFilterPipelines,
+    sensorFiltersActive,
     traceVisibility,
-    useFilteredData,
     visibleRange.end,
     visibleRange.start,
   ]);
@@ -1568,9 +1733,66 @@ export default function EChartGraph({
           progressive: 5000,
           progressiveThreshold: 10000,
           hoverLayerThreshold: Infinity,
-          lineStyle: { width: 1.5, color: seriesItem.color },
+          lineStyle: {
+            width: 1.5,
+            color: seriesItem.color,
+            ...(seriesItem.isResidual ? { type: "dashed", opacity: 0.7 } : {}),
+          },
           connectNulls: false,
           data: seriesItem.renderData,
+          markLine: showStatAnnotations
+            ? {
+                silent: true,
+                symbol: "none",
+                data: [
+                  {
+                    type: "min",
+                    name: "Min",
+                    lineStyle: { color: seriesItem.color, type: "dashed", width: 1, opacity: 0.8 },
+                    label: {
+                      show: true,
+                      position: "insideEndTop",
+                      formatter: (p) => `Min: ${Number(p.value).toFixed(3)}`,
+                      color: seriesItem.color,
+                      backgroundColor: "rgba(255,255,255,0.85)",
+                      padding: [2, 5],
+                      borderRadius: 3,
+                      fontSize: 11,
+                    },
+                  },
+                  {
+                    type: "max",
+                    name: "Max",
+                    lineStyle: { color: seriesItem.color, type: "dashed", width: 1, opacity: 0.8 },
+                    label: {
+                      show: true,
+                      position: "insideEndTop",
+                      formatter: (p) => `Max: ${Number(p.value).toFixed(3)}`,
+                      color: seriesItem.color,
+                      backgroundColor: "rgba(255,255,255,0.85)",
+                      padding: [2, 5],
+                      borderRadius: 3,
+                      fontSize: 11,
+                    },
+                  },
+                  {
+                    type: "average",
+                    name: "Mean",
+                    lineStyle: { color: seriesItem.color, type: "dotted", width: 1, opacity: 0.8 },
+                    label: {
+                      show: true,
+                      position: "insideEndTop",
+                      formatter: (p) => `Mean: ${Number(p.value).toFixed(3)}`,
+                      color: seriesItem.color,
+                      backgroundColor: "rgba(255,255,255,0.85)",
+                      padding: [2, 5],
+                      borderRadius: 3,
+                      fontSize: 11,
+                    },
+                  },
+                ],
+              }
+            : undefined,
         })),
       ],
     };
@@ -1584,6 +1806,7 @@ export default function EChartGraph({
     runTrims,
     showHighlightSections,
     showLabels,
+    showStatAnnotations,
     showTrims,
     traceVisibility,
     visibleRange.end,
@@ -1887,43 +2110,64 @@ export default function EChartGraph({
       }),
     );
   };
-  const toggleFilter = (filterId) =>
-    setPendingFilters((prev) =>
-      prev.includes(filterId)
-        ? prev.filter((id) => id !== filterId)
-        : [...prev, filterId],
+  const addFilterToSensor = (sensorKey, filterType) => {
+    const filterDef = availableFilters.find((f) => f.id === filterType);
+    if (!filterDef) return;
+    const defaultParams = Object.fromEntries(
+      (filterDef.params || []).map((p) => [p.key, p.default]),
     );
-  const applyFilters = () => {
-    setSelectedFilters(pendingFilters);
-    setUseFilteredData(true);
+    const newStep = {
+      id: `filter-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      type: filterType,
+      params: defaultParams,
+    };
+    setSensorFilterPipelines((prev) => ({
+      ...prev,
+      [sensorKey]: [...(prev[sensorKey] || []), newStep],
+    }));
   };
-  const disableFilters = () => {
-    setUseFilteredData(false);
-    setPendingFilters(selectedFilters);
+  const removeFilterFromSensor = (sensorKey, stepId) =>
+    setSensorFilterPipelines((prev) => ({
+      ...prev,
+      [sensorKey]: (prev[sensorKey] || []).filter((step) => step.id !== stepId),
+    }));
+  const updateFilterParam = (sensorKey, stepId, paramKey, rawValue) => {
+    const numValue = Number(rawValue);
+    if (!Number.isFinite(numValue)) return;
+    setSensorFilterPipelines((prev) => ({
+      ...prev,
+      [sensorKey]: (prev[sensorKey] || []).map((step) =>
+        step.id !== stepId
+          ? step
+          : { ...step, params: { ...step.params, [paramKey]: numValue } },
+      ),
+    }));
   };
-  const handleDragStart = (event, filterId) => {
-    setDraggedFilter(filterId);
+  const toggleSensorFilters = (sensorKey) =>
+    setSensorFiltersActive((prev) => ({ ...prev, [sensorKey]: !prev[sensorKey] }));
+  const handleFilterDragStart = (event, sensorKey, stepId) => {
+    setDraggedFilter({ sensorKey, filterId: stepId });
     event.dataTransfer.effectAllowed = "move";
   };
-  const handleDragOver = (event) => {
+  const handleFilterDragOver = (event) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
   };
-  const handleDrop = (event, targetFilterId) => {
+  const handleFilterDrop = (event, sensorKey, targetStepId) => {
     event.preventDefault();
-    if (draggedFilter === targetFilterId) return;
-    setPendingFilters((prev) => {
-      const next = [...prev];
-      const draggedIndex = next.indexOf(draggedFilter);
-      const targetIndex = next.indexOf(targetFilterId);
-      if (draggedIndex === -1 || targetIndex === -1) return prev;
-      next.splice(draggedIndex, 1);
-      next.splice(targetIndex, 0, draggedFilter);
-      return next;
+    if (!draggedFilter || draggedFilter.sensorKey !== sensorKey || draggedFilter.filterId === targetStepId) return;
+    setSensorFilterPipelines((prev) => {
+      const pipeline = [...(prev[sensorKey] || [])];
+      const fromIndex = pipeline.findIndex((step) => step.id === draggedFilter.filterId);
+      const toIndex = pipeline.findIndex((step) => step.id === targetStepId);
+      if (fromIndex === -1 || toIndex === -1) return prev;
+      const [moved] = pipeline.splice(fromIndex, 1);
+      pipeline.splice(toIndex, 0, moved);
+      return { ...prev, [sensorKey]: pipeline };
     });
     setDraggedFilter(null);
   };
-  const handleDragEnd = () => setDraggedFilter(null);
+  const handleFilterDragEnd = () => setDraggedFilter(null);
   const handleSyncOffsetChange = (sensorId, value) => {
     const parsed = Number(value);
     setSensorSyncOffsets((prev) => ({
@@ -2265,6 +2509,14 @@ export default function EChartGraph({
           >
             Ind. Scale
           </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${showStatAnnotations ? "btn-success" : "btn-outline-secondary"}`}
+            onClick={() => setShowStatAnnotations((prev) => !prev)}
+            title="Show min, max, and mean lines for each visible trace"
+          >
+            Stats
+          </button>
         </div>
         <div
           className={`uplot-prototype__overlay-controls ${isConfigOpen ? "is-open" : ""}`}
@@ -2355,45 +2607,150 @@ export default function EChartGraph({
           <details className="card filters-collapsible">
             <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
               <strong>Filters</strong>
-              <span className={`badge ${useFilteredData ? "bg-success" : "bg-secondary"}`}>
-                {useFilteredData ? "Active" : "Inactive"} ({pendingFilters.length} selected)
+              <span className={`badge ${selectedSensorEntries.some((e) => isSensorFilterActive(e.key)) ? "bg-success" : "bg-secondary"}`}>
+                {selectedSensorEntries.filter((e) => isSensorFilterActive(e.key)).length} active
               </span>
             </summary>
             <div className="card-body">
-              {FILTERS.map((filter) => (
-                <label
-                  key={filter.id}
-                  className="list-group-item list-group-item-action d-flex align-items-center"
-                >
-                  <input
-                    className="form-check-input me-2"
-                    type="checkbox"
-                    checked={pendingFilters.includes(filter.id)}
-                    onChange={() => toggleFilter(filter.id)}
-                  />
-                  <span>{filter.label}</span>
-                </label>
-              ))}
-              <div className="d-flex gap-2 mt-3">
-                {useFilteredData ? (
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-outline-danger flex-fill"
-                    onClick={disableFilters}
+              {selectedSensorEntries.length === 0 && (
+                <p className="text-muted small mb-0">Select sensors to configure filters.</p>
+              )}
+              {selectedSensorEntries.map((entry, entryIdx) => {
+                const pipeline = getSensorFilterPipeline(entry.key);
+                const isActive = isSensorFilterActive(entry.key);
+                return (
+                  <div
+                    key={entry.key}
+                    className={entryIdx < selectedSensorEntries.length - 1 ? "mb-3 pb-3 border-bottom" : "mb-1"}
                   >
-                    Disable Filters
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-outline-primary flex-fill"
-                    onClick={applyFilters}
-                    disabled={pendingFilters.length === 0}
-                  >
-                    Apply Filters
-                  </button>
-                )}
-              </div>
+                    {/* Sensor header + enable toggle */}
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                      <span className="small fw-semibold me-2" style={{ lineHeight: 1.3 }}>
+                        {getSensorDisplayLabel(entry)}
+                        {!entry.isPrimary && <span className="text-muted"> ({entry.runName})</span>}
+                      </span>
+                      <div className="form-check form-switch mb-0 flex-shrink-0">
+                        <input
+                          className="form-check-input"
+                          type="checkbox"
+                          role="switch"
+                          checked={isActive}
+                          onChange={() => toggleSensorFilters(entry.key)}
+                          disabled={pipeline.length === 0}
+                          title={pipeline.length === 0 ? "Add filters first" : isActive ? "Disable filters" : "Enable filters"}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Pipeline steps */}
+                    {pipeline.map((step, stepIdx) => {
+                      const filterDef = availableFilters.find((f) => f.id === step.type);
+                      const isDragging = draggedFilter?.sensorKey === entry.key && draggedFilter?.filterId === step.id;
+                      return (
+                        <div
+                          key={step.id}
+                          draggable
+                          onDragStart={(e) => handleFilterDragStart(e, entry.key, step.id)}
+                          onDragOver={handleFilterDragOver}
+                          onDrop={(e) => handleFilterDrop(e, entry.key, step.id)}
+                          onDragEnd={handleFilterDragEnd}
+                          className={`border rounded mb-1 ${isActive ? "border-success" : "border-secondary"}`}
+                          style={{ opacity: isDragging ? 0.4 : 1, cursor: "grab", background: "rgba(255,255,255,0.85)" }}
+                        >
+                          {/* Step header */}
+                          <div
+                            className={`d-flex align-items-center justify-content-between px-2 py-1 rounded-top ${isActive ? "bg-success bg-opacity-10" : "bg-secondary bg-opacity-10"}`}
+                          >
+                            <span className="small fw-semibold d-flex align-items-center gap-1">
+                              <span style={{ opacity: 0.5, fontSize: "0.9em" }}>&#8801;</span>
+                              <span className="text-muted" style={{ fontSize: "0.7em" }}>#{stepIdx + 1}</span>
+                              {filterDef?.label || step.type}
+                            </span>
+                            <button
+                              type="button"
+                              className="btn-close"
+                              style={{ fontSize: "0.55em" }}
+                              onClick={() => removeFilterFromSensor(entry.key, step.id)}
+                              aria-label="Remove filter step"
+                            />
+                          </div>
+
+                          {/* Param inputs */}
+                          {(filterDef?.params || []).length > 0 && (
+                            <div className="px-2 py-1" style={{ cursor: "default" }} onMouseDown={(e) => e.stopPropagation()}>
+                              {(filterDef.params || []).map((paramDef) => (
+                                <div key={paramDef.key} className="d-flex align-items-center gap-2 mb-1">
+                                  <label
+                                    className="text-muted mb-0 flex-shrink-0"
+                                    style={{ fontSize: "0.72rem", minWidth: "90px" }}
+                                  >
+                                    {paramDef.label}
+                                  </label>
+                                  <input
+                                    type="number"
+                                    className="form-control form-control-sm"
+                                    style={{ fontSize: "0.75rem", padding: "1px 6px", minWidth: 0 }}
+                                    min={paramDef.min}
+                                    max={paramDef.max}
+                                    step={paramDef.step}
+                                    value={step.params[paramDef.key] ?? paramDef.default}
+                                    onChange={(e) => updateFilterParam(entry.key, step.id, paramDef.key, e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onDragStart={(e) => e.stopPropagation()}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* Add filter buttons */}
+                    <div className="d-flex flex-wrap gap-1 mt-2">
+                      {displayFilters.map((filter) => (
+                        <button
+                          key={filter.id}
+                          type="button"
+                          className="btn btn-outline-secondary"
+                          style={{ fontSize: "0.72rem", padding: "1px 7px" }}
+                          onClick={() => addFilterToSensor(entry.key, filter.id)}
+                        >
+                          + {filter.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Residual toggle — only useful when filter is active */}
+                    {isActive && (
+                      <div className="d-flex align-items-center gap-2 mt-2">
+                        <div className="form-check form-switch mb-0">
+                          <input
+                            className="form-check-input"
+                            type="checkbox"
+                            role="switch"
+                            id={`residual-${entry.key}`}
+                            checked={!!residualEnabledBySensor[entry.key]}
+                            onChange={() =>
+                              setResidualEnabledBySensor((prev) => ({
+                                ...prev,
+                                [entry.key]: !prev[entry.key],
+                              }))
+                            }
+                          />
+                          <label
+                            className="form-check-label text-muted"
+                            htmlFor={`residual-${entry.key}`}
+                            style={{ fontSize: "0.75rem" }}
+                          >
+                            Show residual (raw − filtered)
+                          </label>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </details>
           <details className="card">

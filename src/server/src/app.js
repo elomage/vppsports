@@ -68,6 +68,8 @@ const sensorRoutes = require("./routes/sensorRoutes");
 const videoRoutes = require("./routes/videoRoutes");
 const authRoutes = require("./routes/authRoutes");
 const contextRoutes = require("./routes/contextRoutes");
+const filterRoutes = require("./routes/filterRoutes");
+const pluginRoutes = require("./routes/pluginRoutes");
 
 app.use("/auth", authRoutes);
 app.use(authenticateAccessToken);
@@ -76,5 +78,7 @@ app.use("/context", contextRoutes);
 app.use("/run", runRoutes);
 app.use("/sensor", sensorRoutes);
 app.use("/video", videoRoutes);
+app.use("/filters", filterRoutes);
+app.use("/plugins", pluginRoutes);
 
 module.exports = app;

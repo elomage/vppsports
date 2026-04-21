@@ -525,3 +525,41 @@ export async function restoreContext(name) {
     body: JSON.stringify({}),
   });
 }
+
+export async function fetchFilters() {
+  return request("/filters", { method: "GET" });
+}
+
+export async function uploadFilter(filename, code) {
+  return request("/filters", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename, code }),
+  });
+}
+
+export async function deleteFilter(id) {
+  return request(`/filters/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function fetchPluginAssignments(contextId, pluginType) {
+  const params = new URLSearchParams({ pluginType });
+  if (contextId) params.append("contextId", contextId);
+  return request(`/plugins?${params.toString()}`, { method: "GET" });
+}
+
+export async function updatePluginAssignments(contextId, pluginType, assignments) {
+  const params = new URLSearchParams({ pluginType });
+  if (contextId) params.append("contextId", contextId);
+  return request(`/plugins?${params.toString()}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ assignments }),
+  });
+}
+
+export async function resetPluginAssignments(contextId, pluginType) {
+  const params = new URLSearchParams({ pluginType });
+  if (contextId) params.append("contextId", contextId);
+  return request(`/plugins?${params.toString()}`, { method: "DELETE" });
+}

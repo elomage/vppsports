@@ -1,19 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createContext,
   createUser,
+  deleteFilter,
   deleteRun,
   exportRunArff,
   fetchContexts,
   fetchDeletedContexts,
   fetchDeletedUsers,
+  fetchFilters,
+  fetchPluginAssignments,
   fetchUsers,
   removeContext,
   removeUser,
+  resetPluginAssignments,
   restoreContext,
   restoreUser,
   updateContext,
+  updatePluginAssignments,
   updateUser,
+  uploadFilter,
 } from "./api";
 
 const normalizeContext = (value) =>
@@ -69,6 +75,20 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [isSavingUser, setIsSavingUser] = useState(false);
   const [userStatus, setUserStatus] = useState({ type: "idle", message: "" });
+
+  const [filters, setFilters] = useState([]);
+  const [isLoadingFilters, setIsLoadingFilters] = useState(false);
+  const [filterStatus, setFilterStatus] = useState({ type: "idle", message: "" });
+  const [isUploadingFilter, setIsUploadingFilter] = useState(false);
+  const filterFileInputRef = useRef(null);
+
+  const [pluginContextId, setPluginContextId] = useState("");
+  const [pluginType, setPluginType] = useState("visualization");
+  const [pluginList, setPluginList] = useState([]);
+  const [isLoadingPlugins, setIsLoadingPlugins] = useState(false);
+  const [isSavingPlugins, setIsSavingPlugins] = useState(false);
+  const [pluginStatus, setPluginStatus] = useState({ type: "idle", message: "" });
+  const [pluginHasContextConfig, setPluginHasContextConfig] = useState(false);
 
   const sortedRuns = useMemo(
     () =>
@@ -146,10 +166,47 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
     }
   };
 
+  const loadFilters = async () => {
+    setIsLoadingFilters(true);
+    try {
+      const data = await fetchFilters();
+      setFilters(Array.isArray(data) ? data : []);
+    } catch (error) {
+      setFilterStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to load filters.",
+      });
+    } finally {
+      setIsLoadingFilters(false);
+    }
+  };
+
+  const loadPlugins = async () => {
+    setIsLoadingPlugins(true);
+    setPluginStatus({ type: "idle", message: "" });
+    try {
+      const data = await fetchPluginAssignments(pluginContextId || null, pluginType);
+      setPluginList(Array.isArray(data?.plugins) ? data.plugins : []);
+      setPluginHasContextConfig(Boolean(data?.hasContextConfig));
+    } catch (error) {
+      setPluginStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to load plugins.",
+      });
+    } finally {
+      setIsLoadingPlugins(false);
+    }
+  };
+
   useEffect(() => {
     loadContexts();
     loadUsers();
+    loadFilters();
   }, []);
+
+  useEffect(() => {
+    loadPlugins();
+  }, [pluginContextId, pluginType]);
 
   const toggleContextSelection = (contextId, checked) => {
     setForm((current) => {
@@ -378,6 +435,66 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
     restoreDeletedContext();
   };
 
+  const togglePlugin = (id) => {
+    setPluginList((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, enabled: !p.enabled } : p)),
+    );
+  };
+
+  const movePlugin = (id, direction) => {
+    setPluginList((prev) => {
+      const idx = prev.findIndex((p) => p.id === id);
+      if (idx < 0) return prev;
+      const next = [...prev];
+      const swapIdx = idx + direction;
+      if (swapIdx < 0 || swapIdx >= next.length) return prev;
+      [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+      return next;
+    });
+  };
+
+  const handleSavePlugins = async () => {
+    if (isSavingPlugins) return;
+    setIsSavingPlugins(true);
+    setPluginStatus({ type: "info", message: "Saving..." });
+    try {
+      const assignments = pluginList.map((p, idx) => ({
+        pluginId: p.id,
+        enabled: p.enabled,
+        order: idx,
+      }));
+      await updatePluginAssignments(pluginContextId || null, pluginType, assignments);
+      setPluginStatus({ type: "success", message: "Plugin assignments saved." });
+      setPluginHasContextConfig(true);
+    } catch (error) {
+      setPluginStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to save plugins.",
+      });
+    } finally {
+      setIsSavingPlugins(false);
+    }
+  };
+
+  const handleResetPlugins = async () => {
+    if (!pluginContextId) return;
+    const confirmed = window.confirm(
+      "Reset this context's plugin config to global defaults?",
+    );
+    if (!confirmed) return;
+    try {
+      await resetPluginAssignments(pluginContextId, pluginType);
+      setPluginStatus({ type: "success", message: "Reset to global defaults." });
+      setPluginHasContextConfig(false);
+      await loadPlugins();
+    } catch (error) {
+      setPluginStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to reset.",
+      });
+    }
+  };
+
   const handleDelete = async () => {
     if (!selectedRunId || isDeleting) return;
     const selectedRun = sortedRuns.find((run) => run._id === selectedRunId);
@@ -406,6 +523,61 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
     } finally {
       setIsDeleting(false);
     }
+  };
+
+  const handleFilterUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.name.endsWith(".js")) {
+      setFilterStatus({ type: "error", message: "Only .js files are allowed." });
+      return;
+    }
+
+    setIsUploadingFilter(true);
+    setFilterStatus({ type: "info", message: `Uploading ${file.name}…` });
+
+    try {
+      const code = await file.text();
+      const result = await uploadFilter(file.name, code);
+      setFilterStatus({
+        type: "success",
+        message: `Filter '${result?.filter?.label || file.name}' uploaded successfully.`,
+      });
+      await loadFilters();
+    } catch (error) {
+      setFilterStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to upload filter.",
+      });
+    } finally {
+      setIsUploadingFilter(false);
+      if (filterFileInputRef.current) filterFileInputRef.current.value = "";
+    }
+  };
+
+  const handleFilterDelete = (filter) => {
+    const confirmed = window.confirm(
+      `Delete custom filter '${filter.label}'? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    const doDelete = async () => {
+      try {
+        await deleteFilter(filter.id);
+        setFilterStatus({
+          type: "success",
+          message: `Filter '${filter.label}' deleted.`,
+        });
+        await loadFilters();
+      } catch (error) {
+        setFilterStatus({
+          type: "error",
+          message: error instanceof Error ? error.message : "Failed to delete filter.",
+        });
+      }
+    };
+
+    doDelete();
   };
 
   const handleExport = async (variant) => {
@@ -906,6 +1078,225 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
         {isLoadingUsers && (
           <div className="upload-file-meta">Loading users...</div>
         )}
+      </div>
+
+      <div className="upload-card col m-2">
+        <h3>Filter management</h3>
+
+        {/* Upload */}
+        <div className="upload-form">
+          <strong>Upload custom filter</strong>
+          <p className="text-muted" style={{ fontSize: "0.85rem", margin: "4px 0 8px" }}>
+            Upload a <code>.js</code> file that exports{" "}
+            <code>{"{ id, label, params, apply(readings, params) }"}</code>.
+            Admin-only. Uploaded filters are available immediately to all users.
+          </p>
+          <input
+            ref={filterFileInputRef}
+            className="form-control"
+            type="file"
+            accept=".js"
+            onChange={handleFilterUpload}
+            disabled={isUploadingFilter}
+          />
+          {filterStatus.message && (
+            <div
+              className={`upload-status ${filterStatus.type !== "idle" ? `is-${filterStatus.type}` : ""}`}
+            >
+              {filterStatus.message}
+            </div>
+          )}
+        </div>
+
+        {/* Filter list */}
+        {isLoadingFilters && (
+          <div className="upload-file-meta">Loading filters…</div>
+        )}
+        {filters.length > 0 && (
+          <div className="mt-3">
+            <strong>Loaded filters</strong>
+            <table className="table mt-2">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Label</th>
+                  <th>Type</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filters.map((filter) => (
+                  <tr key={filter.id}>
+                    <td>
+                      <code>{filter.id}</code>
+                    </td>
+                    <td>{filter.label}</td>
+                    <td>
+                      <span
+                        className={`badge ${filter.builtin ? "bg-secondary" : "bg-primary"}`}
+                      >
+                        {filter.builtin ? "Built-in" : "Custom"}
+                      </span>
+                    </td>
+                    <td>
+                      {!filter.builtin && (
+                        <button
+                          className="btn btn-outline-danger btn-sm"
+                          type="button"
+                          onClick={() => handleFilterDelete(filter)}
+                          disabled={isUploadingFilter}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="upload-card col m-2">
+        <h3>Plugin management</h3>
+        <p className="text-muted" style={{ fontSize: "0.85rem", margin: "4px 0 8px" }}>
+          Control which filters and visualization components are available per context.
+          Global defaults apply when a context has no specific config.
+        </p>
+
+        {/* Context selector */}
+        <div className="mb-2">
+          <label htmlFor="plugin-context-select">Context</label>
+          <select
+            id="plugin-context-select"
+            className="form-control"
+            value={pluginContextId}
+            onChange={(e) => setPluginContextId(e.target.value)}
+            disabled={isSavingPlugins}
+          >
+            <option value="">Global defaults</option>
+            {availableContexts.map((ctx) => (
+              <option key={ctx.id} value={ctx.id}>
+                {ctx.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Type tabs */}
+        <div className="btn-group mb-3" role="group">
+          <button
+            type="button"
+            className={`btn btn-sm ${pluginType === "visualization" ? "btn-primary" : "btn-outline-primary"}`}
+            onClick={() => setPluginType("visualization")}
+            disabled={isSavingPlugins}
+          >
+            Visualization
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${pluginType === "filter" ? "btn-primary" : "btn-outline-primary"}`}
+            onClick={() => setPluginType("filter")}
+            disabled={isSavingPlugins}
+          >
+            Filters
+          </button>
+        </div>
+
+        {/* Status */}
+        {pluginContextId && pluginHasContextConfig && pluginStatus.type === "idle" && (
+          <div className="upload-status is-info" style={{ marginBottom: "8px" }}>
+            Context-specific config active.
+          </div>
+        )}
+        {pluginStatus.message && (
+          <div
+            className={`upload-status ${pluginStatus.type !== "idle" ? `is-${pluginStatus.type}` : ""}`}
+          >
+            {pluginStatus.message}
+          </div>
+        )}
+
+        {/* Plugin list */}
+        {isLoadingPlugins ? (
+          <div className="upload-file-meta">Loading plugins…</div>
+        ) : pluginList.length > 0 ? (
+          <table className="table mt-2">
+            <thead>
+              <tr>
+                <th>Plugin</th>
+                <th>Type</th>
+                <th>Enabled</th>
+                <th>Order</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pluginList.map((plugin, idx) => (
+                <tr key={plugin.id}>
+                  <td>
+                    <code>{plugin.id}</code>
+                    <span style={{ marginLeft: "6px" }}>{plugin.label}</span>
+                  </td>
+                  <td>
+                    <span
+                      className={`badge ${plugin.builtin ? "bg-secondary" : "bg-primary"}`}
+                    >
+                      {plugin.builtin ? "Built-in" : "Custom"}
+                    </span>
+                  </td>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={plugin.enabled}
+                      onChange={() => togglePlugin(plugin.id)}
+                      disabled={isSavingPlugins}
+                    />
+                  </td>
+                  <td>
+                    <button
+                      className="btn btn-outline-secondary btn-sm me-1"
+                      type="button"
+                      onClick={() => movePlugin(plugin.id, -1)}
+                      disabled={idx === 0 || isSavingPlugins}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      className="btn btn-outline-secondary btn-sm"
+                      type="button"
+                      onClick={() => movePlugin(plugin.id, 1)}
+                      disabled={idx === pluginList.length - 1 || isSavingPlugins}
+                    >
+                      ↓
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
+
+        <div className="upload-actions mt-2">
+          <button
+            className="btn btn-primary"
+            type="button"
+            onClick={handleSavePlugins}
+            disabled={isSavingPlugins || pluginList.length === 0}
+          >
+            {isSavingPlugins ? "Saving…" : "Save"}
+          </button>
+          {pluginContextId && pluginHasContextConfig && (
+            <button
+              className="btn btn-outline-secondary btn-sm"
+              type="button"
+              onClick={handleResetPlugins}
+              disabled={isSavingPlugins}
+            >
+              Reset to defaults
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
