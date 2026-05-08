@@ -48,7 +48,12 @@ app.use(
 
 app.use(express.static(path.join(__dirname, "public")));
 
-app.use(bodyParser.raw({ type: "application/octet-stream", limit: "50mb" }));
+// Video uploads are streamed directly to disk in videoRoutes — exclude them
+// from body-buffering middleware to avoid loading 1 GB into RAM.
+app.use((req, res, next) => {
+  if (req.method === "POST" && req.path === "/video/upload") return next();
+  bodyParser.raw({ type: "application/octet-stream", limit: "50mb" })(req, res, next);
+});
 app.use(
   bodyParser.text({
     type: ["text/csv", "application/csv", "text/plain", "application/vnd.ms-excel"],

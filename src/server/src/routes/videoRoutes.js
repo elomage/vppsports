@@ -57,48 +57,73 @@ const buildRunAccessQuery = (user) => {
   return filters.length === 1 ? filters[0] : { $or: filters };
 };
 
+const ONE_GB = 1024 * 1024 * 1024;
+
 router.post("/upload", async (req, res) => {
+  const runId = String(req.query.runId || "").trim();
+  if (!ObjectId.isValid(runId)) {
+    return res.status(400).json({ message: "A valid runId is required." });
+  }
+
+  let db, run;
   try {
-    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
-      return res.status(400).json({
-        message: "Upload requires application/octet-stream body with video data.",
-      });
-    }
-
-    const runId = String(req.query.runId || "").trim();
-    if (!ObjectId.isValid(runId)) {
-      return res.status(400).json({ message: "A valid runId is required." });
-    }
-
-    const db = await connectDB();
+    db = await connectDB();
     const runsColl = await getCollection(db, "runs");
-    const run = await runsColl.findOne({
+    run = await runsColl.findOne({
       _id: new ObjectId(runId),
       ...buildRunAccessQuery(req.user),
     });
+  } catch (error) {
+    return res.status(500).json({ message: "Database error.", error: error.message });
+  }
 
-    if (!run) {
-      return res.status(404).json({ message: "Run not found." });
-    }
+  if (!run) {
+    return res.status(404).json({ message: "Run not found." });
+  }
 
-    const videoDirectory = getRunVideoDirectory(runId);
-    const videoPath = getRunVideoPath(runId);
+  const videoDirectory = getRunVideoDirectory(runId);
+  const videoPath = getRunVideoPath(runId);
 
+  try {
     await fs.promises.mkdir(videoDirectory, { recursive: true });
-    await fs.promises.writeFile(videoPath, req.body);
+  } catch (error) {
+    return res.status(500).json({ message: "Failed to create video directory.", error: error.message });
+  }
 
+  const writeStream = fs.createWriteStream(videoPath);
+  let bytesReceived = 0;
+  let sizeLimitExceeded = false;
+
+  await new Promise((resolve, reject) => {
+    req.on("data", (chunk) => {
+      bytesReceived += chunk.length;
+      if (!sizeLimitExceeded && bytesReceived > ONE_GB) {
+        sizeLimitExceeded = true;
+        req.destroy(new Error("File exceeds 1 GB limit"));
+        writeStream.destroy();
+      }
+    });
+
+    req.pipe(writeStream);
+    writeStream.on("finish", resolve);
+    writeStream.on("error", reject);
+    req.on("error", reject);
+  }).then(() => {
     return res.status(201).json({
       message: "Video uploaded successfully.",
       runId,
       path: videoPath,
       storageRoot: VIDEO_STORAGE_ROOT,
     });
-  } catch (error) {
-    return res.status(500).json({
-      message: "Error uploading video.",
-      error: error.message,
-    });
-  }
+  }).catch(async (error) => {
+    // Clean up partial file on error
+    try { await fs.promises.unlink(videoPath); } catch (_) { /* ignore */ }
+
+    if (sizeLimitExceeded || error.message === "File exceeds 1 GB limit") {
+      return res.status(413).json({ message: "File exceeds 1 GB limit." });
+    }
+    return res.status(500).json({ message: "Error uploading video.", error: error.message });
+  });
 });
 
 router.get("/:videoName", (req, res) => {

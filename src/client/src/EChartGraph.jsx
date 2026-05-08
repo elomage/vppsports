@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
 import "./UPlotGraph.css";
-import { fetchFilters, fetchRuns, updateRunLabels, updateRunTrims } from "./api";
+import { fetchFilters, fetchRunViewState, fetchRuns, saveRunViewState, updateRunLabels, updateRunTrims } from "./api";
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL;
 const ACCESS_TOKEN_STORAGE_KEY = "vppsports_access_token";
@@ -526,6 +526,7 @@ export default function EChartGraph({
   removeFunction,
   onEffectiveTimestampsChange,
   enabledFilterIds,
+  chartIndex,
 }) {
   const [availableFilters, setAvailableFilters] = useState(BUILTIN_FILTERS_FALLBACK);
 
@@ -597,6 +598,10 @@ export default function EChartGraph({
   const selectionBoxRef = useRef(null);
   const trimSaveTimeoutRef = useRef(null);
   const lastSavedTrimsRef = useRef([]);
+  const viewStateSaveTimeoutRef = useRef(null);
+  // True while the initial view-state is being applied so we don't immediately
+  // save back the defaults before the loaded state has been fully applied.
+  const viewStateLoadingRef = useRef(false);
 
   const getChartInstance = useCallback(() => {
     const container = chartContainerRef.current;
@@ -637,14 +642,6 @@ export default function EChartGraph({
 
   const runTimestamps = selectedRun?.totalTimestamps ?? [];
 
-  const effectiveTimestamps = useMemo(() => {
-    if (!runTrims.length) return runTimestamps;
-    return runTimestamps.filter(
-      (ts) => !runTrims.some((trim) => ts >= trim.startTimestamp && ts <= trim.endTimestamp),
-    );
-  }, [runTimestamps, runTrims]);
-
-  const currentTimestamp = effectiveTimestamps[sliderValue] ?? effectiveTimestamps[0] ?? 0;
   const currentRunName = selectedRun?.name || `Run ${selectedRun?._id}`;
 
   const availableSensorEntries = useMemo(() => {
@@ -717,6 +714,47 @@ export default function EChartGraph({
     [selectedSensorEntries],
   );
 
+  const effectiveTimestamps = useMemo(() => {
+    // When specific sensors are selected and their raw data has loaded, derive the
+    // timeline from only those sensors' timestamps — this removes gaps that arise
+    // from other sensors that are not being viewed.
+    if (primarySelectedSensorIds.length > 0) {
+      const loadedIds = primarySelectedSensorIds.filter(
+        (id) => rawSeriesBySensor[id] !== undefined,
+      );
+
+      if (loadedIds.length > 0) {
+        const allTs = new Set();
+        for (const id of loadedIds) {
+          const readings = rawSeriesBySensor[id];
+          if (Array.isArray(readings)) {
+            for (const r of readings) {
+              if (Number.isFinite(r.timestamp)) allTs.add(r.timestamp);
+            }
+          }
+        }
+
+        let merged = [...allTs].sort((a, b) => a - b);
+
+        if (runTrims.length > 0) {
+          merged = merged.filter(
+            (ts) => !runTrims.some((trim) => ts >= trim.startTimestamp && ts <= trim.endTimestamp),
+          );
+        }
+
+        if (merged.length > 0) return merged;
+      }
+    }
+
+    // Fallback: use the run-level totalTimestamps (all sensors).
+    if (!runTrims.length) return runTimestamps;
+    return runTimestamps.filter(
+      (ts) => !runTrims.some((trim) => ts >= trim.startTimestamp && ts <= trim.endTimestamp),
+    );
+  }, [runTimestamps, runTrims, primarySelectedSensorIds, rawSeriesBySensor]);
+
+  const currentTimestamp = effectiveTimestamps[sliderValue] ?? effectiveTimestamps[0] ?? 0;
+
   useEffect(
     () => () => {
       if (zoomCommitTimeoutRef.current !== null) {
@@ -739,6 +777,15 @@ export default function EChartGraph({
     () => () => {
       if (trimSaveTimeoutRef.current !== null) {
         window.clearTimeout(trimSaveTimeoutRef.current);
+      }
+    },
+    [],
+  );
+
+  useEffect(
+    () => () => {
+      if (viewStateSaveTimeoutRef.current !== null) {
+        window.clearTimeout(viewStateSaveTimeoutRef.current);
       }
     },
     [],
@@ -784,6 +831,80 @@ export default function EChartGraph({
     setSensorFilterPipelines({});
     setSensorFiltersActive({});
   }, [selectedRun?._id]);
+
+  // ── Load saved view state after a run change ──────────────────────────────
+  // This runs after the reset effect above (same dependency, declared later).
+  // The fetch is async so it completes after the synchronous state resets,
+  // meaning the loaded values override the cleared defaults cleanly.
+  useEffect(() => {
+    const runId = selectedRun?._id;
+    if (!runId || typeof chartIndex !== "number") return;
+
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const data = await fetchRunViewState(runId);
+        if (cancelled) return;
+
+        const chartState = Array.isArray(data?.charts) ? data.charts[chartIndex] : null;
+        if (!chartState) return;
+
+        // Suppress the auto-save that would otherwise fire while we apply state.
+        viewStateLoadingRef.current = true;
+
+        if (Array.isArray(chartState.selectedSensorKeys) && chartState.selectedSensorKeys.length > 0) {
+          setSelectedSensorKeys(chartState.selectedSensorKeys);
+        }
+        if (chartState.sensorFilterPipelines && typeof chartState.sensorFilterPipelines === "object") {
+          setSensorFilterPipelines(chartState.sensorFilterPipelines);
+        }
+        if (chartState.sensorFiltersActive && typeof chartState.sensorFiltersActive === "object") {
+          setSensorFiltersActive(chartState.sensorFiltersActive);
+        }
+        if (chartState.traceVisibility && typeof chartState.traceVisibility === "object") {
+          setTraceVisibility(chartState.traceVisibility);
+        }
+        if (chartState.sensorSyncOffsets && typeof chartState.sensorSyncOffsets === "object") {
+          setSensorSyncOffsets(chartState.sensorSyncOffsets);
+        }
+        if (typeof chartState.independentScales === "boolean") {
+          setIndependentScales(chartState.independentScales);
+        }
+        if (typeof chartState.showLabels === "boolean") {
+          setShowLabels(chartState.showLabels);
+        }
+        if (typeof chartState.showTrims === "boolean") {
+          setShowTrims(chartState.showTrims);
+        }
+        if (typeof chartState.showHighlightSections === "boolean") {
+          setShowHighlightSections(chartState.showHighlightSections);
+        }
+        if (typeof chartState.showStatAnnotations === "boolean") {
+          setShowStatAnnotations(chartState.showStatAnnotations);
+        }
+        if (Array.isArray(chartState.comparisonRunIds) && chartState.comparisonRunIds.length > 0) {
+          try {
+            const runs = await Promise.all(chartState.comparisonRunIds.map((id) => fetchRun(id)));
+            if (!cancelled) setComparisonRuns(runs.filter(Boolean));
+          } catch (_e) { /* non-fatal — best effort */ }
+        }
+
+        if (cancelled) {
+          viewStateLoadingRef.current = false;
+          return;
+        }
+
+        // Allow saves again on the next tick, after React has flushed the above setters.
+        setTimeout(() => { viewStateLoadingRef.current = false; }, 0);
+      } catch (_err) {
+        if (!cancelled) viewStateLoadingRef.current = false;
+      }
+    };
+
+    load();
+    return () => { cancelled = true; };
+  }, [selectedRun?._id, chartIndex]);
 
   useEffect(() => {
     const nextLabels = Array.isArray(selectedRun?.labels)
@@ -1595,6 +1716,73 @@ export default function EChartGraph({
       }
     };
   }, [runTrims, selectedRun?._id]);
+
+  // ── Debounced view-state save ─────────────────────────────────────────────
+  useEffect(() => {
+    const runId = selectedRun?._id;
+    if (!runId || typeof chartIndex !== "number") return;
+    if (viewStateLoadingRef.current) return;
+
+    if (viewStateSaveTimeoutRef.current !== null) {
+      window.clearTimeout(viewStateSaveTimeoutRef.current);
+    }
+
+    viewStateSaveTimeoutRef.current = window.setTimeout(async () => {
+      viewStateSaveTimeoutRef.current = null;
+      if (viewStateLoadingRef.current) return;
+
+      try {
+        // Fetch current saved state for other chart slots so we don't overwrite them.
+        let existingCharts = [];
+        try {
+          const existing = await fetchRunViewState(runId);
+          existingCharts = Array.isArray(existing?.charts) ? existing.charts : [];
+        } catch (_) { /* start fresh */ }
+
+        const updatedCharts = [...existingCharts];
+        while (updatedCharts.length <= chartIndex) updatedCharts.push(null);
+
+        updatedCharts[chartIndex] = {
+          selectedSensorKeys,
+          sensorFilterPipelines,
+          sensorFiltersActive,
+          traceVisibility,
+          sensorSyncOffsets,
+          independentScales,
+          showLabels,
+          showTrims,
+          showHighlightSections,
+          showStatAnnotations,
+          comparisonRunIds: comparisonRuns.map((r) => r._id),
+        };
+
+        await saveRunViewState(runId, updatedCharts);
+      } catch (err) {
+        console.error("Failed to save view state:", err);
+      }
+    }, 800);
+
+    return () => {
+      if (viewStateSaveTimeoutRef.current !== null) {
+        window.clearTimeout(viewStateSaveTimeoutRef.current);
+        viewStateSaveTimeoutRef.current = null;
+      }
+    };
+  }, [
+    chartIndex,
+    comparisonRuns,
+    independentScales,
+    selectedRun?._id,
+    selectedSensorKeys,
+    sensorFiltersActive,
+    sensorFilterPipelines,
+    sensorSyncOffsets,
+    showHighlightSections,
+    showLabels,
+    showStatAnnotations,
+    showTrims,
+    traceVisibility,
+  ]);
 
   useEffect(() => {
     return () => {

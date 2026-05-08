@@ -2,28 +2,6 @@ import React, { useMemo, useState } from 'react';
 import './UploadSensorData.css';
 import { uploadRunVideo, uploadSensorDataBin, uploadSensorDataCsv } from './api';
 
-const CSV_FORMATS = {
-  accelerometer: {
-    columns: ['timestamp', 'x', 'y', 'z'],
-    example: ['0.000000', '0.014', '-0.021', '1.032'],
-    notes: 'Values are imported exactly as provided. Use seconds from run start for timestamps.',
-  },
-  gyroscope: {
-    columns: ['timestamp', 'x', 'y', 'z'],
-    example: ['0.000000', '0.125', '-0.083', '0.041'],
-    notes: 'Provide angular-rate readings per axis. Use seconds from run start for timestamps.',
-  },
-  strainGauge: {
-    columns: ['timestamp', 'ch1', 'ch2', 'ch3', 'ch4', 'ch5', 'ch6', 'ch7', 'ch8'],
-    example: ['0.000000', '124', '118', '121', '119', '115', '111', '109', '113'],
-    notes: 'Provide one numeric channel value per column. Use seconds from run start for timestamps.',
-  },
-  gps: {
-    columns: ['timestamp', 'x', 'y', 'z'],
-    example: ['0.000000', '56.9496', '24.1052', '14.2'],
-    notes: 'Preferred mapping is x=latitude, y=longitude, z=altitude. Use seconds from run start for timestamps.',
-  },
-};
 
 const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -57,7 +35,6 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
     [runs]
   );
 
-  const csvFormat = CSV_FORMATS[sensorType];
   const selectedFileExtension = selectedFileType === 'csv' ? '.CSV' : '.BIN';
 
   const handleFileChange = (event) => {
@@ -327,16 +304,14 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
               Selected: {selectedFile.name} ({Math.round(selectedFile.size / 1024)} KB)
             </div>
           )}
-          <div className="upload-file-meta">Accepted CSV header for {sensorType}:</div>
-          <pre className="upload-format-block">
-            {csvFormat.columns.join(',')}
-            {'\n'}
-            {csvFormat.example.join(',')}
-          </pre>
-          <div className="upload-file-meta">{csvFormat.notes}</div>
-          <div className="upload-file-meta">
-            Alternate timestamp columns also accepted: `timestamp_ms` and `timestamp_us`.
-          </div>
+          {selectedFileType === 'csv' && (
+            <div className="upload-file-meta">
+              CSV format: one <code>timestamp</code> column (seconds) required; all remaining columns are
+              imported as data channels using their header names as labels — e.g.{' '}
+              <code>timestamp,x,y,z</code> or <code>timestamp,ch1,ch2,force_left</code>.
+              Timestamp variants <code>timestamp_ms</code> and <code>timestamp_us</code> are also accepted.
+            </div>
+          )}
           <div className="upload-actions">
             <button
               className="btn btn-primary"

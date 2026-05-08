@@ -10,7 +10,7 @@ const componentsMap = {
     model: React.lazy(() => import('./Modelvisualizer')),
 };
 
-export default function ComponentSelector({ selectedRun, sliderValue, setSliderValue, onEffectiveTimestampsChange }) {
+export default function ComponentSelector({ selectedRun, effectiveTimestamps, sliderValue, setSliderValue, onEffectiveTimestampsChange }) {
     const [selectedComponent, setSelectedComponent] = useState([
         { id: 1, type: 'echart', flexGrow: 1 },
         { id: 2, type: 'video', flexGrow: 1 },
@@ -191,7 +191,10 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
             </div>
             <div className='flex flex-col items-center p-6' id='visualization-component-wrapper' style={{ '--graph-count': graphCount }}>
                 <div className='flex flex-wrap' style={{ flex: 1, width: '100%' }}>
-                    {selectedComponent.filter((component) => component.type !== 'video' || hasVideoForRun).map((component, index, visibleComponents) => {
+                    {(() => {
+                        let echartCounter = 0;
+                        return selectedComponent.filter((component) => component.type !== 'video' || hasVideoForRun).map((component, index, visibleComponents) => {
+                        const chartIndex = component.type === 'echart' ? echartCounter++ : undefined;
                         const Component = componentsMap[component.type];
                         const wrapperClass = component.type === 'graph' || component.type === 'echart'
                             ? 'graph-wrapper'
@@ -201,12 +204,12 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
                                     ? 'video-wrapper'
                                     : 'component-wrapper';
                         const isLastComponent = index === visibleComponents.length - 1;
-                        
+
                         return (
                             <React.Fragment key={component.id}>
-                                <div 
-                                    className={wrapperClass} 
-                                    style={{ 
+                                <div
+                                    className={wrapperClass}
+                                    style={{
                                         flex: `${component.flexGrow} 1 0`,
                                         minWidth: '200px',
                                         minHeight: '200px',
@@ -224,6 +227,8 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
                                             setSliderValue={setSliderValue}
                                             onEffectiveTimestampsChange={component.type === 'echart' ? onEffectiveTimestampsChange : undefined}
                                             enabledFilterIds={component.type === 'echart' ? enabledFilterIds : undefined}
+                                            effectiveTimestamps={component.type === 'video' ? effectiveTimestamps : undefined}
+                                            chartIndex={chartIndex}
                                         />
                                     </React.Suspense>
                                 </div>
@@ -239,7 +244,8 @@ export default function ComponentSelector({ selectedRun, sliderValue, setSliderV
                                 )}
                             </React.Fragment>
                         );
-                    })}
+                    });
+                    })()}
                 </div>
             </div>
         </>

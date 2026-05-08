@@ -4,6 +4,8 @@ import {
   createUser,
   deleteFilter,
   deleteRun,
+  exportMultiRunArff,
+  exportMultiRunCsv,
   exportRunArff,
   fetchContexts,
   fetchDeletedContexts,
@@ -89,6 +91,10 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
   const [isSavingPlugins, setIsSavingPlugins] = useState(false);
   const [pluginStatus, setPluginStatus] = useState({ type: "idle", message: "" });
   const [pluginHasContextConfig, setPluginHasContextConfig] = useState(false);
+
+  const [multiRunSelectedIds, setMultiRunSelectedIds] = useState(new Set());
+  const [isMultiExporting, setIsMultiExporting] = useState(false);
+  const [multiExportStatus, setMultiExportStatus] = useState({ type: "idle", message: "" });
 
   const sortedRuns = useMemo(
     () =>
@@ -621,6 +627,89 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
     }
   };
 
+  const toggleMultiRunSelection = (runId, checked) => {
+    setMultiRunSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(runId);
+      } else {
+        next.delete(runId);
+      }
+      return next;
+    });
+  };
+
+  const handleMultiExport = async (variant = "wide") => {
+    if (isMultiExporting || multiRunSelectedIds.size === 0) return;
+
+    setIsMultiExporting(true);
+    setMultiExportStatus({
+      type: "info",
+      message: `Exporting ${multiRunSelectedIds.size} run(s) as ${variant} ARFF...`,
+    });
+
+    try {
+      const { blob, fileName } = await exportMultiRunArff(
+        [...multiRunSelectedIds],
+        variant
+      );
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      setMultiExportStatus({
+        type: "success",
+        message: `Exported ${multiRunSelectedIds.size} run(s) as ${variant} ARFF.`,
+      });
+    } catch (error) {
+      setMultiExportStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Multi-run export failed.",
+      });
+    } finally {
+      setIsMultiExporting(false);
+    }
+  };
+
+  const handleMultiCsvExport = async () => {
+    if (isMultiExporting || multiRunSelectedIds.size === 0) return;
+
+    setIsMultiExporting(true);
+    setMultiExportStatus({
+      type: "info",
+      message: `Exporting ${multiRunSelectedIds.size} run(s) as CSV...`,
+    });
+
+    try {
+      const { blob, fileName } = await exportMultiRunCsv([...multiRunSelectedIds]);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      setMultiExportStatus({
+        type: "success",
+        message: `Exported ${multiRunSelectedIds.size} run(s) as CSV.`,
+      });
+    } catch (error) {
+      setMultiExportStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "CSV export failed.",
+      });
+    } finally {
+      setIsMultiExporting(false);
+    }
+  };
+
   const handleSaveUser = async (event) => {
     event.preventDefault();
     if (isSavingUser) return;
@@ -761,6 +850,22 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
             >
               Resampled ARFF
             </button>
+            <button
+              className="btn btn-outline-success"
+              type="button"
+              onClick={() => handleExport("wide")}
+              disabled={!selectedRunId || isDeleting || isExporting}
+            >
+              Wide Features ARFF
+            </button>
+            <button
+              className="btn btn-outline-warning"
+              type="button"
+              onClick={() => handleExport("apriori")}
+              disabled={!selectedRunId || isDeleting || isExporting}
+            >
+              Apriori ARFF
+            </button>
           </div>
           {deleteStatus.message && (
             <div
@@ -770,6 +875,83 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
             </div>
           )}
         </div>
+      </div>
+
+      <div className="upload-card col m-2">
+        <h3>Multi-run export</h3>
+        <div>
+          <strong>Select runs to combine into a single ARFF dataset</strong>
+        </div>
+        {sortedRuns.length === 0 ? (
+          <div className="upload-status">No runs available.</div>
+        ) : (
+          <div style={{ maxHeight: "240px", overflowY: "auto", border: "1px solid #dee2e6", borderRadius: "4px", padding: "6px" }}>
+            {sortedRuns.map((run) => (
+              <div key={run._id} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "2px 0" }}>
+                <input
+                  type="checkbox"
+                  id={`multi-run-${run._id}`}
+                  checked={multiRunSelectedIds.has(run._id)}
+                  onChange={(e) => toggleMultiRunSelection(run._id, e.target.checked)}
+                  disabled={isMultiExporting}
+                />
+                <label htmlFor={`multi-run-${run._id}`} style={{ margin: 0, cursor: "pointer" }}>
+                  {run.name || run._id}
+                  {run.date ? ` — ${new Date(run.date).toLocaleDateString()}` : ""}
+                </label>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="upload-actions" style={{ marginTop: "8px" }}>
+          <button
+            className="btn btn-outline-primary"
+            type="button"
+            onClick={handleMultiCsvExport}
+            disabled={isMultiExporting || multiRunSelectedIds.size === 0}
+          >
+            {isMultiExporting
+              ? "Exporting..."
+              : `Export CSV (${multiRunSelectedIds.size} run(s))`}
+          </button>
+          <button
+            className="btn btn-outline-success"
+            type="button"
+            onClick={() => handleMultiExport("wide")}
+            disabled={isMultiExporting || multiRunSelectedIds.size === 0}
+          >
+            {isMultiExporting
+              ? "Exporting..."
+              : `Wide ARFF (${multiRunSelectedIds.size} run(s))`}
+          </button>
+          <button
+            className="btn btn-outline-warning"
+            type="button"
+            onClick={() => handleMultiExport("apriori")}
+            disabled={isMultiExporting || multiRunSelectedIds.size === 0}
+          >
+            {isMultiExporting
+              ? "Exporting..."
+              : `Apriori ARFF (${multiRunSelectedIds.size} run(s))`}
+          </button>
+          {multiRunSelectedIds.size > 0 && (
+            <button
+              className="btn btn-outline-secondary btn-sm"
+              type="button"
+              onClick={() => setMultiRunSelectedIds(new Set())}
+              disabled={isMultiExporting}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        {multiExportStatus.message && (
+          <div
+            className={`upload-status ${multiExportStatus.type !== "idle" ? `is-${multiExportStatus.type}` : ""}`}
+          >
+            {multiExportStatus.message}
+          </div>
+        )}
       </div>
 
       <div className="upload-card col m-2">

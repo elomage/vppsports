@@ -103,6 +103,7 @@ const runSensorSchema = new mongoose.Schema(
     sensorId: { type: Number, required: true },
     name: { type: String, default: "" },
     sensorType: { type: String, default: "" },
+    axes: { type: [String], default: [] },
   },
   { versionKey: false }
 );
@@ -741,6 +742,7 @@ const getRunSensors = async (runid) => {
         sensorId,
         name: meta.name || "",
         sensorType: meta.sensorType || "",
+        axes: Array.isArray(meta.axes) && meta.axes.length > 0 ? meta.axes : null,
       };
     });
   } catch (err) {

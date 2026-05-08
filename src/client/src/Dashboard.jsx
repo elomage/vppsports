@@ -34,6 +34,7 @@ const Dashboard = ({ selectedRun }) => {
               </div>
               <VisualizationSelection
                 selectedRun={selectedRun}
+                effectiveTimestamps={overrideTimestamps}
                 sliderValue={sliderValue}
                 setSliderValue={setSliderValue}
                 onEffectiveTimestampsChange={handleEffectiveTimestampsChange}

@@ -24,22 +24,22 @@ const SENSOR_TYPE_CONFIG = Object.freeze({
   accelerometer: {
     recordSizeBytes: 16,
     dataAxis: 3,
-    csvColumns: ["timestamp", "x", "y", "z"],
+    binaryAxes: ["x", "y", "z"],
   },
   gyroscope: {
     recordSizeBytes: 16,
     dataAxis: 3,
-    csvColumns: ["timestamp", "x", "y", "z"],
+    binaryAxes: ["x", "y", "z"],
   },
   strainGauge: {
     recordSizeBytes: 36,
     dataAxis: 8,
-    csvColumns: ["timestamp", "ch1", "ch2", "ch3", "ch4", "ch5", "ch6", "ch7", "ch8"],
+    binaryAxes: ["ch1", "ch2", "ch3", "ch4", "ch5", "ch6", "ch7", "ch8"],
   },
   gps: {
     recordSizeBytes: 16,
     dataAxis: 3,
-    csvColumns: ["timestamp", "x", "y", "z"],
+    binaryAxes: ["x", "y", "z"],
   },
 });
 const DEFAULT_SENSOR_TYPE = "accelerometer";
@@ -53,33 +53,6 @@ const CSV_TIMESTAMP_ALIASES = Object.freeze([
   "timestampms",
   "timestampmilliseconds",
 ]);
-const CSV_VALUE_ALIASES = Object.freeze({
-  accelerometer: [
-    ["x", "accelx", "xaxis"],
-    ["y", "accely", "yaxis"],
-    ["z", "accelz", "zaxis"],
-  ],
-  gyroscope: [
-    ["x", "gyrox", "xaxis"],
-    ["y", "gyroy", "yaxis"],
-    ["z", "gyroz", "zaxis"],
-  ],
-  gps: [
-    ["x", "latitude", "lat"],
-    ["y", "longitude", "lon", "lng"],
-    ["z", "altitude", "alt"],
-  ],
-  strainGauge: [
-    ["ch1", "channel1", "v1", "value1"],
-    ["ch2", "channel2", "v2", "value2"],
-    ["ch3", "channel3", "v3", "value3"],
-    ["ch4", "channel4", "v4", "value4"],
-    ["ch5", "channel5", "v5", "value5"],
-    ["ch6", "channel6", "v6", "value6"],
-    ["ch7", "channel7", "v7", "value7"],
-    ["ch8", "channel8", "v8", "value8"],
-  ],
-});
 
 const normalizeLabelNumber = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -366,6 +339,28 @@ const buildArffDocument = (relationName, attributes, rows) => {
   return `${header.join("\n")}\n${dataLines.join("\n")}\n`;
 };
 
+// ── CSV helpers ──────────────────────────────────────────────────────────────
+
+const csvEscape = (value) => {
+  if (value === null || value === undefined) return "";
+  const s = String(value);
+  // Wrap in quotes if the value contains a comma, double-quote, or newline.
+  if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r")) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+};
+
+const buildCsvLine = (values) => values.map(csvEscape).join(",");
+
+// Axis column names: x/y/z for the first three, then numeric for the rest.
+const axisColumnName = (index) => {
+  if (index === 0) return "value_x";
+  if (index === 1) return "value_y";
+  if (index === 2) return "value_z";
+  return `value_${index}`;
+};
+
 const parseTraceKey = (traceKey) => {
   const [runId, sensorId, axisIndex, dataMode] = String(traceKey || "").split(":");
   return {
@@ -634,6 +629,403 @@ const collectLabelTraceRows = (runDocument, sensorReadings) => {
   });
 };
 
+// ─── Wide feature-matrix export helpers ──────────────────────────────────────
+
+const abbreviateSensorType = (sensorType) => {
+  const map = {
+    accelerometer: "acc",
+    gyroscope: "gyro",
+    magnetometer: "mag",
+    straingauge: "strain",
+    gps: "gps",
+  };
+  const key = String(sensorType || "").toLowerCase();
+  return (
+    map[key] ||
+    key.replace(/[^a-z0-9]/g, "").slice(0, 8) ||
+    "sensor"
+  );
+};
+
+const traceAxisLabel = (axisIndex) =>
+  ["x", "y", "z"][axisIndex] ?? `v${axisIndex + 1}`;
+
+const traceColumnPrefix = (sensorType, sensorId, axisIndex) =>
+  `${abbreviateSensorType(sensorType)}_${sensorId}_${traceAxisLabel(axisIndex)}`;
+
+/**
+ * Extends computeStats with skewness, kurtosis, and signal energy.
+ *   Skewness  — distribution asymmetry (braking vs. acceleration).
+ *   Kurtosis  — peak sharpness, separates impulse from sustained events.
+ *   Energy    — Σ(x²), magnitude without sign cancellation.
+ */
+const computeStatsWide = (values) => {
+  const base = computeStats(values);
+  if (base.readingCount === 0) {
+    return { ...base, skewness: null, kurtosis: null, energy: null };
+  }
+
+  const { meanValue, stdValue, readingCount } = base;
+
+  const skewness =
+    stdValue === 0
+      ? 0
+      : values.reduce((s, v) => s + ((v - meanValue) / stdValue) ** 3, 0) /
+        readingCount;
+
+  // Excess kurtosis (normal distribution = 0)
+  const kurtosis =
+    stdValue === 0
+      ? 0
+      : values.reduce((s, v) => s + ((v - meanValue) / stdValue) ** 4, 0) /
+          readingCount -
+        3;
+
+  const energy = values.reduce((s, v) => s + v * v, 0);
+
+  return { ...base, skewness, kurtosis, energy };
+};
+
+/**
+ * Pearson correlation coefficient between two equal-length arrays.
+ * Returns null when the computation is degenerate (constant signal,
+ * mismatched lengths, fewer than 2 points).
+ */
+const computePearsonR = (a, b) => {
+  if (
+    !Array.isArray(a) ||
+    !Array.isArray(b) ||
+    a.length !== b.length ||
+    a.length < 2
+  ) {
+    return null;
+  }
+
+  const n = a.length;
+  const meanA = a.reduce((s, v) => s + v, 0) / n;
+  const meanB = b.reduce((s, v) => s + v, 0) / n;
+
+  let num = 0;
+  let varA = 0;
+  let varB = 0;
+
+  for (let i = 0; i < n; i++) {
+    const da = a[i] - meanA;
+    const db = b[i] - meanB;
+    num += da * db;
+    varA += da * da;
+    varB += db * db;
+  }
+
+  const denom = Math.sqrt(varA * varB);
+  return denom === 0 ? null : num / denom;
+};
+
+const WIDE_RESAMPLE_N = 128; // common grid size for cross-correlation alignment
+
+const WIDE_STAT_KEYS = [
+  "readingCount", "minValue", "maxValue", "meanValue", "stdValue",
+  "medianValue", "rangeValue", "firstValue", "lastValue", "deltaValue",
+  "slope", "areaUnderCurve", "rmsValue", "peakValue", "peakTimeRatio",
+  "zeroCrossings", "skewness", "kurtosis", "energy",
+];
+
+/**
+ * Produces one wide row per labeled event.
+ *
+ * Columns:
+ *   - Event metadata (labelInstanceId, runId, labelText, duration, …)
+ *   - Per-trace statistics: {sensorAbbr}_{sensorId}_{axis}_{stat}
+ *       e.g. acc_3_x_mean, gyro_2_z_rmsValue, acc_3_x_skewness
+ *   - Cross-axis correlations within the same sensor:
+ *       {abbr}_{sensorId}_{ax1}_{ax2}_corr  e.g. acc_3_x_y_corr
+ *   - Cross-sensor correlations between every pair of different sensors:
+ *       {prefixA}_vs_{prefixB}_corr  e.g. acc_3_x_vs_gyro_2_x_corr
+ *
+ * All traces are resampled to WIDE_RESAMPLE_N points on the label's time
+ * range before correlation is computed, so sensors with different sample
+ * rates are aligned correctly.
+ */
+const collectWideRows = (runDocument, sensorReadings) => {
+  const runId = String(runDocument._id);
+  const traceSeriesMap = buildTraceSeriesMap(runId, sensorReadings);
+
+  const sensorTypeBySensorId = new Map();
+  sensorReadings.forEach((reading) => {
+    const sensorType =
+      reading?.sensorType || reading?.sensorDetails?.[0]?.type || "";
+    if (reading?.sensorId !== undefined && sensorType) {
+      sensorTypeBySensorId.set(Number(reading.sensorId), String(sensorType));
+    }
+  });
+
+  // Compute run temporal extent from all sensor readings (avoid spread to prevent stack overflow).
+  let runFirstTs = Infinity;
+  let runLastTs = -Infinity;
+  for (const reading of sensorReadings) {
+    if (Array.isArray(reading?.timestamps)) {
+      for (const ts of reading.timestamps) {
+        if (ts < runFirstTs) runFirstTs = ts;
+        if (ts > runLastTs) runLastTs = ts;
+      }
+    } else if (reading?.timestamp != null) {
+      const ts = Number(reading.timestamp);
+      if (ts < runFirstTs) runFirstTs = ts;
+      if (ts > runLastTs) runLastTs = ts;
+    }
+  }
+  const runTsDuration =
+    Number.isFinite(runFirstTs) && Number.isFinite(runLastTs) && runLastTs > runFirstTs
+      ? runLastTs - runFirstTs
+      : null;
+
+  const metadata = flattenMetadata(runDocument.metadata);
+  const labels = Array.isArray(runDocument.labels) ? runDocument.labels : [];
+
+  return labels
+    .map((label) => {
+      const traceKeys = Array.isArray(label.traceKeys) ? label.traceKeys : [];
+
+      // Resolve each trace to its readings within the label window.
+      const traces = traceKeys
+        .map((traceKey) => {
+          const traceInfo =
+            traceSeriesMap.get(traceKey) ||
+            traceSeriesMap.get(toRawTraceKey(traceKey));
+          if (!traceInfo) return null;
+
+          const parsed = parseTraceKey(traceKey);
+          const sensorType =
+            sensorTypeBySensorId.get(Number(parsed.sensorId)) || "";
+
+          const timestamps = [];
+          const values = [];
+          for (let i = 0; i < traceInfo.timestamps.length; i++) {
+            const ts = traceInfo.timestamps[i];
+            if (ts >= label.startTimestamp && ts <= label.endTimestamp) {
+              timestamps.push(ts);
+              values.push(traceInfo.values[i]);
+            }
+          }
+          if (timestamps.length === 0) return null;
+
+          return {
+            traceKey,
+            prefix: traceColumnPrefix(sensorType, parsed.sensorId, parsed.axisIndex),
+            sensorId: Number(parsed.sensorId),
+            axisIndex: Number(parsed.axisIndex),
+            sensorType,
+            timestamps,
+            values,
+          };
+        })
+        .filter(Boolean);
+
+      if (traces.length === 0) return null;
+
+      const featureColumns = {};
+
+      // ── Per-trace statistics ─────────────────────────────────────────────
+      for (const trace of traces) {
+        const stats = computeStatsWide(trace.values);
+        for (const key of WIDE_STAT_KEYS) {
+          featureColumns[`${trace.prefix}_${key}`] = stats[key] ?? null;
+        }
+      }
+
+      // ── Resample all traces to a common grid for correlation ─────────────
+      const resampled = traces.map((trace) => ({
+        ...trace,
+        grid: resampleSeries(trace.timestamps, trace.values, WIDE_RESAMPLE_N),
+      }));
+
+      // ── Cross-axis correlations (same sensorId, different axes) ──────────
+      const uniqueSensorIds = [...new Set(resampled.map((t) => t.sensorId))];
+      for (const sensorId of uniqueSensorIds) {
+        const group = resampled.filter((t) => t.sensorId === sensorId);
+        if (group.length < 2) continue;
+        const abbr = abbreviateSensorType(
+          sensorTypeBySensorId.get(sensorId) || ""
+        );
+        for (let i = 0; i < group.length; i++) {
+          for (let j = i + 1; j < group.length; j++) {
+            const a = group[i];
+            const b = group[j];
+            const col = `${abbr}_${sensorId}_${traceAxisLabel(a.axisIndex)}_${traceAxisLabel(b.axisIndex)}_corr`;
+            featureColumns[col] = computePearsonR(a.grid, b.grid);
+          }
+        }
+      }
+
+      // ── Cross-sensor correlations (between different sensorIds) ──────────
+      for (let i = 0; i < resampled.length; i++) {
+        for (let j = i + 1; j < resampled.length; j++) {
+          const a = resampled[i];
+          const b = resampled[j];
+          if (a.sensorId === b.sensorId) continue;
+          const col = `${a.prefix}_vs_${b.prefix}_corr`;
+          featureColumns[col] = computePearsonR(a.grid, b.grid);
+        }
+      }
+
+      const startTs = Number(label.startTimestamp);
+      const endTs = Number(label.endTimestamp);
+      const duration = endTs - startTs;
+
+      const temporalFeatures = {};
+      if (runTsDuration !== null) {
+        temporalFeatures.run_sensor_duration = runTsDuration;
+        temporalFeatures.event_start_ratio =
+          (startTs - runFirstTs) / runTsDuration;
+        temporalFeatures.event_end_ratio =
+          (endTs - runFirstTs) / runTsDuration;
+        temporalFeatures.event_mid_ratio =
+          ((startTs + endTs) / 2 - runFirstTs) / runTsDuration;
+        temporalFeatures.event_duration_ratio = duration / runTsDuration;
+      } else {
+        temporalFeatures.run_sensor_duration = null;
+        temporalFeatures.event_start_ratio = null;
+        temporalFeatures.event_end_ratio = null;
+        temporalFeatures.event_mid_ratio = null;
+        temporalFeatures.event_duration_ratio = null;
+      }
+
+      return {
+        labelInstanceId: label.id,
+        runId,
+        runName: runDocument.name || `Run ${runId}`,
+        runDate: runDocument.date
+          ? new Date(runDocument.date).toISOString()
+          : "",
+        context: runDocument.context || "",
+        labelText: label.text || "",
+        labelKind: label.kind,
+        duration,
+        startTimestamp: startTs,
+        endTimestamp: endTs,
+        ...temporalFeatures,
+        class: normalizeClassValue(label),
+        ...metadata,
+        ...featureColumns,
+      };
+    })
+    .filter(Boolean);
+};
+
+/**
+ * Formats a numeric boundary value for use in a bin label.
+ * Uses up to 4 significant figures, strips trailing zeros.
+ * e.g. 0.33333 → "0.3333", 1500 → "1500", 0.1 → "0.1"
+ */
+const formatBinBound = (value) => String(parseFloat(value.toPrecision(4)));
+
+/**
+ * Discretizes numeric columns in a set of wide rows into equal-width bins.
+ *
+ * Each bin is labelled with the actual value range it covers, e.g.
+ * "0_to_0.3333", "0.3333_to_0.6667", "0.6667_to_1" — so the ARFF nominal
+ * declaration documents the real data scale rather than generic low/medium/high.
+ *
+ * - numericKeys: column names that hold numeric values.
+ * - numBins: number of bins (default 3).
+ * - Boundaries are computed from the global min/max across ALL rows for each
+ *   column, so multi-run exports share a consistent scale.
+ * - Null/non-finite values remain null and become "?" in the ARFF output.
+ *
+ * Returns:
+ *   discretized    – rows with bin-label strings replacing raw numbers
+ *   colNominalTypes – Map<key, arffTypeString> giving each column's
+ *                    ARFF declaration, e.g. "{'0_to_1','1_to_2','2_to_3'}"
+ */
+const DEFAULT_APRIORI_BINS = 3;
+
+const discretizeRows = (rows, numericKeys, numBins = DEFAULT_APRIORI_BINS) => {
+  // ── Step 1: compute per-column min/max ──────────────────────────────────
+  const colStats = new Map();
+  for (const key of numericKeys) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const row of rows) {
+      const v = Number(row[key]);
+      if (Number.isFinite(v)) {
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
+    colStats.set(key, { min, max });
+  }
+
+  // ── Step 2: build per-column bin labels and ARFF type strings ───────────
+  // Bin label format: "<lowerBound>_to_<upperBound>" using the actual data
+  // values as boundaries.  Values are single-quoted in the ARFF declaration
+  // so that periods and underscores are not misinterpreted by parsers.
+  const colBinLabels = new Map(); // key → string[]
+  const colNominalTypes = new Map(); // key → ARFF type string
+
+  for (const key of numericKeys) {
+    const { min, max } = colStats.get(key);
+
+    if (!Number.isFinite(min)) {
+      // No finite values in this column — leave as missing.
+      colBinLabels.set(key, []);
+      colNominalTypes.set(key, "STRING");
+      continue;
+    }
+
+    const labels = [];
+    if (min === max) {
+      // Constant feature: a single bin whose lower and upper bound are equal.
+      const label = `${formatBinBound(min)}_to_${formatBinBound(max)}`;
+      labels.push(label);
+    } else {
+      const step = (max - min) / numBins;
+      for (let i = 0; i < numBins; i++) {
+        const lo = min + i * step;
+        const hi = i === numBins - 1 ? max : min + (i + 1) * step;
+        labels.push(`${formatBinBound(lo)}_to_${formatBinBound(hi)}`);
+      }
+    }
+
+    colBinLabels.set(key, labels);
+    // Quote each value so ARFF parsers handle periods/underscores safely.
+    colNominalTypes.set(
+      key,
+      `{${labels.map((l) => `'${l}'`).join(",")}}`
+    );
+  }
+
+  // ── Step 3: replace numeric values with their bin labels ─────────────────
+  const discretized = rows.map((row) => {
+    const newRow = { ...row };
+    for (const key of numericKeys) {
+      const raw = row[key];
+      if (raw === null || raw === undefined || !Number.isFinite(Number(raw))) {
+        newRow[key] = null;
+        continue;
+      }
+      const { min, max } = colStats.get(key);
+      const labels = colBinLabels.get(key);
+      if (!labels || labels.length === 0) {
+        newRow[key] = null;
+        continue;
+      }
+      if (min === max) {
+        newRow[key] = labels[0];
+        continue;
+      }
+      const n = Number(raw);
+      let idx = Math.floor(((n - min) / (max - min)) * numBins);
+      if (idx >= numBins) idx = numBins - 1; // clamp max value to last bin
+      newRow[key] = labels[idx];
+    }
+    return newRow;
+  });
+
+  return { discretized, colNominalTypes };
+};
+
+// ── Association rule mining (Apriori) ────────────────────────────────────────
+
 const normalizeCsvHeader = (value) =>
   String(value || "")
     .trim()
@@ -683,7 +1075,10 @@ const parseCsvRows = (csvText) => {
     throw new Error("CSV upload requires a header row and at least one data row.");
   }
 
-  const headerCells = parseCsvLine(lines[0]).map(normalizeCsvHeader);
+  const rawHeaderCells = parseCsvLine(lines[0]);
+  const headerCells = rawHeaderCells.map(normalizeCsvHeader);
+  const originalHeaderCells = rawHeaderCells.map((h) => String(h || "").trim());
+
   if (headerCells.length === 0 || headerCells.every((cell) => !cell)) {
     throw new Error("CSV header row is empty.");
   }
@@ -700,7 +1095,7 @@ const parseCsvRows = (csvText) => {
     return row;
   });
 
-  return { headerCells, rows };
+  return { headerCells, originalHeaderCells, rows };
 };
 
 const getCsvFieldValue = (row, aliases) => {
@@ -793,29 +1188,49 @@ const parseCsvTimestamp = (row, rowNumber) => {
   );
 };
 
-const buildCsvSensorReadings = (csvText, sensorType) => {
-  const { rows } = parseCsvRows(csvText);
-  const aliasesByAxis = CSV_VALUE_ALIASES[sensorType];
-  if (!aliasesByAxis) {
-    throw new Error(`CSV import is not configured for sensorType ${sensorType}.`);
+const buildCsvSensorReadings = (csvText) => {
+  const { headerCells, originalHeaderCells, rows } = parseCsvRows(csvText);
+  const timestampSet = new Set(CSV_TIMESTAMP_ALIASES);
+
+  const valueColumns = [];
+  headerCells.forEach((normalized, i) => {
+    if (normalized && !timestampSet.has(normalized)) {
+      valueColumns.push({ normalized, label: originalHeaderCells[i] || normalized });
+    }
+  });
+
+  if (valueColumns.length === 0) {
+    throw new Error(
+      "CSV must contain at least one value column in addition to the timestamp column."
+    );
   }
 
   const readings = rows.map((row) => {
     const rowNumber = row.__rowNumber;
     const timestamp = parseCsvTimestamp(row, rowNumber);
-    const data = aliasesByAxis.map((aliases, axisIndex) =>
-      parseCsvNumberField(
-        row,
-        aliases.map(normalizeCsvHeader),
-        SENSOR_TYPE_CONFIG[sensorType].csvColumns[axisIndex + 1],
-        rowNumber
-      )
-    );
-
+    const data = valueColumns.map(({ normalized, label }) => {
+      const rawValue = row[normalized];
+      if (rawValue === undefined || rawValue === null || rawValue === "") {
+        throw new Error(
+          `CSV row ${rowNumber} is missing a value for column "${label}".`
+        );
+      }
+      const parsed = Number(rawValue);
+      if (!Number.isFinite(parsed)) {
+        throw new Error(
+          `CSV row ${rowNumber} has non-numeric value for column "${label}": ${rawValue}`
+        );
+      }
+      return parsed;
+    });
     return { timestamp, data };
   });
 
-  return readings.sort((left, right) => left.timestamp - right.timestamp);
+  const axes = valueColumns.map(({ label }) => label);
+  return {
+    readings: readings.sort((a, b) => a.timestamp - b.timestamp),
+    axes,
+  };
 };
 
 const normalizeSensorType = (value) => {
@@ -908,9 +1323,9 @@ runRouter.get("/:runid/export/arff", async (req, res) => {
     }
 
     const variant = String(req.query.variant || "features").trim().toLowerCase();
-    if (!["features", "resampled"].includes(variant)) {
+    if (!["features", "resampled", "wide", "apriori"].includes(variant)) {
       return res.status(400).json({
-        message: "Invalid variant. Supported values: features, resampled.",
+        message: "Invalid variant. Supported values: features, resampled, wide, apriori.",
       });
     }
 
@@ -924,105 +1339,212 @@ runRouter.get("/:runid/export/arff", async (req, res) => {
 
     const runDocument = await runService.getSingleRunDB(runid);
     const sensorReadings = await runService.getRunSensorReadingsAll(runid);
-    const rows = collectLabelTraceRows(runDocument, sensorReadings);
-
-    if (rows.length === 0) {
-      return res.status(400).json({
-        message: "Run has no labeled trace data to export.",
-      });
-    }
-
-    const metadataKeys = [...new Set(rows.flatMap((row) =>
-      Object.keys(row).filter((key) => key.startsWith("meta_"))
-    ))].sort();
 
     let attributes;
     let dataRows;
 
-    if (variant === "features") {
-      dataRows = rows.flatMap((row) =>
-        row.timestamps.map((timestamp, index) => ({
-          runId: row.runId,
-          runName: row.runName,
-          runDate: row.runDate,
-          runTime: row.runTime,
-          context: row.context,
-          sensorType: row.sensorType,
-          sensorId: row.sensorId,
-          axisIndex: row.axisIndex,
-          traceKey: row.traceKey,
-          timestamp,
-          readings: row.values[index],
-          labelId: row.labelId,
-          labelText: row.labelText,
-          labelKind: row.labelKind,
-          class: row.class,
-          ...Object.fromEntries(
-            metadataKeys.map((key) => [key, row[key] ?? ""])
-          ),
-        }))
-      );
-      if (dataRows.length === 0) {
+    if (variant === "wide" || variant === "apriori") {
+      // ── Wide feature matrix: one row per labeled event ───────────────────
+      const wideRows = collectWideRows(runDocument, sensorReadings);
+
+      if (wideRows.length === 0) {
         return res.status(400).json({
-          message: "Run labels were found, but no matching sensor reading rows could be resolved for export.",
+          message: "Run has no labeled trace data to export.",
         });
       }
 
-      attributes = [
-        { name: "runId", type: "STRING" },
-        { name: "runName", type: "STRING" },
-        { name: "runDate", type: "STRING" },
-        { name: "runTime", type: "NUMERIC" },
-        { name: "context", type: "STRING" },
-        { name: "sensorType", type: "STRING" },
-        { name: "sensorId", type: "NUMERIC" },
-        { name: "axisIndex", type: "NUMERIC" },
-        { name: "traceKey", type: "STRING" },
-        { name: "timestamp", type: "NUMERIC" },
-        { name: "readings", type: "NUMERIC" },
-        { name: "labelId", type: "STRING" },
-        { name: "labelText", type: "STRING" },
-        { name: "labelKind", type: "STRING" },
-        ...metadataKeys.map((key) => ({ name: key, type: "STRING" })),
-        { name: "class", type: "STRING" },
-      ];
-    } else {
-      attributes = [
-        { name: "runId", type: "STRING" },
-        { name: "runName", type: "STRING" },
-        { name: "labelId", type: "STRING" },
-        { name: "labelText", type: "STRING" },
-        { name: "labelKind", type: "STRING" },
-        { name: "traceKey", type: "STRING" },
-        { name: "sensorId", type: "NUMERIC" },
-        { name: "axisIndex", type: "NUMERIC" },
-        { name: "readingCount", type: "NUMERIC" },
-        { name: "duration", type: "NUMERIC" },
-        ...metadataKeys.map((key) => ({ name: key, type: "STRING" })),
-        ...Array.from({ length: resamplePoints }, (_, index) => ({
-          name: `p${String(index + 1).padStart(3, "0")}`,
-          type: "NUMERIC",
-        })),
-        { name: "class", type: "STRING" },
-      ];
+      // Discover the union of all column keys across every row so that rows
+      // with missing sensors get ARFF "?" rather than being dropped.
+      const META_KEYS = new Set([
+        "labelInstanceId", "runId", "runName", "runDate", "context",
+        "labelText", "labelKind", "duration", "startTimestamp", "endTimestamp",
+        "run_sensor_duration", "event_start_ratio", "event_end_ratio",
+        "event_mid_ratio", "event_duration_ratio",
+        "class",
+      ]);
+      const metadataKeys = [
+        ...new Set(
+          wideRows.flatMap((row) =>
+            Object.keys(row).filter((k) => k.startsWith("meta_"))
+          )
+        ),
+      ].sort();
+      const featureKeys = [
+        ...new Set(
+          wideRows.flatMap((row) =>
+            Object.keys(row).filter(
+              (k) => !META_KEYS.has(k) && !k.startsWith("meta_")
+            )
+          )
+        ),
+      ].sort();
 
-      dataRows = rows.map((row) => {
-        const samples = resampleSeries(row.timestamps, row.values, resamplePoints);
-        const sampleFields = Object.fromEntries(
-          samples.map((value, index) => [
-            `p${String(index + 1).padStart(3, "0")}`,
-            value,
-          ])
-        );
-        return {
-          ...row,
-          ...sampleFields,
-        };
-      });
-      if (dataRows.length === 0) {
+      if (variant === "wide") {
+        dataRows = wideRows;
+        attributes = [
+          { name: "labelInstanceId",       type: "STRING" },
+          { name: "runId",                 type: "STRING" },
+          { name: "runName",               type: "STRING" },
+          { name: "runDate",               type: "STRING" },
+          { name: "context",               type: "STRING" },
+          { name: "labelText",             type: "STRING" },
+          { name: "labelKind",             type: "STRING" },
+          { name: "duration",              type: "NUMERIC" },
+          { name: "startTimestamp",        type: "NUMERIC" },
+          { name: "endTimestamp",          type: "NUMERIC" },
+          { name: "run_sensor_duration",   type: "NUMERIC" },
+          { name: "event_start_ratio",     type: "NUMERIC" },
+          { name: "event_end_ratio",       type: "NUMERIC" },
+          { name: "event_mid_ratio",       type: "NUMERIC" },
+          { name: "event_duration_ratio",  type: "NUMERIC" },
+          ...metadataKeys.map((k) => ({ name: k, type: "STRING" })),
+          ...featureKeys.map((k)  => ({ name: k, type: "NUMERIC" })),
+          { name: "class", type: "STRING" },
+        ];
+      } else {
+        // ── Apriori: discretize all numeric columns into equal-width bins ───
+        // Keys to discretize = numeric META_KEYS + all feature keys.
+        const numericMetaKeys = [
+          "duration", "startTimestamp", "endTimestamp",
+          "run_sensor_duration", "event_start_ratio", "event_end_ratio",
+          "event_mid_ratio", "event_duration_ratio",
+        ];
+        const numericKeys = [...numericMetaKeys, ...featureKeys];
+        const { discretized, colNominalTypes } = discretizeRows(wideRows, numericKeys);
+        dataRows = discretized;
+
+        // Enumerate class values so Weka treats the attribute as nominal,
+        // not as free-form STRING (Apriori ignores STRING attributes).
+        const classValues = [
+          ...new Set(dataRows.map((r) => r.class).filter(Boolean)),
+        ].sort();
+        const classNominalType = classValues.length > 0
+          ? `{${classValues.map((v) => `'${v}'`).join(",")}}`
+          : "STRING";
+
+        const colType = (k) => colNominalTypes.get(k) || "STRING";
+        attributes = [
+          { name: "labelInstanceId",       type: "STRING" },
+          { name: "runId",                 type: "STRING" },
+          { name: "runName",               type: "STRING" },
+          { name: "runDate",               type: "STRING" },
+          { name: "context",               type: "STRING" },
+          { name: "labelText",             type: "STRING" },
+          { name: "labelKind",             type: "STRING" },
+          { name: "duration",              type: colType("duration") },
+          { name: "startTimestamp",        type: colType("startTimestamp") },
+          { name: "endTimestamp",          type: colType("endTimestamp") },
+          { name: "run_sensor_duration",   type: colType("run_sensor_duration") },
+          { name: "event_start_ratio",     type: colType("event_start_ratio") },
+          { name: "event_end_ratio",       type: colType("event_end_ratio") },
+          { name: "event_mid_ratio",       type: colType("event_mid_ratio") },
+          { name: "event_duration_ratio",  type: colType("event_duration_ratio") },
+          ...metadataKeys.map((k) => ({ name: k, type: "STRING" })),
+          ...featureKeys.map((k)  => ({ name: k, type: colType(k) })),
+          { name: "class", type: classNominalType },
+        ];
+      }
+    } else {
+      // ── Features / resampled variants (trace-centric) ────────────────────
+      const rows = collectLabelTraceRows(runDocument, sensorReadings);
+
+      if (rows.length === 0) {
         return res.status(400).json({
-          message: "Run labels were found, but no matching sensor reading rows could be resolved for export.",
+          message: "Run has no labeled trace data to export.",
         });
+      }
+
+      const metadataKeys = [
+        ...new Set(
+          rows.flatMap((row) =>
+            Object.keys(row).filter((key) => key.startsWith("meta_"))
+          )
+        ),
+      ].sort();
+
+      if (variant === "features") {
+        dataRows = rows.flatMap((row) =>
+          row.timestamps.map((timestamp, index) => ({
+            runId: row.runId,
+            runName: row.runName,
+            runDate: row.runDate,
+            runTime: row.runTime,
+            context: row.context,
+            sensorType: row.sensorType,
+            sensorId: row.sensorId,
+            axisIndex: row.axisIndex,
+            traceKey: row.traceKey,
+            timestamp,
+            readings: row.values[index],
+            labelId: row.labelId,
+            labelText: row.labelText,
+            labelKind: row.labelKind,
+            class: row.class,
+            ...Object.fromEntries(
+              metadataKeys.map((key) => [key, row[key] ?? ""])
+            ),
+          }))
+        );
+        if (dataRows.length === 0) {
+          return res.status(400).json({
+            message: "Run labels were found, but no matching sensor reading rows could be resolved for export.",
+          });
+        }
+
+        attributes = [
+          { name: "runId",      type: "STRING" },
+          { name: "runName",    type: "STRING" },
+          { name: "runDate",    type: "STRING" },
+          { name: "runTime",    type: "NUMERIC" },
+          { name: "context",    type: "STRING" },
+          { name: "sensorType", type: "STRING" },
+          { name: "sensorId",   type: "NUMERIC" },
+          { name: "axisIndex",  type: "NUMERIC" },
+          { name: "traceKey",   type: "STRING" },
+          { name: "timestamp",  type: "NUMERIC" },
+          { name: "readings",   type: "NUMERIC" },
+          { name: "labelId",    type: "STRING" },
+          { name: "labelText",  type: "STRING" },
+          { name: "labelKind",  type: "STRING" },
+          ...metadataKeys.map((key) => ({ name: key, type: "STRING" })),
+          { name: "class", type: "STRING" },
+        ];
+      } else {
+        // resampled
+        attributes = [
+          { name: "runId",        type: "STRING" },
+          { name: "runName",      type: "STRING" },
+          { name: "labelId",      type: "STRING" },
+          { name: "labelText",    type: "STRING" },
+          { name: "labelKind",    type: "STRING" },
+          { name: "traceKey",     type: "STRING" },
+          { name: "sensorId",     type: "NUMERIC" },
+          { name: "axisIndex",    type: "NUMERIC" },
+          { name: "readingCount", type: "NUMERIC" },
+          { name: "duration",     type: "NUMERIC" },
+          ...metadataKeys.map((key) => ({ name: key, type: "STRING" })),
+          ...Array.from({ length: resamplePoints }, (_, index) => ({
+            name: `p${String(index + 1).padStart(3, "0")}`,
+            type: "NUMERIC",
+          })),
+          { name: "class", type: "STRING" },
+        ];
+
+        dataRows = rows.map((row) => {
+          const samples = resampleSeries(row.timestamps, row.values, resamplePoints);
+          const sampleFields = Object.fromEntries(
+            samples.map((value, index) => [
+              `p${String(index + 1).padStart(3, "0")}`,
+              value,
+            ])
+          );
+          return { ...row, ...sampleFields };
+        });
+        if (dataRows.length === 0) {
+          return res.status(400).json({
+            message: "Run labels were found, but no matching sensor reading rows could be resolved for export.",
+          });
+        }
       }
     }
 
@@ -1041,6 +1563,308 @@ runRouter.get("/:runid/export/arff", async (req, res) => {
   } catch (error) {
     return res.status(500).json({
       message: "Failed to export ARFF.",
+      error: error.message,
+    });
+  }
+});
+
+runRouter.post("/export/multi-arff", async (req, res) => {
+  try {
+    const { runIds, variant: rawVariant } = req.body || {};
+    const variant = String(rawVariant || "wide").trim().toLowerCase();
+
+    if (!["wide", "apriori"].includes(variant)) {
+      return res.status(400).json({
+        message: "Invalid variant. Supported values: wide, apriori.",
+      });
+    }
+
+    if (!Array.isArray(runIds) || runIds.length === 0) {
+      return res.status(400).json({ message: "Provide a non-empty runIds array." });
+    }
+
+    // De-duplicate and validate
+    const uniqueRunIds = [...new Set(runIds.map(String))];
+    if (uniqueRunIds.length > 50) {
+      return res.status(400).json({ message: "At most 50 runs can be exported at once." });
+    }
+
+    // Authorize each run and collect data
+    const allRows = [];
+    const errors = [];
+
+    for (const runId of uniqueRunIds) {
+      let authorizedRun;
+      try {
+        authorizedRun = await findRunForUser(runId, req.user);
+      } catch (_e) {
+        authorizedRun = null;
+      }
+
+      if (!authorizedRun) {
+        errors.push(`Run ${runId} not found or not accessible.`);
+        continue;
+      }
+
+      try {
+        const [runDocument, sensorReadings] = await Promise.all([
+          runService.getSingleRunDB(runId),
+          runService.getRunSensorReadingsAll(runId),
+        ]);
+        const rows = collectWideRows(runDocument, sensorReadings);
+        allRows.push(...rows);
+      } catch (err) {
+        errors.push(`Run ${runId}: ${err.message}`);
+      }
+    }
+
+    if (allRows.length === 0) {
+      return res.status(400).json({
+        message: "No labeled trace data found across the selected runs.",
+        errors,
+      });
+    }
+
+    const MULTI_META_KEYS = new Set([
+      "labelInstanceId", "runId", "runName", "runDate", "context",
+      "labelText", "labelKind", "duration", "startTimestamp", "endTimestamp",
+      "run_sensor_duration", "event_start_ratio", "event_end_ratio",
+      "event_mid_ratio", "event_duration_ratio",
+      "class",
+    ]);
+    const metadataKeys = [
+      ...new Set(
+        allRows.flatMap((row) =>
+          Object.keys(row).filter((k) => k.startsWith("meta_"))
+        )
+      ),
+    ].sort();
+    const featureKeys = [
+      ...new Set(
+        allRows.flatMap((row) =>
+          Object.keys(row).filter(
+            (k) => !MULTI_META_KEYS.has(k) && !k.startsWith("meta_")
+          )
+        )
+      ),
+    ].sort();
+
+    let exportRows;
+    let attributes;
+
+    if (variant === "apriori") {
+      const numericMetaKeys = [
+        "duration", "startTimestamp", "endTimestamp",
+        "run_sensor_duration", "event_start_ratio", "event_end_ratio",
+        "event_mid_ratio", "event_duration_ratio",
+      ];
+      const numericKeys = [...numericMetaKeys, ...featureKeys];
+      const { discretized, colNominalTypes } = discretizeRows(allRows, numericKeys);
+      exportRows = discretized;
+
+      const classValues = [
+        ...new Set(exportRows.map((r) => r.class).filter(Boolean)),
+      ].sort();
+      const classNominalType = classValues.length > 0
+        ? `{${classValues.map((v) => `'${v}'`).join(",")}}`
+        : "STRING";
+
+      const colType = (k) => colNominalTypes.get(k) || "STRING";
+      attributes = [
+        { name: "labelInstanceId",       type: "STRING" },
+        { name: "runId",                 type: "STRING" },
+        { name: "runName",               type: "STRING" },
+        { name: "runDate",               type: "STRING" },
+        { name: "context",               type: "STRING" },
+        { name: "labelText",             type: "STRING" },
+        { name: "labelKind",             type: "STRING" },
+        { name: "duration",              type: colType("duration") },
+        { name: "startTimestamp",        type: colType("startTimestamp") },
+        { name: "endTimestamp",          type: colType("endTimestamp") },
+        { name: "run_sensor_duration",   type: colType("run_sensor_duration") },
+        { name: "event_start_ratio",     type: colType("event_start_ratio") },
+        { name: "event_end_ratio",       type: colType("event_end_ratio") },
+        { name: "event_mid_ratio",       type: colType("event_mid_ratio") },
+        { name: "event_duration_ratio",  type: colType("event_duration_ratio") },
+        ...metadataKeys.map((k) => ({ name: k, type: "STRING" })),
+        ...featureKeys.map((k)  => ({ name: k, type: colType(k) })),
+        { name: "class", type: classNominalType },
+      ];
+    } else {
+      exportRows = allRows;
+      attributes = [
+        { name: "labelInstanceId",       type: "STRING" },
+        { name: "runId",                 type: "STRING" },
+        { name: "runName",               type: "STRING" },
+        { name: "runDate",               type: "STRING" },
+        { name: "context",               type: "STRING" },
+        { name: "labelText",             type: "STRING" },
+        { name: "labelKind",             type: "STRING" },
+        { name: "duration",              type: "NUMERIC" },
+        { name: "startTimestamp",        type: "NUMERIC" },
+        { name: "endTimestamp",          type: "NUMERIC" },
+        { name: "run_sensor_duration",   type: "NUMERIC" },
+        { name: "event_start_ratio",     type: "NUMERIC" },
+        { name: "event_end_ratio",       type: "NUMERIC" },
+        { name: "event_mid_ratio",       type: "NUMERIC" },
+        { name: "event_duration_ratio",  type: "NUMERIC" },
+        ...metadataKeys.map((k) => ({ name: k, type: "STRING" })),
+        ...featureKeys.map((k)  => ({ name: k, type: "NUMERIC" })),
+        { name: "class", type: "STRING" },
+      ];
+    }
+
+    const arff = buildArffDocument(`multi_run_${variant}`, attributes, exportRows);
+    const timestamp = new Date().toISOString().slice(0, 10);
+
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="multi-run-${variant}-${timestamp}.arff"`
+    );
+    return res.status(200).send(arff);
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to export multi-run ARFF.",
+      error: error.message,
+    });
+  }
+});
+
+runRouter.post("/export/multi-csv", async (req, res) => {
+  try {
+    const { runIds } = req.body || {};
+
+    if (!Array.isArray(runIds) || runIds.length === 0) {
+      return res.status(400).json({ message: "Provide a non-empty runIds array." });
+    }
+
+    const uniqueRunIds = [...new Set(runIds.map(String))];
+    if (uniqueRunIds.length > 50) {
+      return res.status(400).json({ message: "At most 50 runs can be exported at once." });
+    }
+
+    const dataRows = [];  // collected across all runs
+    let maxAxes = 0;
+
+    for (const runId of uniqueRunIds) {
+      let authorizedRun;
+      try {
+        authorizedRun = await findRunForUser(runId, req.user);
+      } catch (_e) {
+        authorizedRun = null;
+      }
+      if (!authorizedRun) continue;
+
+      const [runDocument, sensorReadings, trims] = await Promise.all([
+        runService.getSingleRunDB(runId),
+        runService.getRunSensorReadingsAll(runId),
+        runService.getRunTrims(runId),
+      ]);
+
+      const labels = Array.isArray(runDocument.labels) ? runDocument.labels : [];
+
+      // Split labels by kind for efficient lookup.
+      const rangeLabels = labels.filter((l) => l.kind === "range");
+      const singleLabels = labels.filter((l) => l.kind === "single");
+
+      // Returns the first label covering the given timestamp, or null.
+      const findLabel = (ts) => {
+        for (const label of rangeLabels) {
+          if (ts >= Number(label.startTimestamp) && ts <= Number(label.endTimestamp)) {
+            return label;
+          }
+        }
+        for (const label of singleLabels) {
+          if (Array.isArray(label.points)) {
+            for (const point of label.points) {
+              if (Number(point.timestamp) === ts) return label;
+            }
+          }
+        }
+        return null;
+      };
+
+      // Returns true if the timestamp falls within any trim window.
+      const isTrimmed = (ts) =>
+        trims.some(
+          (t) => ts >= Number(t.startTimestamp) && ts <= Number(t.endTimestamp)
+        );
+
+      const runIdStr = String(runDocument._id);
+      const runName  = runDocument.name || runIdStr;
+      const runDate  = runDocument.date ? new Date(runDocument.date).toISOString() : "";
+      const context  = runDocument.context || "";
+
+      for (const reading of sensorReadings) {
+        const ts = Number(reading.timestamp);
+        if (isTrimmed(ts)) continue;
+
+        const axisValues = Array.isArray(reading.data) ? reading.data : [];
+        if (axisValues.length > maxAxes) maxAxes = axisValues.length;
+
+        const sensorType =
+          reading.sensorType || reading.sensorDetails?.[0]?.type || "";
+
+        const label = findLabel(ts);
+
+        dataRows.push({
+          runId:     runIdStr,
+          runName,
+          runDate,
+          context,
+          sensorId:  reading.sensorId,
+          sensorType,
+          timestamp: ts,
+          axisValues,
+          labelId:   label?.id   || "",
+          labelText: label?.text || "",
+          labelKind: label?.kind || "",
+        });
+      }
+    }
+
+    if (dataRows.length === 0) {
+      return res.status(400).json({
+        message: "No sensor data found for the selected runs after applying trims.",
+      });
+    }
+
+    // Build CSV header.
+    const axisHeaders = Array.from({ length: maxAxes }, (_, i) => axisColumnName(i));
+    const headers = [
+      "runId", "runName", "runDate", "context",
+      "sensorId", "sensorType", "timestamp",
+      ...axisHeaders,
+      "labelId", "labelText", "labelKind",
+    ];
+
+    const lines = [buildCsvLine(headers)];
+    for (const row of dataRows) {
+      const axisCells = Array.from(
+        { length: maxAxes },
+        (_, i) => (row.axisValues[i] !== undefined ? row.axisValues[i] : "")
+      );
+      lines.push(buildCsvLine([
+        row.runId, row.runName, row.runDate, row.context,
+        row.sensorId, row.sensorType, row.timestamp,
+        ...axisCells,
+        row.labelId, row.labelText, row.labelKind,
+      ]));
+    }
+
+    const csv = lines.join("\n");
+    const dateStamp = new Date().toISOString().slice(0, 10);
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="multi-run-${dateStamp}.csv"`
+    );
+    return res.status(200).send(csv);
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to export multi-run CSV.",
       error: error.message,
     });
   }
@@ -1094,6 +1918,85 @@ runRouter.put("/:runid/trims", async (req, res) => {
   }
 });
 
+// ── View-state (per-run dashboard config) ────────────────────────────────────
+
+const VIEW_STATE_MAX_CHARTS = 8;
+
+const normalizeChartViewState = (raw) => {
+  if (!raw || typeof raw !== "object") return null;
+  return {
+    selectedSensorKeys:    Array.isArray(raw.selectedSensorKeys) ? raw.selectedSensorKeys.filter((k) => typeof k === "string") : [],
+    sensorFilterPipelines: raw.sensorFilterPipelines && typeof raw.sensorFilterPipelines === "object" ? raw.sensorFilterPipelines : {},
+    sensorFiltersActive:   raw.sensorFiltersActive   && typeof raw.sensorFiltersActive   === "object" ? raw.sensorFiltersActive   : {},
+    traceVisibility:       raw.traceVisibility       && typeof raw.traceVisibility       === "object" ? raw.traceVisibility       : {},
+    sensorSyncOffsets:     raw.sensorSyncOffsets     && typeof raw.sensorSyncOffsets     === "object" ? raw.sensorSyncOffsets     : {},
+    independentScales:     Boolean(raw.independentScales),
+    comparisonRunIds:      Array.isArray(raw.comparisonRunIds) ? raw.comparisonRunIds.filter((id) => typeof id === "string") : [],
+    showLabels:            typeof raw.showLabels === "boolean" ? raw.showLabels : true,
+    showTrims:             typeof raw.showTrims  === "boolean" ? raw.showTrims  : true,
+    showHighlightSections: Boolean(raw.showHighlightSections),
+    showStatAnnotations:   Boolean(raw.showStatAnnotations),
+  };
+};
+
+runRouter.get("/:runid/view-state", async (req, res) => {
+  try {
+    const runid = req.params.runid;
+    const authorizedRun = await findRunForUser(runid, req.user).catch(() => null);
+    if (!authorizedRun) return res.status(404).json({ message: "Run not found." });
+
+    const db = await connectDB();
+    const coll = await getCollection(db, "run_view_states");
+    const doc = await coll.findOne({ runId: runid });
+
+    return res.json({
+      charts: Array.isArray(doc?.charts) ? doc.charts : [],
+      videoSyncOffset: typeof doc?.videoSyncOffset === "number" ? doc.videoSyncOffset : null,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: "Failed to fetch view state.", error: error.message });
+  }
+});
+
+runRouter.put("/:runid/view-state", async (req, res) => {
+  try {
+    const runid = req.params.runid;
+    const authorizedRun = await findRunForUser(runid, req.user).catch(() => null);
+    if (!authorizedRun) return res.status(404).json({ message: "Run not found." });
+
+    const db = await connectDB();
+    const coll = await getCollection(db, "run_view_states");
+
+    const setFields = { runId: runid, updatedAt: new Date() };
+
+    if (Array.isArray(req.body?.charts)) {
+      const rawCharts = req.body.charts;
+      setFields.charts = rawCharts
+        .slice(0, VIEW_STATE_MAX_CHARTS)
+        .map(normalizeChartViewState)
+        .filter(Boolean);
+    }
+
+    if (typeof req.body?.videoSyncOffset === "number" && Number.isFinite(req.body.videoSyncOffset)) {
+      setFields.videoSyncOffset = req.body.videoSyncOffset;
+    }
+
+    await coll.updateOne(
+      { runId: runid },
+      { $set: setFields },
+      { upsert: true },
+    );
+
+    const updated = await coll.findOne({ runId: runid });
+    return res.json({
+      charts: Array.isArray(updated?.charts) ? updated.charts : [],
+      videoSyncOffset: typeof updated?.videoSyncOffset === "number" ? updated.videoSyncOffset : null,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: "Failed to save view state.", error: error.message });
+  }
+});
+
 runRouter.delete("/:runid", async (req, res) => {
   try {
     const runid = req.params.runid;
@@ -1123,6 +2026,8 @@ runRouter.delete("/:runid", async (req, res) => {
     });
     await runService.deleteRunLabels(runid);
     await runService.deleteRunTrims(runid);
+    const viewStatesColl = await getCollection(db, "run_view_states");
+    await viewStatesColl.deleteOne({ runId: runid });
     const runDeleteResult = await runsColl.deleteOne({ _id: runObjectId });
     const runVideoDirectory = getRunVideoDirectory(runid);
 
@@ -1223,6 +2128,23 @@ runRouter.post("/upload", async (req, res) => {
       return res.status(400).json({
         message: `Invalid .BIN length (${req.body.length}). Expected multiple of ${sensorConfig.recordSizeBytes} for sensorType ${resolvedSensorType}.`,
       });
+    }
+
+    // For CSV uploads: parse early to detect column labels (axes) before any DB work.
+    let csvReadings = null;
+    let uploadedAxes = isBinUpload ? sensorConfig.binaryAxes : null;
+    if (isCsvUpload) {
+      let csvResult;
+      try {
+        csvResult = buildCsvSensorReadings(csvBodyText);
+      } catch (error) {
+        return res.status(400).json({ message: error.message });
+      }
+      if (csvResult.readings.length === 0) {
+        return res.status(400).json({ message: "Upload did not contain any sensor readings." });
+      }
+      csvReadings = csvResult.readings;
+      uploadedAxes = csvResult.axes;
     }
 
     const db = await connectDB();
@@ -1426,7 +2348,7 @@ runRouter.post("/upload", async (req, res) => {
       {
         $set: {
           type: resolvedSensorType,
-          dataAxis: sensorConfig.dataAxis,
+          dataAxis: uploadedAxes.length,
           location: "uploaded",
         },
         $setOnInsert: {
@@ -1436,7 +2358,7 @@ runRouter.post("/upload", async (req, res) => {
       { upsert: true }
     );
 
-    const runSensorUpdate = { sensorType: resolvedSensorType };
+    const runSensorUpdate = { sensorType: resolvedSensorType, axes: uploadedAxes };
     if (resolvedSensorName) {
       runSensorUpdate.name = resolvedSensorName;
     }
@@ -1459,49 +2381,47 @@ runRouter.post("/upload", async (req, res) => {
         ? parseNumber(sensZ, DEFAULT_SENSITIVITY)
         : 1;
 
-    const readings = isBinUpload
-      ? (() => {
-          const parsedReadings = [];
-          for (
-            let offset = 0;
-            offset < req.body.length;
-            offset += sensorConfig.recordSizeBytes
-          ) {
-            const tsUs = req.body.readUInt32LE(offset);
-            const timestampSeconds = tsUs / 1_000_000.0;
+    let readings;
+    if (isBinUpload) {
+      const parsedReadings = [];
+      for (
+        let offset = 0;
+        offset < req.body.length;
+        offset += sensorConfig.recordSizeBytes
+      ) {
+        const tsUs = req.body.readUInt32LE(offset);
+        const timestampSeconds = tsUs / 1_000_000.0;
 
-            let parsedData;
-            if (resolvedSensorType === "strainGauge") {
-              parsedData = [
-                req.body.readInt32LE(offset + 4),
-                req.body.readInt32LE(offset + 8),
-                req.body.readInt32LE(offset + 12),
-                req.body.readInt32LE(offset + 16),
-                req.body.readInt32LE(offset + 20),
-                req.body.readInt32LE(offset + 24),
-                req.body.readInt32LE(offset + 28),
-                req.body.readInt32LE(offset + 32),
-              ];
-            } else {
-              const x = req.body.readInt32LE(offset + 4);
-              const y = req.body.readInt32LE(offset + 8);
-              const z = req.body.readInt32LE(offset + 12);
+        let parsedData;
+        if (resolvedSensorType === "strainGauge") {
+          parsedData = [
+            req.body.readInt32LE(offset + 4),
+            req.body.readInt32LE(offset + 8),
+            req.body.readInt32LE(offset + 12),
+            req.body.readInt32LE(offset + 16),
+            req.body.readInt32LE(offset + 20),
+            req.body.readInt32LE(offset + 24),
+            req.body.readInt32LE(offset + 28),
+            req.body.readInt32LE(offset + 32),
+          ];
+        } else {
+          const x = req.body.readInt32LE(offset + 4);
+          const y = req.body.readInt32LE(offset + 8);
+          const z = req.body.readInt32LE(offset + 12);
 
-              parsedData = [
-                (x * sensitivityX) / 1_000_000.0,
-                (y * sensitivityY) / 1_000_000.0,
-                (z * sensitivityZ) / 1_000_000.0,
-              ];
-            }
+          parsedData = [
+            (x * sensitivityX) / 1_000_000.0,
+            (y * sensitivityY) / 1_000_000.0,
+            (z * sensitivityZ) / 1_000_000.0,
+          ];
+        }
 
-            parsedReadings.push({
-              timestamp: timestampSeconds,
-              data: parsedData,
-            });
-          }
-          return parsedReadings;
-        })()
-      : buildCsvSensorReadings(csvBodyText, resolvedSensorType);
+        parsedReadings.push({ timestamp: timestampSeconds, data: parsedData });
+      }
+      readings = parsedReadings;
+    } else {
+      readings = csvReadings;
+    }
 
     if (!Array.isArray(readings) || readings.length === 0) {
       return res.status(400).json({
