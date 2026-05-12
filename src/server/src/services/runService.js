@@ -822,6 +822,18 @@ const deleteRunTrims = async (runid) => {
   return RunTrim.deleteMany({ runId: runObjectId });
 };
 
+const updateRunMetadata = async (runid, fields) => {
+  const runObjectId = new ObjectId(String(runid));
+  const update = {};
+  if (fields.description !== undefined) update.description = String(fields.description);
+  if (fields.weather !== undefined) update.weather = String(fields.weather);
+  if (fields.date !== undefined) update.date = new Date(fields.date);
+  if (fields.metadata !== undefined) update.metadata = fields.metadata;
+  await Run.updateOne({ _id: runObjectId }, { $set: update });
+  const run = await Run.findById(runid);
+  return withRunName(await hydrateRunLabels(run));
+};
+
 module.exports = {
   getAllRunsDB,
   getSingleRunDB,
@@ -841,6 +853,7 @@ module.exports = {
   getRunTrims,
   updateRunTrims,
   deleteRunTrims,
+  updateRunMetadata,
 };
 
 const withRunName = (run) => {

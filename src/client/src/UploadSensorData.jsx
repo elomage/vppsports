@@ -192,10 +192,7 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
     <div className="upload-view">
       <div className="upload-card">
         <h2>Upload Sensor Data</h2>
-        <p className="upload-hint">
-          Upload a sensor export in `.BIN` or `.CSV` format to either create a new run or append data to an existing run.
-          Existing runs are limited to the contexts assigned to your account.
-        </p>
+
         <form className="upload-form" onSubmit={handleUpload}>
           <div className="upload-mode-toggle">
             <label className="upload-mode-option">
@@ -299,11 +296,6 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
             accept=".bin,.csv,text/csv"
             onChange={handleFileChange}
           />
-          {selectedFile && (
-            <div className="upload-file-meta">
-              Selected: {selectedFile.name} ({Math.round(selectedFile.size / 1024)} KB)
-            </div>
-          )}
           {selectedFileType === 'csv' && (
             <div className="upload-file-meta">
               CSV format: one <code>timestamp</code> column (seconds) required; all remaining columns are

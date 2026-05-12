@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader';
@@ -25,10 +25,31 @@ const fetchRunSensorOrientation = async (runid, accelerometerid, gyroscopeid, ma
     }
 };
 
-const ModelVisualizer = ({ selectedRun, sliderValue, data }) => {
+const binarySearchNearest = (readings, ts) => {
+    let lo = 0, hi = readings.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (readings[mid].timestamp < ts) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo > 0 && Math.abs(readings[lo - 1].timestamp - ts) < Math.abs(readings[lo].timestamp - ts)) {
+        return readings[lo - 1];
+    }
+    return readings[lo];
+};
+
+const ModelVisualizer = ({ selectedRun, sliderValue, data, removeFunction }) => {
     const controlsRef = useRef(null);
     const objectRef = useRef(null);
     const containerRef = useRef(null);
+    const [sensitivity, setSensitivity] = useState(1);
+
+    const rotationReadings = useMemo(() => {
+        if (!Array.isArray(selectedRun?.data)) return [];
+        return selectedRun.data
+            .filter(d => d.sensorType === 'gyroscope' && Array.isArray(d.data) && d.data.length >= 3)
+            .sort((a, b) => a.timestamp - b.timestamp);
+    }, [selectedRun]);
 
     const resetIMUZoom = () => {
         if (controlsRef.current) {
@@ -131,92 +152,36 @@ const ModelVisualizer = ({ selectedRun, sliderValue, data }) => {
     }, []);
 
     useEffect(() => {
-        if (objectRef.current && selectedRun && selectedRun.orientationData) {
-            
-            // const accelerometer = selectedRun.filteredRunData?.data?.find(d => d._id === "accelerometer") || selectedRun.data.find(d => d._id === "accelerometer");
-            // const accelerometer = selectedRun.filteredRunData?.data?.find(d => d._id === 1) || selectedRun.data.find(d => d._id === 1);
-            // const targetTimestamp = accelerometer && accelerometer.readings[sliderValue] ? accelerometer.readings[sliderValue].timestamp : null;
-            // let orientation = null;
-            // if (targetTimestamp) {
-            //     orientation = selectedRun.orientationData.reduce((prev, curr) =>
-            //         Math.abs(curr.timestamp - targetTimestamp) < Math.abs(prev.timestamp - targetTimestamp)
-            //             ? curr
-            //             : prev,
-            //     selectedRun.orientationData[0]);
-            // }
+        if (!objectRef.current || !selectedRun) return;
 
+        // Path 1: direct gyroscope sensor readings (primary)
+        if (rotationReadings.length > 0) {
+            const currentTs = selectedRun.totalTimestamps?.[sliderValue];
+            if (currentTs == null) return;
+            const reading = binarySearchNearest(rotationReadings, currentTs);
+            if (reading) {
+                objectRef.current.rotation.x = reading.data[0] * sensitivity;
+                objectRef.current.rotation.y = reading.data[1] * sensitivity;
+                objectRef.current.rotation.z = reading.data[2] * sensitivity;
+            }
+            return;
+        }
 
-
-            // const totalTimestamps = selectedRun.totalTimestamps;
-
-            // const currentTimestamp = totalTimestamps[sliderValue];
-
-            // const orientation = selectedRun.orientationData.reduce((prev, curr) => {
-            // const prevDiff = Math.abs(prev.timestamp - currentTimestamp);
-            // const currDiff = Math.abs(curr.timestamp - currentTimestamp);
-
-
-            // return currDiff < prevDiff ? curr : prev;
-            // }, selectedRun.orientationData[0]);
-
-
-            
-            
-            
-
-            const orientation = selectedRun.orientationData.reduce((prev, curr) => {
-                const prevDiff = Math.abs(prev.timestamp - selectedRun.totalTimestamps[sliderValue]);
-                const currDiff = Math.abs(curr.timestamp - selectedRun.totalTimestamps[sliderValue]);
-                return currDiff < prevDiff ? curr : prev;
-            }, selectedRun.orientationData[0]);
-
-            // const orientation = selectedRun.orientationData[sliderValue] || null;
-
-            // 
-
-            // let orientation = await fetchRunSensorOrientation(selectedRun._id, 1, 2, 3);
-
-            // let orientation = null;
-            // if (selectedRun.orientationData?.[sliderValue]?.[0] === selectedRun.totalTimestamps?.[sliderValue]) {
-            //     orientation = selectedRun.orientationData[sliderValue];
-            // }
-            // const orientation = selectedRun.orientationData[sliderValue] ? selectedRun.orientationData[sliderValue][0] === selectedRun.totalTimestamps[sliderValue] : null;
-
-            // const orientation = se;
-
-            
-
-
-            
-
+        // Path 2: pre-computed orientationData (legacy fallback)
+        if (selectedRun.orientationData?.length > 0) {
+            const currentTs = selectedRun.totalTimestamps?.[sliderValue];
+            if (currentTs == null) return;
+            const orientation = selectedRun.orientationData.reduce((prev, curr) =>
+                Math.abs(curr.timestamp - currentTs) < Math.abs(prev.timestamp - currentTs) ? curr : prev,
+                selectedRun.orientationData[0]
+            );
             if (orientation) {
-
-
-
-                // const { timestamp, roll, yaw, pitch } = orientation;
-
-                // let pitch = orientation[1];
-                // let yaw = orientation[2];
-                // let roll = orientation[3];
-
-
-                let pitch = orientation.pitch;
-                let yaw = orientation.yaw;
-                let roll = orientation.roll;
-
-                //TEST DATA OFFSETS
-            
-                // objectRef.current.rotation.x = -pitch / 11;
-                // objectRef.current.rotation.y = yaw / 57;
-                // objectRef.current.rotation.z = roll / 18;
-
-                objectRef.current.rotation.x = -pitch;
-                objectRef.current.rotation.y = yaw;
-                objectRef.current.rotation.z = roll;
-
+                objectRef.current.rotation.x = -orientation.pitch;
+                objectRef.current.rotation.y = orientation.yaw;
+                objectRef.current.rotation.z = orientation.roll;
             }
         }
-    }, [sliderValue, selectedRun]);
+    }, [sliderValue, selectedRun, rotationReadings, sensitivity]);
 
     useEffect(() => {
         let arrowHelper;
@@ -310,9 +275,26 @@ const ModelVisualizer = ({ selectedRun, sliderValue, data }) => {
 
     return (
         <>
-        <button id="reset-imu-zoom-button" onClick={resetIMUZoom} className="btn-reset-zoom">
-            Reset Zoom
-        </button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderBottom: '1px solid #dee2e6', flexShrink: 0, gap: '12px' }}>
+            <button id="reset-imu-zoom-button" onClick={resetIMUZoom} className="btn btn-sm btn-outline-primary">
+                Reset Zoom
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                <label style={{ fontSize: '13px', whiteSpace: 'nowrap', margin: 0 }}>Sensitivity: {sensitivity.toFixed(2)}x</label>
+                <input
+                    type="range"
+                    min="0.01"
+                    max="2"
+                    step="0.01"
+                    value={sensitivity}
+                    onChange={e => setSensitivity(Number(e.target.value))}
+                    style={{ flex: 1 }}
+                />
+            </div>
+            <button type="button" className="btn btn-sm btn-outline-danger" onClick={removeFunction}>
+                Remove
+            </button>
+        </div>
         <div id="rotation-visualizer" ref={containerRef} style={{ 
             display: 'flex', 
             flexDirection: 'column', 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
-import "./UPlotGraph.css";
+import "./EChartGraph.css";
 import { fetchFilters, fetchRunViewState, fetchRuns, saveRunViewState, updateRunLabels, updateRunTrims } from "./api";
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL;
@@ -9,14 +9,6 @@ const DEFAULT_PLOT_RESOLUTION = 1400;
 
 // Fallback filter list shown before the server responds.
 const BUILTIN_FILTERS_FALLBACK = [
-  {
-    id: "kalman",
-    label: "Kalman",
-    params: [
-      { key: "R", label: "Measurement noise", default: 0.01, min: 0.0001, max: 10, step: 0.0001 },
-      { key: "Q", label: "Process noise", default: 1, min: 0.001, max: 100, step: 0.01 },
-    ],
-  },
   {
     id: "movingaverage",
     label: "Mov Avg",
@@ -33,17 +25,10 @@ const BUILTIN_FILTERS_FALLBACK = [
     ],
   },
   {
-    id: "lowpass",
-    label: "Low-pass",
-    params: [
-      { key: "alpha", label: "Smoothing α (0–1)", default: 0.1, min: 0.001, max: 0.999, step: 0.001 },
-    ],
-  },
-  {
     id: "highpass",
     label: "High-pass",
     params: [
-      { key: "alpha", label: "Cutoff α (0–1)", default: 0.9, min: 0.001, max: 0.999, step: 0.001 },
+      { key: "cutoffHz", label: "Cutoff frequency (Hz)", default: 0.1, min: 0.001, max: 100, step: 0.001 },
     ],
   },
 ];

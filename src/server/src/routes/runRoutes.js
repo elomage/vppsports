@@ -1071,19 +1071,43 @@ const parseCsvRows = (csvText) => {
     .map((line) => line.trim())
     .filter(Boolean);
 
-  if (lines.length < 2) {
-    throw new Error("CSV upload requires a header row and at least one data row.");
+  if (lines.length < 1) {
+    throw new Error("CSV upload requires at least one data row.");
   }
 
-  const rawHeaderCells = parseCsvLine(lines[0]);
-  const headerCells = rawHeaderCells.map(normalizeCsvHeader);
-  const originalHeaderCells = rawHeaderCells.map((h) => String(h || "").trim());
+  // Detect headerless CSV: every cell in the first line parses as a finite number.
+  const firstCells = parseCsvLine(lines[0]);
+  const isHeaderless =
+    firstCells.length > 0 &&
+    firstCells.every((c) => c.trim() !== "" && Number.isFinite(Number(c.trim())));
 
-  if (headerCells.length === 0 || headerCells.every((cell) => !cell)) {
-    throw new Error("CSV header row is empty.");
+  let headerCells, originalHeaderCells, dataLines;
+
+  if (isHeaderless) {
+    if (firstCells.length < 2) {
+      throw new Error(
+        "Headerless CSV must have at least 2 columns (timestamp + one value column)."
+      );
+    }
+    // First column \u2192 "timestamp"; remaining \u2192 "col1", "col2", \u2026
+    headerCells = ["timestamp", ...firstCells.slice(1).map((_, i) => `col${i + 1}`)];
+    originalHeaderCells = [...headerCells];
+    dataLines = lines;
+  } else {
+    if (lines.length < 2) {
+      throw new Error("CSV upload requires a header row and at least one data row.");
+    }
+    const rawHeaderCells = parseCsvLine(lines[0]);
+    headerCells = rawHeaderCells.map(normalizeCsvHeader);
+    originalHeaderCells = rawHeaderCells.map((h) => String(h || "").trim());
+
+    if (headerCells.length === 0 || headerCells.every((cell) => !cell)) {
+      throw new Error("CSV header row is empty.");
+    }
+    dataLines = lines.slice(1);
   }
 
-  const rows = lines.slice(1).map((line, index) => {
+  const rows = dataLines.map((line, index) => {
     const cells = parseCsvLine(line);
     const row = {};
     headerCells.forEach((header, cellIndex) => {
@@ -1091,7 +1115,7 @@ const parseCsvRows = (csvText) => {
         row[header] = cells[cellIndex] ?? "";
       }
     });
-    row.__rowNumber = index + 2;
+    row.__rowNumber = isHeaderless ? index + 1 : index + 2;
     return row;
   });
 
@@ -1731,9 +1755,17 @@ runRouter.post("/export/multi-arff", async (req, res) => {
   }
 });
 
+const CSV_ALL_FIELDS = ["runId", "runName", "runDate", "context", "sensorId", "sensorType", "timestamp", "sensorValues", "labels"];
+
 runRouter.post("/export/multi-csv", async (req, res) => {
   try {
-    const { runIds } = req.body || {};
+    const { runIds, fields } = req.body || {};
+
+    const enabledFields = new Set(
+      Array.isArray(fields) && fields.length > 0
+        ? fields.filter((f) => CSV_ALL_FIELDS.includes(f))
+        : CSV_ALL_FIELDS
+    );
 
     if (!Array.isArray(runIds) || runIds.length === 0) {
       return res.status(400).json({ message: "Provide a non-empty runIds array." });
@@ -1833,10 +1865,15 @@ runRouter.post("/export/multi-csv", async (req, res) => {
     // Build CSV header.
     const axisHeaders = Array.from({ length: maxAxes }, (_, i) => axisColumnName(i));
     const headers = [
-      "runId", "runName", "runDate", "context",
-      "sensorId", "sensorType", "timestamp",
-      ...axisHeaders,
-      "labelId", "labelText", "labelKind",
+      ...(enabledFields.has("runId")       ? ["runId"]       : []),
+      ...(enabledFields.has("runName")      ? ["runName"]      : []),
+      ...(enabledFields.has("runDate")      ? ["runDate"]      : []),
+      ...(enabledFields.has("context")      ? ["context"]      : []),
+      ...(enabledFields.has("sensorId")     ? ["sensorId"]     : []),
+      ...(enabledFields.has("sensorType")   ? ["sensorType"]   : []),
+      ...(enabledFields.has("timestamp")    ? ["timestamp"]    : []),
+      ...(enabledFields.has("sensorValues") ? axisHeaders      : []),
+      ...(enabledFields.has("labels")       ? ["labelId", "labelText", "labelKind"] : []),
     ];
 
     const lines = [buildCsvLine(headers)];
@@ -1846,10 +1883,15 @@ runRouter.post("/export/multi-csv", async (req, res) => {
         (_, i) => (row.axisValues[i] !== undefined ? row.axisValues[i] : "")
       );
       lines.push(buildCsvLine([
-        row.runId, row.runName, row.runDate, row.context,
-        row.sensorId, row.sensorType, row.timestamp,
-        ...axisCells,
-        row.labelId, row.labelText, row.labelKind,
+        ...(enabledFields.has("runId")       ? [row.runId]       : []),
+        ...(enabledFields.has("runName")      ? [row.runName]      : []),
+        ...(enabledFields.has("runDate")      ? [row.runDate]      : []),
+        ...(enabledFields.has("context")      ? [row.context]      : []),
+        ...(enabledFields.has("sensorId")     ? [row.sensorId]     : []),
+        ...(enabledFields.has("sensorType")   ? [row.sensorType]   : []),
+        ...(enabledFields.has("timestamp")    ? [row.timestamp]    : []),
+        ...(enabledFields.has("sensorValues") ? axisCells           : []),
+        ...(enabledFields.has("labels")       ? [row.labelId, row.labelText, row.labelKind] : []),
       ]));
     }
 
@@ -1915,6 +1957,35 @@ runRouter.put("/:runid/trims", async (req, res) => {
     return res.json({ trims: updatedTrims });
   } catch (error) {
     return res.status(400).json({ message: "Failed to update run trims.", error: error.message });
+  }
+});
+
+runRouter.put("/:runid/metadata", async (req, res) => {
+  try {
+    const runid = req.params.runid;
+    const authorizedRun = await findRunForUser(runid, req.user).catch(() => null);
+    if (!authorizedRun) return res.status(404).json({ message: "Run not found." });
+
+    const { description, weather, date, metadata } = req.body;
+    const fields = {};
+    if (description !== undefined) fields.description = String(description);
+    if (weather !== undefined) fields.weather = String(weather);
+    if (date !== undefined) {
+      const parsed = new Date(date);
+      if (isNaN(parsed.getTime())) return res.status(400).json({ message: "Invalid date." });
+      fields.date = parsed;
+    }
+    if (metadata !== undefined) {
+      if (typeof metadata !== "object" || Array.isArray(metadata) || metadata === null) {
+        return res.status(400).json({ message: "Metadata must be a JSON object." });
+      }
+      fields.metadata = metadata;
+    }
+
+    const updated = await runService.updateRunMetadata(runid, fields);
+    return res.json({ run: updated });
+  } catch (error) {
+    return res.status(400).json({ message: "Failed to update run metadata.", error: error.message });
   }
 });
 

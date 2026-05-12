@@ -217,6 +217,14 @@ export async function updateRunTrims(runId, trims) {
   });
 }
 
+export async function updateRunMetadata(runId, fields) {
+  return request(`/run/${runId}/metadata`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(fields),
+  });
+}
+
 export async function fetchSelectedRunFiltered(runId) {
   return request(`/run/${runId}?filterData=true`);
 }
@@ -412,7 +420,7 @@ export async function exportRunArff(runId, variant = "features", points) {
   };
 }
 
-export async function exportMultiRunCsv(runIds) {
+export async function exportMultiRunCsv(runIds, fields) {
   const headers = new Headers({ "Content-Type": "application/json" });
   if (accessToken) {
     headers.set("Authorization", `Bearer ${accessToken}`);
@@ -422,7 +430,7 @@ export async function exportMultiRunCsv(runIds) {
     method: "POST",
     headers,
     credentials: "include",
-    body: JSON.stringify({ runIds }),
+    body: JSON.stringify({ runIds, fields }),
   });
 
   if (response.status === 401) {

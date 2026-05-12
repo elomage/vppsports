@@ -4,7 +4,6 @@ import { checkRunVideoExists, fetchPluginAssignments } from './api';
 
 const componentsMap = {
     info: React.lazy(() => import('./Infovisualizer')),
-    graph: React.lazy(() => import('./UPlotGraph')),
     echart: React.lazy(() => import('./EChartGraph')),
     video: React.lazy(() => import('./VideoVisualizer')),
     model: React.lazy(() => import('./Modelvisualizer')),
@@ -40,8 +39,6 @@ export default function ComponentSelector({ selectedRun, effectiveTimestamps, sl
             )
         );
     };
-
-    const graphCount = selectedComponent.filter(component => component.type === 'graph').length || 1;
 
     useEffect(() => {
         let isCancelled = false;
@@ -182,21 +179,18 @@ export default function ComponentSelector({ selectedRun, effectiveTimestamps, sl
                 {enabledVizTypes.has('info') && (
                     <button className='btn btn-primary' onClick={() => addComponent('info')} style={{margin: '5px'}}>Add Info</button>
                 )}
-                {enabledVizTypes.has('graph') && (
-                    <button className='btn btn-primary' onClick={() => addComponent('graph')} style={{margin: '5px'}}>Add uPlot</button>
-                )}
                 {enabledVizTypes.has('model') && (
                     <button className='btn btn-primary' onClick={() => addComponent('model')} style={{margin: '5px'}}>Add Model</button>
                 )}
             </div>
-            <div className='flex flex-col items-center p-6' id='visualization-component-wrapper' style={{ '--graph-count': graphCount }}>
+            <div className='flex flex-col items-center p-6' id='visualization-component-wrapper'>
                 <div className='flex flex-wrap' style={{ flex: 1, width: '100%' }}>
                     {(() => {
                         let echartCounter = 0;
                         return selectedComponent.filter((component) => component.type !== 'video' || hasVideoForRun).map((component, index, visibleComponents) => {
                         const chartIndex = component.type === 'echart' ? echartCounter++ : undefined;
                         const Component = componentsMap[component.type];
-                        const wrapperClass = component.type === 'graph' || component.type === 'echart'
+                        const wrapperClass = component.type === 'echart'
                             ? 'graph-wrapper'
                             : component.type === 'model'
                                 ? 'model-wrapper'
