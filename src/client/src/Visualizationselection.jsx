@@ -9,6 +9,22 @@ const componentsMap = {
     model: React.lazy(() => import('./Modelvisualizer')),
 };
 
+function buildDisplayItems(components) {
+    const videoComp = components.find(c => c.type === 'video');
+    const modelComp = components.find(c => c.type === 'model');
+    if (!videoComp || !modelComp) return components;
+
+    return components.reduce((acc, comp) => {
+        if (comp.type === 'model') return acc;
+        if (comp.type === 'video') {
+            acc.push({ type: 'group', id: '__video-model-group__', flexGrow: comp.flexGrow, video: comp, model: modelComp });
+        } else {
+            acc.push(comp);
+        }
+        return acc;
+    }, []);
+}
+
 export default function ComponentSelector({ selectedRun, effectiveTimestamps, sliderValue, setSliderValue, onEffectiveTimestampsChange }) {
     const [selectedComponent, setSelectedComponent] = useState([
         { id: 1, type: 'echart', flexGrow: 1 },
@@ -187,58 +203,119 @@ export default function ComponentSelector({ selectedRun, effectiveTimestamps, sl
                 <div className='flex flex-wrap' style={{ flex: 1, width: '100%' }}>
                     {(() => {
                         let echartCounter = 0;
-                        return selectedComponent.filter((component) => component.type !== 'video' || hasVideoForRun).map((component, index, visibleComponents) => {
-                        const chartIndex = component.type === 'echart' ? echartCounter++ : undefined;
-                        const Component = componentsMap[component.type];
-                        const wrapperClass = component.type === 'echart'
-                            ? 'graph-wrapper'
-                            : component.type === 'model'
-                                ? 'model-wrapper'
-                                : component.type === 'video'
-                                    ? 'video-wrapper'
-                                    : 'component-wrapper';
-                        const isLastComponent = index === visibleComponents.length - 1;
+                        const visibleComponents = selectedComponent.filter((c) => c.type !== 'video' || hasVideoForRun);
+                        const displayItems = buildDisplayItems(visibleComponents);
 
-                        return (
-                            <React.Fragment key={component.id}>
-                                <div
-                                    className={wrapperClass}
-                                    style={{
-                                        flex: `${component.flexGrow} 1 0`,
-                                        minWidth: '200px',
-                                        minHeight: '200px',
-                                        position: 'relative',
-                                        display: 'flex',
-                                        flexDirection: 'column'
-                                    }}
-                                >
-                                    <React.Suspense fallback={<div>Loading...</div>}>
-                                        <Component
-                                            selectedRun={selectedRun}
-                                            sliderValue={sliderValue}
-                                            removeFunction={() => removeComponent(component.id)}
-                                            style={{width: '100%', height: '100%', flex: 1}}
-                                            setSliderValue={setSliderValue}
-                                            onEffectiveTimestampsChange={component.type === 'echart' ? onEffectiveTimestampsChange : undefined}
-                                            enabledFilterIds={component.type === 'echart' ? enabledFilterIds : undefined}
-                                            effectiveTimestamps={component.type === 'video' ? effectiveTimestamps : undefined}
-                                            chartIndex={chartIndex}
-                                        />
-                                    </React.Suspense>
-                                </div>
-                                {!isLastComponent && (
+                        const applyResize = (item, grow) => {
+                            if (item.type === 'group') {
+                                updateFlexGrow(item.video.id, grow);
+                                updateFlexGrow(item.model.id, grow);
+                            } else {
+                                updateFlexGrow(item.id, grow);
+                            }
+                        };
+
+                        return displayItems.map((item, index) => {
+                            const isLast = index === displayItems.length - 1;
+
+                            if (item.type === 'group') {
+                                const VideoComponent = componentsMap['video'];
+                                const ModelComponent = componentsMap['model'];
+                                return (
+                                    <React.Fragment key={item.id}>
+                                        <div
+                                            className="video-model-group"
+                                            style={{ flex: `${item.flexGrow} 1 0`, minWidth: '300px' }}
+                                        >
+                                            <div className="video-wrapper" style={{ flex: 1, minHeight: '200px' }}>
+                                                <React.Suspense fallback={<div>Loading...</div>}>
+                                                    <VideoComponent
+                                                        selectedRun={selectedRun}
+                                                        sliderValue={sliderValue}
+                                                        removeFunction={() => removeComponent(item.video.id)}
+                                                        style={{ width: '100%', height: '100%', flex: 1 }}
+                                                        setSliderValue={setSliderValue}
+                                                        effectiveTimestamps={effectiveTimestamps}
+                                                    />
+                                                </React.Suspense>
+                                            </div>
+                                            <div className="model-wrapper" style={{ flex: 1, minHeight: '200px' }}>
+                                                <React.Suspense fallback={<div>Loading...</div>}>
+                                                    <ModelComponent
+                                                        selectedRun={selectedRun}
+                                                        sliderValue={sliderValue}
+                                                        removeFunction={() => removeComponent(item.model.id)}
+                                                        style={{ width: '100%', height: '100%', flex: 1 }}
+                                                        setSliderValue={setSliderValue}
+                                                        effectiveTimestamps={effectiveTimestamps}
+                                                    />
+                                                </React.Suspense>
+                                            </div>
+                                        </div>
+                                        {!isLast && (
+                                            <ResizeHandle
+                                                leftComponent={item}
+                                                rightComponent={displayItems[index + 1]}
+                                                onResize={(leftGrow, rightGrow) => {
+                                                    applyResize(item, leftGrow);
+                                                    applyResize(displayItems[index + 1], rightGrow);
+                                                }}
+                                            />
+                                        )}
+                                    </React.Fragment>
+                                );
+                            }
+
+                            const chartIndex = item.type === 'echart' ? echartCounter++ : undefined;
+                            const Component = componentsMap[item.type];
+                            const wrapperClass = item.type === 'echart'
+                                ? 'graph-wrapper'
+                                : item.type === 'model'
+                                    ? 'model-wrapper'
+                                    : item.type === 'video'
+                                        ? 'video-wrapper'
+                                        : 'component-wrapper';
+
+                            return (
+                                <React.Fragment key={item.id}>
+                                    <div
+                                        className={wrapperClass}
+                                        style={{
+                                            flex: `${item.flexGrow} 1 0`,
+                                            minWidth: '200px',
+                                            minHeight: '200px',
+                                            position: 'relative',
+                                            display: 'flex',
+                                            flexDirection: 'column'
+                                        }}
+                                    >
+                                        <React.Suspense fallback={<div>Loading...</div>}>
+                                            <Component
+                                                selectedRun={selectedRun}
+                                                sliderValue={sliderValue}
+                                                removeFunction={() => removeComponent(item.id)}
+                                                style={{ width: '100%', height: '100%', flex: 1 }}
+                                                setSliderValue={setSliderValue}
+                                                onEffectiveTimestampsChange={item.type === 'echart' ? onEffectiveTimestampsChange : undefined}
+                                                enabledFilterIds={item.type === 'echart' ? enabledFilterIds : undefined}
+                                                effectiveTimestamps={item.type === 'video' || item.type === 'model' ? effectiveTimestamps : undefined}
+                                                chartIndex={chartIndex}
+                                            />
+                                        </React.Suspense>
+                                    </div>
+                                    {!isLast && (
                                         <ResizeHandle
-                                            leftComponent={component}
-                                            rightComponent={visibleComponents[index + 1]}
+                                            leftComponent={item}
+                                            rightComponent={displayItems[index + 1]}
                                             onResize={(leftGrow, rightGrow) => {
-                                                updateFlexGrow(component.id, leftGrow);
-                                            updateFlexGrow(visibleComponents[index + 1].id, rightGrow);
+                                                applyResize(item, leftGrow);
+                                                applyResize(displayItems[index + 1], rightGrow);
                                             }}
                                         />
-                                )}
-                            </React.Fragment>
-                        );
-                    });
+                                    )}
+                                </React.Fragment>
+                            );
+                        });
                     })()}
                 </div>
             </div>

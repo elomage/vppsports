@@ -106,32 +106,6 @@ const getSingleRunDB = async (runid) => {
     let run = await runService.getSingleRunDB(runid);
     run = ensureRunName(run);
 
-    const sensorData = await runService.getRunSensorReadingsAll(runid);
-
-    // run.orientationData = [];
-
-    // run.totalTimestamps = [];
-
-    // var pitch = 0;
-    // var roll = 0;
-    // var yaw = 0;
-
-    // const gyroItem = sensorData.find((item) => item._id === "gyroscope");
-    // if (gyroItem && gyroItem.readings && gyroItem.readings.length > 0) {
-    //   gyroItem.readings.forEach((element) => {
-    //     pitch += element.data[1] / 6;
-    //     roll += element.data[0] / 6;
-    //     yaw += element.data[2] / 6;
-
-    //     run.orientationData.push([element.timestamp, roll, yaw, pitch]);
-    //   });
-    // }
-
-    // const orientationData = await runService.getRunOrientationData(runid, 1);
-
-    // const orientationData = await getRunSensorOrientationData(runid, 1, 2, 3);
-    const orientationData = [];
-
     const trims = await runService.getRunTrims(runid);
     const totalTimestamps = await runService.getTotalTimestamps(runid, trims);
 
@@ -140,8 +114,6 @@ const getSingleRunDB = async (runid) => {
 
     const response = {
       ...runObject,
-      data: sensorData,
-      orientationData: orientationData,
       totalTimestamps: totalTimestamps,
       trims: trims,
     };

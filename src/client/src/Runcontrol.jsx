@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { fetchRuns, fetchSelectedRun, fetchSelectedRunFiltered } from './api';
+import { fetchRuns, fetchSelectedRun } from './api';
 import './Runcontrol.css';
 
 const RunControl = ({ setSelectedRun, runs: externalRuns }) => {
@@ -31,11 +31,7 @@ const RunControl = ({ setSelectedRun, runs: externalRuns }) => {
     }
     setLoadingRun(true);
     try {
-      const [runData, filtered] = await Promise.all([
-        fetchSelectedRun(runId),
-        fetchSelectedRunFiltered(runId),
-      ]);
-      runData.filteredRunData = filtered; // FIXME kept as-is
+      const runData = await fetchSelectedRun(runId);
       setSelectedRun(runData);
     } catch (err) {
       console.error('Failed to load run data', err);

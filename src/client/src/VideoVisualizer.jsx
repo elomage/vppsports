@@ -40,16 +40,7 @@ const saveOffset = (runId, offset) => {
 
 // ── Common frame rates ────────────────────────────────────────────────────────
 
-const FRAME_RATE_OPTIONS = [
-  { label: '24 fps', value: 24 },
-  { label: '25 fps', value: 25 },
-  { label: '29.97 fps', value: 29.97 },
-  { label: '30 fps', value: 30 },
-  { label: '50 fps', value: 50 },
-  { label: '60 fps', value: 60 },
-];
-
-const DEFAULT_FRAME_RATE = 30;
+const DEFAULT_FRAME_DURATION = 1 / 30;
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -59,10 +50,6 @@ const VideoVisualizer = ({ selectedRun, effectiveTimestamps, sliderValue, setSli
   const [videoUrl, setVideoUrl]       = useState('');
   const [videoError, setVideoError]   = useState(null);
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
-  const [frameRate, setFrameRate]     = useState(DEFAULT_FRAME_RATE);
-
-  // frameDuration is derived — not stored in state to avoid stale closures.
-  const frameDuration = 1 / frameRate;
 
   // Sync offset: seconds to add to videoEl.currentTime to get the matching
   // sensor timestamp.  Loaded from localStorage per run, adjustable via UI.
@@ -189,12 +176,15 @@ const VideoVisualizer = ({ selectedRun, effectiveTimestamps, sliderValue, setSli
 
     let rafId = null;
     let lastIndex = -1;
+    let lastUpdateTime = 0;
+    const UPDATE_INTERVAL_MS = 50; // ~20 Hz React updates; video plays natively at full rate
 
-    const tick = () => {
+    const tick = (now) => {
       const videoTargetTime = videoEl.currentTime + startOffset;
       const closestIndex    = findClosestTimestampIndex(sensorReadings, videoTargetTime);
-      if (closestIndex !== lastIndex) {
+      if (closestIndex !== lastIndex && now - lastUpdateTime >= UPDATE_INTERVAL_MS) {
         lastIndex = closestIndex;
+        lastUpdateTime = now;
         setSliderValue(closestIndex);
       }
       rafId = requestAnimationFrame(tick);
@@ -215,12 +205,12 @@ const VideoVisualizer = ({ selectedRun, effectiveTimestamps, sliderValue, setSli
   // ── Frame stepping ────────────────────────────────────────────────────────
   const moveOneFrameBack = () => {
     if (videoRef.current)
-      videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - frameDuration);
+      videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - DEFAULT_FRAME_DURATION);
   };
 
   const moveOneFrameForward = () => {
     if (videoRef.current)
-      videoRef.current.currentTime = videoRef.current.currentTime + frameDuration;
+      videoRef.current.currentTime = videoRef.current.currentTime + DEFAULT_FRAME_DURATION;
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -245,10 +235,10 @@ const VideoVisualizer = ({ selectedRun, effectiveTimestamps, sliderValue, setSli
           {/* ── Video playback controls ── */}
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '8px' }}>
             <button className="btn btn-sm btn-outline-primary" style={btnSm} onClick={moveOneFrameBack}>
-              ◀ Frame
+              &lt; Frame
             </button>
             <button className="btn btn-sm btn-outline-primary" style={btnSm} onClick={moveOneFrameForward}>
-              Frame ▶
+              Frame &gt;
             </button>
             <button className="btn btn-sm btn-outline-secondary" style={btnSm} onClick={() => setPlaybackSpeed((s) => Math.max(0.25, s - 0.25))}>
               Slower
@@ -259,17 +249,6 @@ const VideoVisualizer = ({ selectedRun, effectiveTimestamps, sliderValue, setSli
             <button className="btn btn-sm btn-outline-secondary" style={btnSm} onClick={() => setPlaybackSpeed((s) => s + 0.25)}>
               Faster
             </button>
-            <select
-              className="form-select form-select-sm"
-              value={frameRate}
-              onChange={(e) => setFrameRate(Number(e.target.value))}
-              style={{ width: 'auto', fontSize: '0.85em' }}
-              title="Video frame rate — affects frame-step size and ±1 frame offset buttons"
-            >
-              {FRAME_RATE_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
           </div>
 
           {/* ── Sync offset controls ── */}
@@ -277,15 +256,15 @@ const VideoVisualizer = ({ selectedRun, effectiveTimestamps, sliderValue, setSli
             <div style={{ fontWeight: 600, marginBottom: '6px' }}>
               Video sync offset
               <span style={{ fontWeight: 400, color: '#666', marginLeft: '6px' }}>
-                — sensor_time = video_time + offset
+                video_time + offset
               </span>
             </div>
 
             {/* Coarse / fine / frame-precise buttons */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', marginBottom: '6px' }}>
-              <button className="btn btn-sm btn-outline-secondary" onClick={() => adjustOffset(-1)}>−1 s</button>
+              {/* <button className="btn btn-sm btn-outline-secondary" onClick={() => adjustOffset(-1)}>−1 s</button>
               <button className="btn btn-sm btn-outline-secondary" onClick={() => adjustOffset(-0.1)}>−0.1 s</button>
-              <button className="btn btn-sm btn-outline-secondary" onClick={() => adjustOffset(-frameDuration)}>−1 f</button>
+              <button className="btn btn-sm btn-outline-secondary" onClick={() => adjustOffset(-frameDuration)}>−1 f</button> */}
 
               <input
                 type="number"
@@ -299,10 +278,10 @@ const VideoVisualizer = ({ selectedRun, effectiveTimestamps, sliderValue, setSli
                 title="Offset in seconds — edit directly or use buttons"
               />
               <span style={{ color: '#666' }}>s</span>
-
+{/* 
               <button className="btn btn-sm btn-outline-secondary" onClick={() => adjustOffset(frameDuration)}>+1 f</button>
               <button className="btn btn-sm btn-outline-secondary" onClick={() => adjustOffset(0.1)}>+0.1 s</button>
-              <button className="btn btn-sm btn-outline-secondary" onClick={() => adjustOffset(1)}>+1 s</button>
+              <button className="btn btn-sm btn-outline-secondary" onClick={() => adjustOffset(1)}>+1 s</button> */}
             </div>
 
             {/* Sync here + reset */}
@@ -310,7 +289,6 @@ const VideoVisualizer = ({ selectedRun, effectiveTimestamps, sliderValue, setSli
               <button
                 className="btn btn-sm btn-primary"
                 onClick={handleSyncHere}
-                title="Pause the video and move the data slider to the matching moment, then click this"
               >
                 Sync here
               </button>
@@ -321,9 +299,6 @@ const VideoVisualizer = ({ selectedRun, effectiveTimestamps, sliderValue, setSli
               >
                 Reset offset
               </button>
-              <span style={{ color: '#888', alignSelf: 'center' }}>
-                Pause video &amp; data slider at the same real-world moment, then click Sync here.
-              </span>
             </div>
           </div>
         </>

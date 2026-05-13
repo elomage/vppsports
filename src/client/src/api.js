@@ -225,10 +225,6 @@ export async function updateRunMetadata(runId, fields) {
   });
 }
 
-export async function fetchSelectedRunFiltered(runId) {
-  return request(`/run/${runId}?filterData=true`);
-}
-
 export async function fetchRunVideo(videoName, retry = true) {
   const headers = {};
   if (accessToken) {
