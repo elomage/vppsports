@@ -299,9 +299,10 @@ const UploadSensorData = ({ currentUser, runs, onRunCreated }) => {
           {selectedFileType === 'csv' && (
             <div className="upload-file-meta">
               CSV format: one <code>timestamp</code> column (seconds) required; all remaining columns are
-              imported as data channels using their header names as labels — e.g.{' '}
-              <code>timestamp,x,y,z</code> or <code>timestamp,ch1,ch2,force_left</code>.
+              imported as data channels — e.g. <code>timestamp,x,y,z</code> or <code>timestamp,ch1,temp</code>.
               Timestamp variants <code>timestamp_ms</code> and <code>timestamp_us</code> are also accepted.
+              Optional: add a <code>segment</code> column with annotation text — consecutive rows sharing
+              the same value become a range label; a single row becomes a point label.
             </div>
           )}
           <div className="upload-actions">

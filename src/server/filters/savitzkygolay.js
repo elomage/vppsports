@@ -1,15 +1,10 @@
-/**
- * Savitzky-Golay filter — fits a polynomial through a sliding window,
- * preserving peak shapes better than a simple moving average.
- */
 const savitzkyGolay = require("ml-savitzky-golay").default;
 
 module.exports = {
   id: "savitzkygolay",
   label: "Sav-Golay",
   description:
-    "Polynomial least-squares smoothing filter. Preserves peak height and shape " +
-    "better than moving average. Window size must be odd.",
+    "Polynomial least-squares smoothing filter. Preserves peak height and shape ",
   params: [
     {
       key: "windowSize",

@@ -7,7 +7,6 @@ const SERVER_URL = import.meta.env.VITE_SERVER_URL;
 const ACCESS_TOKEN_STORAGE_KEY = "vppsports_access_token";
 const DEFAULT_PLOT_RESOLUTION = 1400;
 
-// Fallback filter list shown before the server responds.
 const BUILTIN_FILTERS_FALLBACK = [
   {
     id: "movingaverage",
@@ -34,12 +33,22 @@ const BUILTIN_FILTERS_FALLBACK = [
 ];
 
 const TRACE_COLORS = [
-  "#1f77b4",
-  "#d62728",
-  "#2ca02c",
-  "#ff7f0e",
-  "#17becf",
-  "#8c564b",
+  "#2196F3",  // blue
+  "#FF5722",  // deep orange
+  "#4CAF50",  // green
+  "#E91E63",  // pink
+  "#FF9800",  // amber
+  "#9C27B0",  // purple
+  "#00BCD4",  // cyan
+  "#F44336",  // red
+  "#967000",  // teal
+  "#FFC107",  // yellow
+  "#3F51B5",  // indigo
+  "#8BC34A",  // lime green
+  "#FF4081",  // hot pink
+  "#00ACC1",  // dark cyan
+  "#7B1FA2",  // dark purple
+  "#FF6D00",  // orange accent
 ];
 
 const getAuthHeaders = () => {
@@ -73,29 +82,13 @@ const buildSensorDataUrl = (runId, sensorId, options = {}) => {
   if (Number.isFinite(options.end)) params.set("end", String(options.end));
   if (Number.isFinite(options.resolution))
     params.set("resolution", String(options.resolution));
-  if (options.residual) params.set("residual", "true");
+  
   const query = params.toString();
   return `${SERVER_URL}/run/${runId}/sensor/${sensorId}/data${query ? `?${query}` : ""}`;
 };
 
 const fetchSensorData = async (runId, sensorId, options = {}) =>
   fetchJson(buildSensorDataUrl(runId, sensorId, options));
-
-const normalizeSeriesPayload = (payload) => {
-  if (Array.isArray(payload)) {
-    return {
-      readings: payload,
-      sampleCountRaw: payload.length,
-      sampleCountReturned: payload.length,
-    };
-  }
-
-  return {
-    readings: Array.isArray(payload?.readings) ? payload.readings : [],
-    sampleCountRaw: payload?.sampleCountRaw ?? 0,
-    sampleCountReturned: payload?.sampleCountReturned ?? 0,
-  };
-};
 
 const getAxisCount = (readings) => {
   if (!Array.isArray(readings) || readings.length === 0) return 0;
@@ -239,8 +232,8 @@ const interpolateSeriesValueWithinBounds = (points, target) => {
   return interpolateSeriesValue(points, target);
 };
 
-const buildTraceKey = ({ runId, sensorId, axisIndex, useFilteredData, useResidualData }) =>
-  `${runId}:${sensorId}:${axisIndex}:${useResidualData ? "residual" : useFilteredData ? "filtered" : "raw"}`;
+const buildTraceKey = ({ runId, sensorId, axisIndex, useFilteredData }) =>
+  `${runId}:${sensorId}:${axisIndex}:${useFilteredData ? "filtered" : "raw"}`;
 
 const getSensorDisplayLabel = (entry) => {
   const hasName = entry.sensorName && String(entry.sensorName).trim();
@@ -265,112 +258,6 @@ const serializeLabelForSave = (label) => ({
       : [],
   updatedAt: new Date().toISOString(),
 });
-
-const HIGHLIGHT_LABEL_COLOR = "#0d6efd";
-const HIGHLIGHT_LABEL_PREFIX = "Detected section";
-
-const buildHighlightSectionsFromReadings = (readings, syncOffset = 0) => {
-  if (!Array.isArray(readings) || readings.length === 0) return [];
-
-  const sections = [];
-  let active = false;
-  let sectionStart = null;
-
-  readings.forEach((reading, index) => {
-    const zValue = reading?.data?.[2];
-    if (typeof zValue !== "number") return;
-
-    if (zValue > 1.25 && !active) {
-      active = true;
-      sectionStart = index;
-      return;
-    }
-
-    if (zValue < 1.1 && active) {
-      active = false;
-      const x0 = readings[sectionStart]?.timestamp + syncOffset;
-      const x1 = readings[index]?.timestamp + syncOffset;
-      if (Number.isFinite(x0) && Number.isFinite(x1) && x1 >= x0) {
-        sections.push({
-          x0,
-          x1,
-          color: "rgba(13, 110, 253, 0.12)",
-        });
-      }
-    }
-  });
-
-  if (active && sectionStart !== null) {
-    const x0 = readings[sectionStart]?.timestamp + syncOffset;
-    const x1 = readings[readings.length - 1]?.timestamp + syncOffset;
-    if (Number.isFinite(x0) && Number.isFinite(x1) && x1 >= x0) {
-      sections.push({
-        x0,
-        x1,
-        color: "rgba(13, 110, 253, 0.12)",
-      });
-    }
-  }
-
-  return sections;
-};
-
-const buildHighlightLabelId = (entryKey, startTimestamp, endTimestamp) =>
-  `highlight-${entryKey}-${Math.round(startTimestamp * 1000)}-${Math.round(endTimestamp * 1000)}`;
-
-const buildRangeLabelFromSection = ({
-  section,
-  sectionIndex,
-  sourceEntryKey,
-  seriesItems,
-}) => {
-  if (!section || !Array.isArray(seriesItems) || seriesItems.length === 0) {
-    return null;
-  }
-
-  const selectedPoints = seriesItems.flatMap((seriesItem) =>
-    (seriesItem.points || [])
-      .filter(
-        (point) =>
-          Number.isFinite(point?.x) &&
-          Number.isFinite(point?.y) &&
-          point.x >= section.x0 &&
-          point.x <= section.x1,
-      )
-      .map((point) => ({
-        traceKey: seriesItem.traceKey,
-        timestamp: point.x,
-        yValue: point.y,
-      })),
-  );
-
-  if (selectedPoints.length === 0) {
-    return null;
-  }
-
-  const orderedPoints = [...selectedPoints].sort(
-    (left, right) => left.timestamp - right.timestamp,
-  );
-  const firstPoint = orderedPoints[0];
-  const traceKeys = [...new Set(selectedPoints.map((point) => point.traceKey))];
-
-  return normalizeLabel({
-    id: buildHighlightLabelId(sourceEntryKey, section.x0, section.x1),
-    kind: "range",
-    text: `${HIGHLIGHT_LABEL_PREFIX} ${sectionIndex + 1}`,
-    color: HIGHLIGHT_LABEL_COLOR,
-    traceKeys,
-    points: [],
-    startTimestamp: section.x0,
-    endTimestamp: section.x1,
-    anchorTimestamp: firstPoint.timestamp,
-    anchorY: firstPoint.yValue,
-    dx: 0,
-    dy: 0,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  });
-};
 
 const normalizeLabel = (label) => {
   const kind = String(label?.kind || "")
@@ -535,7 +422,6 @@ export default function EChartGraph({
   const [isPlotLoading, setIsPlotLoading] = useState(false);
   const [isRawLoading, setIsRawLoading] = useState(false);
   const [sliderReadout, setSliderReadout] = useState([]);
-  const [showHighlightSections, setShowHighlightSections] = useState(false);
   const [availableRuns, setAvailableRuns] = useState([]);
   const [comparisonRunId, setComparisonRunId] = useState("");
   const [comparisonRuns, setComparisonRuns] = useState([]);
@@ -563,8 +449,7 @@ export default function EChartGraph({
   const [showTrims, setShowTrims] = useState(true);
   const [trimRevision, setTrimRevision] = useState(0);
   const [showStatAnnotations, setShowStatAnnotations] = useState(false);
-  const [residualEnabledBySensor, setResidualEnabledBySensor] = useState({});
-  const [residualSeriesBySensor, setResidualSeriesBySensor] = useState({});
+  
 
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
@@ -783,6 +668,20 @@ export default function EChartGraph({
   }, []);
 
   useEffect(() => {
+    const container = chartContainerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => {
+      const chart = getChartInstance();
+      if (chart) {
+        chart.resize();
+        setChartRevision((prev) => prev + 1);
+      }
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [getChartInstance]);
+
+  useEffect(() => {
     cacheRef.current = { plot: new Map(), raw: new Map() };
     requestIdRef.current = {
       plot: 0,
@@ -796,7 +695,6 @@ export default function EChartGraph({
     setSensorSyncOffsets({});
     setTraceVisibility({});
     setSliderReadout([]);
-    setShowHighlightSections(false);
     setVisibleRange(getInitialRange(selectedRun));
     setComparisonRunId("");
     setComparisonRuns([]);
@@ -861,9 +759,6 @@ export default function EChartGraph({
         }
         if (typeof chartState.showTrims === "boolean") {
           setShowTrims(chartState.showTrims);
-        }
-        if (typeof chartState.showHighlightSections === "boolean") {
-          setShowHighlightSections(chartState.showHighlightSections);
         }
         if (typeof chartState.showStatAnnotations === "boolean") {
           setShowStatAnnotations(chartState.showStatAnnotations);
@@ -1012,42 +907,16 @@ export default function EChartGraph({
               end: fetchEnd,
               filters: sensorFilterKey || undefined,
               resolution: plotResolution,
-            }).then(normalizeSeriesPayload);
+            });
             cacheRef.current.plot.set(cacheKey, cached);
           }
 
-          // Fetch residual alongside if enabled and filter is active
-          const wantResidual = residualEnabledBySensor[sensorKey] && !!sensorFilterKey;
-          let residualCached = null;
-          if (wantResidual) {
-            const residualCacheKey = `residual:${cacheKey}`;
-            residualCached = cacheRef.current.plot.get(residualCacheKey);
-            if (!residualCached) {
-              residualCached = fetchSensorData(selectedRun._id, sensorId, {
-                mode: "plot",
-                start: fetchStart,
-                end: fetchEnd,
-                filters: sensorFilterKey,
-                resolution: plotResolution,
-                residual: true,
-              }).then(normalizeSeriesPayload);
-              cacheRef.current.plot.set(residualCacheKey, residualCached);
-            }
-          }
-
-          return [sensorId, sensorKey, await cached, wantResidual ? await residualCached : null];
+          return [sensorId, sensorKey, await cached];
         }),
       );
 
       if (requestId !== requestIdRef.current.plot) return;
       setPlotSeriesBySensor(Object.fromEntries(nextEntries.map(([id, , data]) => [id, data])));
-      setResidualSeriesBySensor(
-        Object.fromEntries(
-          nextEntries
-            .filter(([, , , residual]) => residual !== null)
-            .map(([, key, , residual]) => [key, residual]),
-        ),
-      );
       setIsPlotLoading(false);
     };
 
@@ -1060,7 +929,6 @@ export default function EChartGraph({
   }, [
     plotResolution,
     primarySelectedSensorIds,
-    residualEnabledBySensor,
     selectedRun?._id,
     sensorFilterPipelines,
     sensorFiltersActive,
@@ -1100,8 +968,8 @@ export default function EChartGraph({
             cacheRef.current.raw.set(cacheKey, cached);
           }
 
-          const readings = await cached;
-          return [sensorId, Array.isArray(readings) ? readings : []];
+          const normalized = await cached;
+          return [sensorId, normalized.readings ?? []];
         }),
       );
 
@@ -1183,7 +1051,7 @@ export default function EChartGraph({
                       end: fetchEnd,
                       filters: sensorFilterKey || undefined,
                       resolution: plotResolution,
-                    }).then(normalizeSeriesPayload);
+                    });
                     cacheRef.current.plot.set(cacheKey, cached);
                   }
 
@@ -1272,9 +1140,8 @@ export default function EChartGraph({
     });
   }, [comparisonRuns, comparisonSelectedEntriesByRun, sensorFilterPipelines, sensorFiltersActive]);
 
-  const chartModel = useMemo(() => {
+  const seriesWithRenderData = useMemo(() => {
     const series = [];
-    const readoutEntries = [];
     const traceColorByLabel = new Map();
     const currentBaseTimestamp = selectedRun?.totalTimestamps?.[0];
     const visibleTimestamps = effectiveTimestamps.filter(
@@ -1321,8 +1188,8 @@ export default function EChartGraph({
           ? currentBaseTimestamp - entryBaseTimestamp
           : 0;
       const offset = getSensorOffset(sensorSyncOffsets, entry.key);
-
       const isFiltered = isSensorFilterActive(entry.key);
+
       for (let axisIndex = 0; axisIndex < axisCount; axisIndex += 1) {
         const label = `${entry.runName} ${getSensorDisplayLabel(entry)} ${getAxisLabel(axisIndex, axisCount)}${isFiltered ? " (filtered)" : ""}`;
         const traceKey = buildTraceKey({
@@ -1333,6 +1200,7 @@ export default function EChartGraph({
         });
         const color = TRACE_COLORS[series.length % TRACE_COLORS.length];
         traceColorByLabel.set(label, color);
+
         const points = plotReadings
           .map((reading) => ({
             x: reading.timestamp + offset + alignmentOffset,
@@ -1341,6 +1209,7 @@ export default function EChartGraph({
           .filter(
             (point) => Number.isFinite(point.x) && Number.isFinite(point.y),
           );
+
         const renderData = xValues.map((timestamp) => [
           timestamp,
           interpolateSeriesValueWithinBounds(points, timestamp),
@@ -1358,10 +1227,35 @@ export default function EChartGraph({
           renderData,
         });
       }
+    });
 
+    return { series, xValues, traceColorByLabel };
+  }, [
+    comparisonPlotSeriesByRun,
+    comparisonRuns,
+    effectiveTimestamps,
+    plotResolution,
+    plotSeriesBySensor,
+    selectedSensorEntries,
+    sensorSyncOffsets,
+    sensorFilterPipelines,
+    sensorFiltersActive,
+    selectedRun,
+    visibleRange.end,
+    visibleRange.start,
+  ]);
+
+  const chartModel = useMemo(() => {
+    const readoutEntries = [];
+    const traceColorByLabel = seriesWithRenderData.traceColorByLabel;
+    const currentBaseTimestamp = selectedRun?.totalTimestamps?.[0];
+
+    selectedSensorEntries.forEach((entry) => {
+      const offset = getSensorOffset(sensorSyncOffsets, entry.key);
       const rawReadings = entry.isPrimary
         ? rawSeriesBySensor[entry.sensorId]
         : comparisonRawSeriesByRun[entry.runId]?.[entry.sensorId];
+
       const nearest = getNearestReading(rawReadings, currentTimestamp - offset);
       if (!nearest) return;
 
@@ -1395,80 +1289,20 @@ export default function EChartGraph({
       });
     });
 
-    // Residual traces (raw - filtered) for sensors where residual is enabled
-    selectedSensorEntries.forEach((entry) => {
-      if (!residualEnabledBySensor[entry.key] || !isSensorFilterActive(entry.key)) return;
-      const residualPayload = residualSeriesBySensor[entry.key];
-      const residualReadings = residualPayload?.readings;
-      if (!Array.isArray(residualReadings) || residualReadings.length === 0) return;
-
-      const axisCount = getAxisCount(residualReadings);
-      const offset = getSensorOffset(sensorSyncOffsets, entry.key);
-      const entryBaseTimestamp = entry.isPrimary
-        ? currentBaseTimestamp
-        : comparisonRuns.find((run) => run._id === entry.runId)?.totalTimestamps?.[0];
-      const alignmentOffset =
-        !entry.isPrimary && Number.isFinite(currentBaseTimestamp) && Number.isFinite(entryBaseTimestamp)
-          ? currentBaseTimestamp - entryBaseTimestamp
-          : 0;
-
-      for (let axisIndex = 0; axisIndex < axisCount; axisIndex += 1) {
-        const baseLabel = `${entry.runName} ${getSensorDisplayLabel(entry)} ${getAxisLabel(axisIndex, axisCount)}`;
-        const label = `${baseLabel} (residual)`;
-        const traceKey = buildTraceKey({
-          runId: entry.runId,
-          sensorId: entry.sensorId,
-          axisIndex,
-          useResidualData: true,
-        });
-        const baseColor = traceColorByLabel.get(`${baseLabel} (filtered)`) || traceColorByLabel.get(baseLabel) || TRACE_COLORS[series.length % TRACE_COLORS.length];
-        traceColorByLabel.set(label, baseColor);
-        const points = residualReadings
-          .map((reading) => ({
-            x: reading.timestamp + offset + alignmentOffset,
-            y: reading.data?.[axisIndex] ?? null,
-          }))
-          .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
-        const renderData = xValues.map((timestamp) => [
-          timestamp,
-          interpolateSeriesValueWithinBounds(points, timestamp),
-        ]);
-
-        series.push({
-          traceKey,
-          sensorId: entry.sensorId,
-          axisIndex,
-          label,
-          color: baseColor,
-          runId: entry.runId,
-          runName: entry.runName,
-          points,
-          renderData,
-          isResidual: true,
-        });
-      }
-    });
-
-    return { series, readoutEntries, xValues };
+    return {
+      series: seriesWithRenderData.series,
+      readoutEntries,
+      xValues: seriesWithRenderData.xValues,
+    };
   }, [
-    comparisonPlotSeriesByRun,
+    seriesWithRenderData,
     comparisonRawSeriesByRun,
-    comparisonRuns,
     currentTimestamp,
-    effectiveTimestamps,
-    plotResolution,
-    plotSeriesBySensor,
     rawSeriesBySensor,
-    residualEnabledBySensor,
-    residualSeriesBySensor,
-    selectedRun,
     selectedSensorEntries,
+    comparisonRuns,
     sensorSyncOffsets,
-    sensorFilterPipelines,
-    sensorFiltersActive,
     traceVisibility,
-    visibleRange.end,
-    visibleRange.start,
   ]);
 
   const seriesByTraceKey = useMemo(
@@ -1563,38 +1397,6 @@ export default function EChartGraph({
       ),
     [chartRevision, computePixelPoint, runLabels],
   );
-
-  const highlightSections = useMemo(() => {
-    if (!showHighlightSections || selectedSensorEntries.length === 0) return [];
-    const entry = selectedSensorEntries[0];
-    const readings = entry.isPrimary
-      ? rawSeriesBySensor[entry.sensorId]
-      : comparisonRawSeriesByRun[entry.runId]?.[entry.sensorId];
-    if (!Array.isArray(readings) || readings.length === 0) return [];
-
-    const currentBaseTimestamp = selectedRun?.totalTimestamps?.[0];
-    const entryBaseTimestamp = entry.isPrimary
-      ? currentBaseTimestamp
-      : comparisonRuns.find((run) => run._id === entry.runId)
-          ?.totalTimestamps?.[0];
-    const alignmentOffset =
-      !entry.isPrimary &&
-      Number.isFinite(currentBaseTimestamp) &&
-      Number.isFinite(entryBaseTimestamp)
-        ? currentBaseTimestamp - entryBaseTimestamp
-        : 0;
-    const syncOffset =
-      getSensorOffset(sensorSyncOffsets, entry.key) + alignmentOffset;
-    return buildHighlightSectionsFromReadings(readings, syncOffset);
-  }, [
-    comparisonRawSeriesByRun,
-    comparisonRuns,
-    rawSeriesBySensor,
-    selectedRun,
-    selectedSensorEntries,
-    sensorSyncOffsets,
-    showHighlightSections,
-  ]);
 
   useEffect(() => {
     setSliderReadout(chartModel.readoutEntries);
@@ -1736,7 +1538,6 @@ export default function EChartGraph({
           independentScales,
           showLabels,
           showTrims,
-          showHighlightSections,
           showStatAnnotations,
           comparisonRunIds: comparisonRuns.map((r) => r._id),
         };
@@ -1762,7 +1563,6 @@ export default function EChartGraph({
     sensorFiltersActive,
     sensorFilterPipelines,
     sensorSyncOffsets,
-    showHighlightSections,
     showLabels,
     showStatAnnotations,
     showTrims,
@@ -1791,8 +1591,8 @@ export default function EChartGraph({
         const values = seriesItem.renderData
           .map((pt) => pt[1])
           .filter((v) => v !== null && Number.isFinite(v));
-        const min = values.length ? Math.min(...values) : 0;
-        const max = values.length ? Math.max(...values) : 1;
+        const min = values.length ? values.reduce((a, b) => (a < b ? a : b)) : 0;
+        const max = values.length ? values.reduce((a, b) => (a > b ? a : b)) : 1;
         const padding = (max - min) * 0.05 || Math.abs(max) * 0.05 || 0.05;
         return {
           type: "value",
@@ -1855,17 +1655,10 @@ export default function EChartGraph({
               }
             : undefined,
           markArea:
-            showHighlightSections || showLabels || (showTrims && runTrims.length > 0)
+            showLabels || (showTrims && runTrims.length > 0)
               ? {
                   silent: true,
                   data: [
-                    ...highlightSections.map((section) => [
-                      {
-                        xAxis: section.x0,
-                        itemStyle: { color: section.color, borderWidth: 0 },
-                      },
-                      { xAxis: section.x1 },
-                    ]),
                     ...runLabels
                       .filter((label) => showLabels && label.kind === "range")
                       .map((label) => [
@@ -1909,7 +1702,6 @@ export default function EChartGraph({
           lineStyle: {
             width: 1.5,
             color: seriesItem.color,
-            ...(seriesItem.isResidual ? { type: "dashed", opacity: 0.7 } : {}),
           },
           connectNulls: false,
           data: seriesItem.renderData,
@@ -1973,11 +1765,9 @@ export default function EChartGraph({
     chartModel.series,
     currentTimestamp,
     effectiveTimestamps,
-    highlightSections,
     independentScales,
     runLabels,
     runTrims,
-    showHighlightSections,
     showLabels,
     showStatAnnotations,
     showTrims,
@@ -2296,7 +2086,7 @@ export default function EChartGraph({
     };
     setSensorFilterPipelines((prev) => ({
       ...prev,
-      [sensorKey]: [...(prev[sensorKey] || []), newStep],
+      [sensorKey]: [...(prev[sensorKey] || [])], newStep,
     }));
   };
   const removeFilterFromSensor = (sensorKey, stepId) =>
@@ -2455,80 +2245,6 @@ export default function EChartGraph({
     },
     [chartModel.series, computePixelPoint, selectedLabelTraceKeys],
   );
-  const analyzeHighlightSections = useCallback(() => {
-    if (selectedSensorEntries.length === 0) return;
-
-    const sourceEntry = selectedSensorEntries[0];
-    const sourceReadings = sourceEntry.isPrimary
-      ? rawSeriesBySensor[sourceEntry.sensorId]
-      : comparisonRawSeriesByRun[sourceEntry.runId]?.[sourceEntry.sensorId];
-
-    if (!Array.isArray(sourceReadings) || sourceReadings.length === 0) return;
-
-    const currentBaseTimestamp = selectedRun?.totalTimestamps?.[0];
-    const entryBaseTimestamp = sourceEntry.isPrimary
-      ? currentBaseTimestamp
-      : comparisonRuns.find((run) => run._id === sourceEntry.runId)
-          ?.totalTimestamps?.[0];
-    const alignmentOffset =
-      !sourceEntry.isPrimary &&
-      Number.isFinite(currentBaseTimestamp) &&
-      Number.isFinite(entryBaseTimestamp)
-        ? currentBaseTimestamp - entryBaseTimestamp
-        : 0;
-    const syncOffset =
-      getSensorOffset(sensorSyncOffsets, sourceEntry.key) + alignmentOffset;
-    const sections = buildHighlightSectionsFromReadings(
-      sourceReadings,
-      syncOffset,
-    );
-
-    if (sections.length === 0) return;
-
-    const targetTraceKeys =
-      selectedLabelTraceKeys.length > 0
-        ? new Set(selectedLabelTraceKeys)
-        : new Set(chartModel.series.map((seriesItem) => seriesItem.traceKey));
-    const targetSeries = chartModel.series.filter((seriesItem) =>
-      targetTraceKeys.has(seriesItem.traceKey),
-    );
-
-    if (targetSeries.length === 0) return;
-
-    const nextLabels = sections
-      .map((section, index) =>
-        buildRangeLabelFromSection({
-          section,
-          sectionIndex: index,
-          sourceEntryKey: sourceEntry.key,
-          seriesItems: targetSeries,
-        }),
-      )
-      .filter(Boolean);
-
-    if (nextLabels.length === 0) return;
-
-    setShowHighlightSections(true);
-    setPendingLabelMode(null);
-    setSelectionBox(null);
-    setRunLabels((prev) => {
-      const nextById = new Map(nextLabels.map((label) => [label.id, label]));
-      const preserved = prev.filter((label) => !nextById.has(label.id));
-      return [...preserved, ...nextLabels].sort(
-        (left, right) => left.startTimestamp - right.startTimestamp,
-      );
-    });
-    setActiveLabelId(nextLabels[0].id);
-  }, [
-    chartModel.series,
-    comparisonRawSeriesByRun,
-    comparisonRuns,
-    rawSeriesBySensor,
-    selectedLabelTraceKeys,
-    selectedRun,
-    selectedSensorEntries,
-    sensorSyncOffsets,
-  ]);
   const addComparisonRun = async () => {
     if (
       !comparisonRunId ||
@@ -2655,7 +2371,7 @@ export default function EChartGraph({
       </div>
       {(isPlotLoading || isRawLoading) && selectedSensorEntries.length > 0 && (
         <div className="alert alert-info py-2 px-3 mb-3">
-          {isPlotLoading ? "Updating plot data..." : "Syncing sensor data..."}
+          Loading data ...
         </div>
       )}
       <div className="uplot-prototype__chart-shell">
@@ -2720,7 +2436,6 @@ export default function EChartGraph({
                         {entry.runName} - {getSensorDisplayLabel(entry)}
                       </span>
                     </div>
-                    {/* <small className="text-muted">ID: {entry.sensorId}</small> */}
                   </label>
                 ))}
               </div>
@@ -2894,33 +2609,7 @@ export default function EChartGraph({
                       ))}
                     </div>
 
-                    {/* Residual toggle — only useful when filter is active */}
-                    {isActive && (
-                      <div className="d-flex align-items-center gap-2 mt-2">
-                        <div className="form-check form-switch mb-0">
-                          <input
-                            className="form-check-input"
-                            type="checkbox"
-                            role="switch"
-                            id={`residual-${entry.key}`}
-                            checked={!!residualEnabledBySensor[entry.key]}
-                            onChange={() =>
-                              setResidualEnabledBySensor((prev) => ({
-                                ...prev,
-                                [entry.key]: !prev[entry.key],
-                              }))
-                            }
-                          />
-                          <label
-                            className="form-check-label text-muted"
-                            htmlFor={`residual-${entry.key}`}
-                            style={{ fontSize: "0.75rem" }}
-                          >
-                            Show residual (raw − filtered)
-                          </label>
-                        </div>
-                      </div>
-                    )}
+                    
                   </div>
                 );
               })}
@@ -3237,38 +2926,6 @@ export default function EChartGraph({
               </div>
             </div>
           </details>
-          <details className="card">
-            <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
-              <strong>Highlights</strong>
-              <span className={`badge ${showHighlightSections ? "bg-success" : "bg-secondary"}`}>
-                {showHighlightSections ? "On" : "Off"}
-              </span>
-            </summary>
-            <div className="card-body">
-              <label className="list-group-item list-group-item-action d-flex align-items-center">
-                <input
-                  className="form-check-input me-2"
-                  type="checkbox"
-                  checked={showHighlightSections}
-                  onChange={(event) =>
-                    setShowHighlightSections(event.target.checked)
-                  }
-                />
-                <span>Show green/red highlight sections</span>
-              </label>
-              <button
-                type="button"
-                className="btn btn-sm btn-outline-primary mt-3 w-100"
-                onClick={analyzeHighlightSections}
-                disabled={
-                  selectedSensorEntries.length === 0 ||
-                  chartModel.series.length === 0
-                }
-              >
-                Analyze Highlights To Labels
-              </button>
-            </div>
-          </details>
           <details className="card traces-collapsible">
             <summary className="card-header d-flex justify-content-between align-items-center" style={{ listStyle: "none", cursor: "pointer" }}>
               <strong>Traces</strong>
@@ -3345,7 +3002,7 @@ export default function EChartGraph({
                   className={`uplot-prototype__label ${activeLabelId === label.id ? "is-active" : ""} ${label.allHidden ? "is-dimmed" : ""}`}
                   style={{
                     left: `${label.titleLeft}px`,
-                    top: `${label.titleTop}px`,
+                    top: `${label.titleTop}0px`,
                     pointerEvents: "auto",
                     minWidth: "0",
                     maxWidth: "140px",

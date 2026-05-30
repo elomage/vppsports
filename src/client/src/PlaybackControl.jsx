@@ -65,7 +65,7 @@ const PlaybackControl = ({ selectedRun, sliderValue, setSliderValue }) => {
     useEffect(() => {
         let interval;
         if (isPlaying) {
-            const speed = 100; //This needs to be propotional to the sample rate
+            const speed = 100;
             interval = setInterval(() => {
                 setLocalSliderValue((prevValue) => {
                     const newValue = Math.min(prevValue + speed, maxSliderIndex);

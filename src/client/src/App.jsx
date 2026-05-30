@@ -12,9 +12,9 @@ function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [dashboards, setDashboards] = useState([{ id: 1, flexGrow: 1 }]);
-  const [dashboardRuns, setDashboardRuns] = useState({}); // Track selectedRun per dashboard
+  const [dashboardRuns, setDashboardRuns] = useState({}); 
   const [runs, setRuns] = useState([]);
-  const MAX_DASHBOARDS = 4; // Limit to 4 for readability
+  const MAX_DASHBOARDS = 4;
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'upload', label: 'Upload Sensor Data' },
@@ -40,7 +40,6 @@ function App() {
 
   const removeDashboard = (id) => {
     setDashboards(prev => prev.filter(d => d.id !== id));
-    // Clean up the run data for removed dashboard
     setDashboardRuns(prev => {
       const newRuns = { ...prev };
       delete newRuns[id];
@@ -253,15 +252,12 @@ function DashboardResizeHandle({ topDashboard, bottomDashboard, onResize }) {
       const deltaRatio = deltaY / containerHeight;
       const totalGrow = startPosRef.current.totalGrow;
 
-      // Calculate new flex-grow values based on drag distance
       let newTopGrow = startPosRef.current.topGrow + (deltaRatio * totalGrow * 2);
       let newBottomGrow = startPosRef.current.bottomGrow - (deltaRatio * totalGrow * 2);
 
-      // Ensure minimum sizes
       newTopGrow = Math.max(0.2, newTopGrow);
       newBottomGrow = Math.max(0.2, newBottomGrow);
 
-      // Normalize to maintain total
       const sum = newTopGrow + newBottomGrow;
       newTopGrow = (newTopGrow / sum) * totalGrow;
       newBottomGrow = (newBottomGrow / sum) * totalGrow;
@@ -308,7 +304,6 @@ function DashboardResizeHandle({ topDashboard, bottomDashboard, onResize }) {
         }
       }}
     >
-      {/* Visual indicator */}
       <div style={{
         position: 'absolute',
         top: '50%',

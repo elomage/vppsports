@@ -52,12 +52,6 @@ const RunControl = ({ setSelectedRun, runs: externalRuns }) => {
 
   return (
     <div className="run-control-container">
-      {/* <form ref={formRef} method='get' action='/run' onSubmit={handleSubmit} className="run-control-form">
-        <label>From:</label>
-        <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-        <label>To:</label>
-        <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-      </form> */}
       <select
         className='run-select'
         onChange={handleRunChange}

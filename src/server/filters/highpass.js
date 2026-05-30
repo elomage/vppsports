@@ -1,14 +1,8 @@
-/**
- * First-order high-pass filter.
- * Accepts cutoffHz — the server derives alpha from the data's average sample rate.
- * alpha = 1 / (1 + 2π × cutoffHz × dt)
- */
 module.exports = {
   id: "highpass",
   label: "High-pass",
   description:
-    "Removes slow drift and DC offset. Specify the cutoff frequency in Hz — " +
-    "signals below this frequency are attenuated.",
+    "Removes slow drift",
   params: [
     {
       key: "cutoffHz",
@@ -27,8 +21,6 @@ module.exports = {
       ? params.cutoffHz
       : 0.1;
 
-    // Compute average sample period from timestamps (in seconds).
-    // Timestamps are assumed to be in milliseconds.
     let dtSum = 0;
     let dtCount = 0;
     for (let i = 1; i < readings.length; i++) {

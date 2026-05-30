@@ -28,8 +28,6 @@ const convertSensorData = (sensorData, conversionFunction) => {
           reading.data = reading.data.map((rawReading) => {
             return conversionFunction(rawReading, sensitivity);
           });
-
-          //FIXME
           reading.data[2] = reading.data[2] * -1;
         }
       });
@@ -630,7 +628,13 @@ const getRunSensorData = async (runid, sensorid, options = {}) => {
     const outputData = wantResidual ? computeResidualReadings(rawData, filteredData) : filteredData;
 
     if (String(options.mode || "raw").toLowerCase() !== "plot") {
-      return outputData;
+      // Always return normalized format for raw mode
+      return {
+        mode: "raw",
+        sampleCountRaw: outputData.length,
+        sampleCountReturned: outputData.length,
+        readings: outputData,
+      };
     }
 
     const resolution = normalizeResolution(options.resolution);
@@ -915,4 +919,5 @@ module.exports = {
   getRunSensorOrientationData,
   filterSensorData,
   decimateSensorData,
+  applySavitzkyGolayFilter,
 };

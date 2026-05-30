@@ -54,6 +54,8 @@ const CSV_TIMESTAMP_ALIASES = Object.freeze([
   "timestampmilliseconds",
 ]);
 
+const CSV_SEGMENT_ALIASES = new Set(["segment", "label", "annotation"]);
+
 const normalizeLabelNumber = (value, fallback = 0) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -653,81 +655,9 @@ const traceAxisLabel = (axisIndex) =>
 const traceColumnPrefix = (sensorType, sensorId, axisIndex) =>
   `${abbreviateSensorType(sensorType)}_${sensorId}_${traceAxisLabel(axisIndex)}`;
 
-/**
- * Extends computeStats with skewness, kurtosis, and signal energy.
- *   Skewness  — distribution asymmetry (braking vs. acceleration).
- *   Kurtosis  — peak sharpness, separates impulse from sustained events.
- *   Energy    — Σ(x²), magnitude without sign cancellation.
- */
-const computeStatsWide = (values) => {
-  const base = computeStats(values);
-  if (base.readingCount === 0) {
-    return { ...base, skewness: null, kurtosis: null, energy: null };
-  }
-
-  const { meanValue, stdValue, readingCount } = base;
-
-  const skewness =
-    stdValue === 0
-      ? 0
-      : values.reduce((s, v) => s + ((v - meanValue) / stdValue) ** 3, 0) /
-        readingCount;
-
-  // Excess kurtosis (normal distribution = 0)
-  const kurtosis =
-    stdValue === 0
-      ? 0
-      : values.reduce((s, v) => s + ((v - meanValue) / stdValue) ** 4, 0) /
-          readingCount -
-        3;
-
-  const energy = values.reduce((s, v) => s + v * v, 0);
-
-  return { ...base, skewness, kurtosis, energy };
-};
-
-/**
- * Pearson correlation coefficient between two equal-length arrays.
- * Returns null when the computation is degenerate (constant signal,
- * mismatched lengths, fewer than 2 points).
- */
-const computePearsonR = (a, b) => {
-  if (
-    !Array.isArray(a) ||
-    !Array.isArray(b) ||
-    a.length !== b.length ||
-    a.length < 2
-  ) {
-    return null;
-  }
-
-  const n = a.length;
-  const meanA = a.reduce((s, v) => s + v, 0) / n;
-  const meanB = b.reduce((s, v) => s + v, 0) / n;
-
-  let num = 0;
-  let varA = 0;
-  let varB = 0;
-
-  for (let i = 0; i < n; i++) {
-    const da = a[i] - meanA;
-    const db = b[i] - meanB;
-    num += da * db;
-    varA += da * da;
-    varB += db * db;
-  }
-
-  const denom = Math.sqrt(varA * varB);
-  return denom === 0 ? null : num / denom;
-};
-
-const WIDE_RESAMPLE_N = 128; // common grid size for cross-correlation alignment
-
 const WIDE_STAT_KEYS = [
-  "readingCount", "minValue", "maxValue", "meanValue", "stdValue",
-  "medianValue", "rangeValue", "firstValue", "lastValue", "deltaValue",
-  "slope", "areaUnderCurve", "rmsValue", "peakValue", "peakTimeRatio",
-  "zeroCrossings", "skewness", "kurtosis", "energy",
+  "firstValue", "lastValue", "maxValue", "meanValue",
+  "minValue", "peakValue", "rangeValue", "rmsValue", "stdValue",
 ];
 
 /**
@@ -736,15 +666,7 @@ const WIDE_STAT_KEYS = [
  * Columns:
  *   - Event metadata (labelInstanceId, runId, labelText, duration, …)
  *   - Per-trace statistics: {sensorAbbr}_{sensorId}_{axis}_{stat}
- *       e.g. acc_3_x_mean, gyro_2_z_rmsValue, acc_3_x_skewness
- *   - Cross-axis correlations within the same sensor:
- *       {abbr}_{sensorId}_{ax1}_{ax2}_corr  e.g. acc_3_x_y_corr
- *   - Cross-sensor correlations between every pair of different sensors:
- *       {prefixA}_vs_{prefixB}_corr  e.g. acc_3_x_vs_gyro_2_x_corr
- *
- * All traces are resampled to WIDE_RESAMPLE_N points on the label's time
- * range before correlation is computed, so sensors with different sample
- * rates are aligned correctly.
+ *       e.g. acc_3_x_meanValue, gyro_2_z_rmsValue
  */
 const collectWideRows = (runDocument, sensorReadings) => {
   const runId = String(runDocument._id);
@@ -784,10 +706,10 @@ const collectWideRows = (runDocument, sensorReadings) => {
 
   return labels
     .map((label) => {
-      const traceKeys = Array.isArray(label.traceKeys) ? label.traceKeys : [];
+      const labelTraceKeys = Array.isArray(label.traceKeys) ? label.traceKeys : [];
+      const effectiveTraceKeys = labelTraceKeys.length > 0 ? labelTraceKeys : [...traceSeriesMap.keys()];
 
-      // Resolve each trace to its readings within the label window.
-      const traces = traceKeys
+      const traces = effectiveTraceKeys
         .map((traceKey) => {
           const traceInfo =
             traceSeriesMap.get(traceKey) ||
@@ -825,46 +747,27 @@ const collectWideRows = (runDocument, sensorReadings) => {
 
       const featureColumns = {};
 
-      // ── Per-trace statistics ─────────────────────────────────────────────
+      // ── Per-trace statistics, combined across sensors of the same type ──
+      // Group by (sensorType, axisIndex) so acc_1 and acc_3 merge into acc_x.
+      const typeAxisMap = new Map();
       for (const trace of traces) {
-        const stats = computeStatsWide(trace.values);
+        const groupKey = `${trace.sensorType}__${trace.axisIndex}`;
+        if (!typeAxisMap.has(groupKey)) {
+          typeAxisMap.set(groupKey, {
+            sensorType: trace.sensorType,
+            axisIndex: trace.axisIndex,
+            values: [],
+          });
+        }
+        const group = typeAxisMap.get(groupKey);
+        for (const v of trace.values) group.values.push(v);
+      }
+
+      for (const { sensorType, axisIndex, values } of typeAxisMap.values()) {
+        const colPrefix = `${abbreviateSensorType(sensorType)}_${traceAxisLabel(axisIndex)}`;
+        const stats = computeStats(values);
         for (const key of WIDE_STAT_KEYS) {
-          featureColumns[`${trace.prefix}_${key}`] = stats[key] ?? null;
-        }
-      }
-
-      // ── Resample all traces to a common grid for correlation ─────────────
-      const resampled = traces.map((trace) => ({
-        ...trace,
-        grid: resampleSeries(trace.timestamps, trace.values, WIDE_RESAMPLE_N),
-      }));
-
-      // ── Cross-axis correlations (same sensorId, different axes) ──────────
-      const uniqueSensorIds = [...new Set(resampled.map((t) => t.sensorId))];
-      for (const sensorId of uniqueSensorIds) {
-        const group = resampled.filter((t) => t.sensorId === sensorId);
-        if (group.length < 2) continue;
-        const abbr = abbreviateSensorType(
-          sensorTypeBySensorId.get(sensorId) || ""
-        );
-        for (let i = 0; i < group.length; i++) {
-          for (let j = i + 1; j < group.length; j++) {
-            const a = group[i];
-            const b = group[j];
-            const col = `${abbr}_${sensorId}_${traceAxisLabel(a.axisIndex)}_${traceAxisLabel(b.axisIndex)}_corr`;
-            featureColumns[col] = computePearsonR(a.grid, b.grid);
-          }
-        }
-      }
-
-      // ── Cross-sensor correlations (between different sensorIds) ──────────
-      for (let i = 0; i < resampled.length; i++) {
-        for (let j = i + 1; j < resampled.length; j++) {
-          const a = resampled[i];
-          const b = resampled[j];
-          if (a.sensorId === b.sensorId) continue;
-          const col = `${a.prefix}_vs_${b.prefix}_corr`;
-          featureColumns[col] = computePearsonR(a.grid, b.grid);
+          featureColumns[`${colPrefix}_${key}`] = stats[key] ?? null;
         }
       }
 
@@ -1216,9 +1119,11 @@ const buildCsvSensorReadings = (csvText) => {
   const { headerCells, originalHeaderCells, rows } = parseCsvRows(csvText);
   const timestampSet = new Set(CSV_TIMESTAMP_ALIASES);
 
+  const segmentNormalized = headerCells.find((h) => CSV_SEGMENT_ALIASES.has(h)) || null;
+
   const valueColumns = [];
   headerCells.forEach((normalized, i) => {
-    if (normalized && !timestampSet.has(normalized)) {
+    if (normalized && !timestampSet.has(normalized) && normalized !== segmentNormalized) {
       valueColumns.push({ normalized, label: originalHeaderCells[i] || normalized });
     }
   });
@@ -1229,32 +1134,89 @@ const buildCsvSensorReadings = (csvText) => {
     );
   }
 
-  const readings = rows.map((row) => {
+  const pairs = rows.map((row) => {
     const rowNumber = row.__rowNumber;
     const timestamp = parseCsvTimestamp(row, rowNumber);
     const data = valueColumns.map(({ normalized, label }) => {
       const rawValue = row[normalized];
       if (rawValue === undefined || rawValue === null || rawValue === "") {
-        throw new Error(
-          `CSV row ${rowNumber} is missing a value for column "${label}".`
-        );
+        throw new Error(`CSV row ${rowNumber} is missing a value for column "${label}".`);
       }
       const parsed = Number(rawValue);
       if (!Number.isFinite(parsed)) {
-        throw new Error(
-          `CSV row ${rowNumber} has non-numeric value for column "${label}": ${rawValue}`
-        );
+        throw new Error(`CSV row ${rowNumber} has non-numeric value for column "${label}": ${rawValue}`);
       }
       return parsed;
     });
-    return { timestamp, data };
+    const segment = segmentNormalized ? String(row[segmentNormalized] || "").trim() : "";
+    return { timestamp, data, segment };
   });
+
+  pairs.sort((a, b) => a.timestamp - b.timestamp);
 
   const axes = valueColumns.map(({ label }) => label);
   return {
-    readings: readings.sort((a, b) => a.timestamp - b.timestamp),
+    readings: pairs.map(({ timestamp, data }) => ({ timestamp, data })),
     axes,
+    segments: pairs.map(({ segment }) => segment),
   };
+};
+
+const LABEL_IMPORT_COLORS = ["#0d6efd", "#dc3545", "#198754", "#ffc107", "#0dcaf0", "#fd7e14", "#6f42c1", "#20c997"];
+
+const hashSegmentColor = (text) => {
+  let h = 0;
+  for (const ch of text) h = ((h * 31) + ch.charCodeAt(0)) & 0xffffffff;
+  return LABEL_IMPORT_COLORS[Math.abs(h) % LABEL_IMPORT_COLORS.length];
+};
+
+const inferLabelsFromSegments = (readings, segments, runId, sensorId) => {
+  const labels = [];
+  let i = 0;
+  while (i < segments.length) {
+    const text = segments[i];
+    if (!text) { i++; continue; }
+    let j = i + 1;
+    while (j < segments.length && segments[j] === text) j++;
+    const startTs = readings[i].timestamp;
+    const endTs = readings[j - 1].timestamp;
+    const color = hashSegmentColor(text);
+    const id = `label-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const traceKey = `${runId}:${sensorId}:0:raw`;
+    if (j - i === 1) {
+      labels.push({
+        id,
+        kind: "single",
+        text,
+        color,
+        traceKeys: [traceKey],
+        points: [{ traceKey, timestamp: startTs, yValue: 0 }],
+        startTimestamp: startTs,
+        endTimestamp: startTs,
+        anchorTimestamp: startTs,
+        anchorY: 0,
+        dx: 0,
+        dy: 0,
+      });
+    } else {
+      labels.push({
+        id,
+        kind: "range",
+        text,
+        color,
+        traceKeys: [traceKey],
+        points: [],
+        startTimestamp: startTs,
+        endTimestamp: endTs,
+        anchorTimestamp: startTs,
+        anchorY: 0,
+        dx: 0,
+        dy: 0,
+      });
+    }
+    i = j;
+  }
+  return labels;
 };
 
 const normalizeSensorType = (value) => {
@@ -1755,7 +1717,161 @@ runRouter.post("/export/multi-arff", async (req, res) => {
   }
 });
 
-const CSV_ALL_FIELDS = ["runId", "runName", "runDate", "context", "sensorId", "sensorType", "timestamp", "sensorValues", "labels"];
+runRouter.post("/export/apriori-csv", async (req, res) => {
+  try {
+    const { runIds, numBins: rawNumBins } = req.body || {};
+    const numBins = Math.max(2, Math.min(20, parseInt(rawNumBins, 10) || DEFAULT_APRIORI_BINS));
+
+    if (!Array.isArray(runIds) || runIds.length === 0) {
+      return res.status(400).json({ message: "Provide a non-empty runIds array." });
+    }
+
+    const uniqueRunIds = [...new Set(runIds.map(String))];
+    if (uniqueRunIds.length > 50) {
+      return res.status(400).json({ message: "At most 50 runs can be exported at once." });
+    }
+
+    const allRows = [];
+    const db = await connectDB();
+    const aprioriViewStatesColl = await getCollection(db, "run_view_states");
+
+    for (const runId of uniqueRunIds) {
+      let authorizedRun;
+      try {
+        authorizedRun = await findRunForUser(runId, req.user);
+      } catch (_e) {
+        authorizedRun = null;
+      }
+      if (!authorizedRun) continue;
+
+      try {
+        const viewStateDoc = await aprioriViewStatesColl.findOne({ runId });
+        const charts = Array.isArray(viewStateDoc?.charts) ? viewStateDoc.charts : [];
+
+        const mergedSensorKeys = new Set();
+        const mergedFilterPipelines = {};
+        const mergedFiltersActive = {};
+
+        for (const chartState of charts) {
+          if (!chartState) continue;
+          for (const key of (chartState.selectedSensorKeys || [])) {
+            if (!key.startsWith(`${runId}:`)) continue;
+            mergedSensorKeys.add(key);
+            if (mergedFilterPipelines[key] === undefined && chartState.sensorFilterPipelines?.[key]) {
+              mergedFilterPipelines[key] = chartState.sensorFilterPipelines[key];
+            }
+            if (mergedFiltersActive[key] === undefined && chartState.sensorFiltersActive?.[key] !== undefined) {
+              mergedFiltersActive[key] = chartState.sensorFiltersActive[key];
+            }
+          }
+        }
+
+        const runDocument = await runService.getSingleRunDB(runId);
+        const allSensors = await runService.getRunSensors(runId);
+
+        let sensorsToExport;
+        if (mergedSensorKeys.size > 0) {
+          const selectedIds = new Set([...mergedSensorKeys].map((k) => String(k.slice(runId.length + 1))));
+          sensorsToExport = allSensors.filter((s) => selectedIds.has(String(s.sensorId)));
+        } else {
+          sensorsToExport = allSensors;
+        }
+
+        const sensorReadings = [];
+        for (const sensor of sensorsToExport) {
+          const sensorKey = `${runId}:${sensor.sensorId}`;
+          const pipeline = mergedFilterPipelines[sensorKey] || [];
+          const isActive = !!(mergedFiltersActive[sensorKey] && pipeline.length > 0);
+          const filterKey = isActive
+            ? JSON.stringify(pipeline.map(({ type, params }) => ({ type, params })))
+            : undefined;
+          const readings = await runController.getRunSensorData(runId, sensor.sensorId, { filters: filterKey });
+          if (Array.isArray(readings)) {
+            for (const r of readings) {
+              sensorReadings.push({ ...r, sensorId: sensor.sensorId, sensorType: sensor.sensorType });
+            }
+          }
+        }
+
+        allRows.push(...collectWideRows(runDocument, sensorReadings));
+      } catch (_err) {
+        // skip inaccessible runs
+      }
+    }
+
+    if (allRows.length === 0) {
+      return res.status(400).json({
+        message: "No labeled trace data found across the selected runs.",
+      });
+    }
+
+    // Keys excluded from the output entirely.
+    const EXCLUDED_KEYS = new Set([
+      "labelInstanceId", "runId",
+      "labelText", "labelKind",
+      "startTimestamp", "endTimestamp",
+      "run_sensor_duration", "event_start_ratio", "event_end_ratio",
+      "event_mid_ratio", "event_duration_ratio",
+    ]);
+    // String columns kept in the output but not discretized.
+    const STRING_KEYS = new Set(["runName", "runDate", "context", "class"]);
+
+    const metadataKeys = [
+      ...new Set(allRows.flatMap((r) => Object.keys(r).filter((k) => k.startsWith("meta_")))),
+    ].sort();
+    const featureKeys = [
+      ...new Set(
+        allRows.flatMap((r) =>
+          Object.keys(r).filter(
+            (k) => !EXCLUDED_KEYS.has(k) && !STRING_KEYS.has(k) && k !== "duration" && !k.startsWith("meta_")
+          )
+        )
+      ),
+    ].sort();
+
+    const numericKeys = ["duration", ...featureKeys];
+    const { discretized } = discretizeRows(allRows, numericKeys, numBins);
+
+    const columnOrder = [
+      "runName", "runDate", "context",
+      "duration",
+      ...metadataKeys,
+      ...featureKeys,
+      "class",
+    ];
+
+    const lines = [buildCsvLine(columnOrder)];
+    for (const row of discretized) {
+      lines.push(
+        buildCsvLine(
+          columnOrder.map((k) => {
+            let v = row[k];
+            // Trim ISO timestamp to plain date so Weka doesn't mis-detect as datetime.
+            if (k === "runDate" && v) v = String(v).slice(0, 10);
+            // Weka requires "?" for missing values, not empty string.
+            return v !== null && v !== undefined && v !== "" ? v : "?";
+          })
+        )
+      );
+    }
+
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="multi-run-apriori-${dateStamp}.csv"`
+    );
+    // Use CRLF line endings for Windows/Weka compatibility.
+    return res.status(200).send(lines.join("\r\n"));
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to export Apriori CSV.",
+      error: error.message,
+    });
+  }
+});
+
+const CSV_ALL_FIELDS = ["runId", "runName", "runDate", "context", "sensorId", "sensorType", "timestamp", "sensorValues", "labels", "labelStats"];
 
 runRouter.post("/export/multi-csv", async (req, res) => {
   try {
@@ -1776,8 +1892,28 @@ runRouter.post("/export/multi-csv", async (req, res) => {
       return res.status(400).json({ message: "At most 50 runs can be exported at once." });
     }
 
-    const dataRows = [];  // collected across all runs
-    let maxAxes = 0;
+    const db = await connectDB();
+    const viewStatesColl = await getCollection(db, "run_view_states");
+
+    const dataRows = [];
+    const maxAxesByType = new Map();
+
+    const findNearest = (sorted, targetOrigTs) => {
+      let lo = 0, hi = sorted.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (Number(sorted[mid].timestamp) < targetOrigTs) lo = mid + 1;
+        else hi = mid;
+      }
+      const candidates = [];
+      if (lo < sorted.length) candidates.push(sorted[lo]);
+      if (lo > 0) candidates.push(sorted[lo - 1]);
+      if (!candidates.length) return null;
+      const best = candidates.reduce((a, b) =>
+        Math.abs(Number(a.timestamp) - targetOrigTs) <= Math.abs(Number(b.timestamp) - targetOrigTs) ? a : b
+      );
+      return Math.abs(Number(best.timestamp) - targetOrigTs) <= 200 ? best : null;
+    };
 
     for (const runId of uniqueRunIds) {
       let authorizedRun;
@@ -1788,24 +1924,53 @@ runRouter.post("/export/multi-csv", async (req, res) => {
       }
       if (!authorizedRun) continue;
 
-      const [runDocument, sensorReadings, trims] = await Promise.all([
-        runService.getSingleRunDB(runId),
-        runService.getRunSensorReadingsAll(runId),
-        runService.getRunTrims(runId),
-      ]);
+      // Load saved view state and merge sensor config across all chart slots.
+      const viewStateDoc = await viewStatesColl.findOne({ runId });
+      const charts = Array.isArray(viewStateDoc?.charts) ? viewStateDoc.charts : [];
 
+      const mergedSensorKeys = new Set();
+      const mergedFilterPipelines = {};
+      const mergedFiltersActive = {};
+      const mergedSyncOffsets = {};
+
+      for (const chartState of charts) {
+        if (!chartState) continue;
+        for (const key of (chartState.selectedSensorKeys || [])) {
+          // Only consider sensors that belong to this run (not comparison runs).
+          if (!key.startsWith(`${runId}:`)) continue;
+          mergedSensorKeys.add(key);
+          if (mergedFilterPipelines[key] === undefined && chartState.sensorFilterPipelines?.[key]) {
+            mergedFilterPipelines[key] = chartState.sensorFilterPipelines[key];
+          }
+          if (mergedFiltersActive[key] === undefined && chartState.sensorFiltersActive?.[key] !== undefined) {
+            mergedFiltersActive[key] = chartState.sensorFiltersActive[key];
+          }
+          if (mergedSyncOffsets[key] === undefined && chartState.sensorSyncOffsets?.[key] !== undefined) {
+            mergedSyncOffsets[key] = chartState.sensorSyncOffsets[key];
+          }
+        }
+      }
+
+      // Determine which sensors to export: saved selection or all available.
+      const allSensors = await runService.getRunSensors(runId);
+      let sensorsToExport;
+      if (mergedSensorKeys.size > 0) {
+        const selectedIds = new Set(
+          [...mergedSensorKeys].map((k) => String(k.slice(runId.length + 1)))
+        );
+        sensorsToExport = allSensors.filter((s) => selectedIds.has(String(s.sensorId)));
+      } else {
+        sensorsToExport = allSensors;
+      }
+
+      const runDocument = await runService.getSingleRunDB(runId);
       const labels = Array.isArray(runDocument.labels) ? runDocument.labels : [];
-
-      // Split labels by kind for efficient lookup.
       const rangeLabels = labels.filter((l) => l.kind === "range");
       const singleLabels = labels.filter((l) => l.kind === "single");
 
-      // Returns the first label covering the given timestamp, or null.
       const findLabel = (ts) => {
         for (const label of rangeLabels) {
-          if (ts >= Number(label.startTimestamp) && ts <= Number(label.endTimestamp)) {
-            return label;
-          }
+          if (ts >= Number(label.startTimestamp) && ts <= Number(label.endTimestamp)) return label;
         }
         for (const label of singleLabels) {
           if (Array.isArray(label.points)) {
@@ -1817,41 +1982,128 @@ runRouter.post("/export/multi-csv", async (req, res) => {
         return null;
       };
 
-      // Returns true if the timestamp falls within any trim window.
-      const isTrimmed = (ts) =>
-        trims.some(
-          (t) => ts >= Number(t.startTimestamp) && ts <= Number(t.endTimestamp)
-        );
-
       const runIdStr = String(runDocument._id);
       const runName  = runDocument.name || runIdStr;
       const runDate  = runDocument.date ? new Date(runDocument.date).toISOString() : "";
       const context  = runDocument.context || "";
 
-      for (const reading of sensorReadings) {
-        const ts = Number(reading.timestamp);
-        if (isTrimmed(ts)) continue;
+      // Fetch filtered data per sensor and build label stats.
+      // getRunSensorData applies trims and filter pipeline internally.
+      const sensorDataBySensorId = new Map();
+      for (const sensor of sensorsToExport) {
+        const sensorKey = `${runId}:${sensor.sensorId}`;
+        const pipeline = mergedFilterPipelines[sensorKey] || [];
+        const isActive = !!(mergedFiltersActive[sensorKey] && pipeline.length > 0);
+        const filterKey = isActive
+          ? JSON.stringify(pipeline.map(({ type, params }) => ({ type, params })))
+          : undefined;
 
-        const axisValues = Array.isArray(reading.data) ? reading.data : [];
-        if (axisValues.length > maxAxes) maxAxes = axisValues.length;
+        try {
+          const readings = await runController.getRunSensorData(runId, sensor.sensorId, {
+            filters: filterKey,
+          });
+          sensorDataBySensorId.set(sensor.sensorId, { sensor, readings: Array.isArray(readings) ? readings : [] });
+        } catch (_err) {
+          // skip sensors that fail to load
+        }
+      }
 
-        const sensorType =
-          reading.sensorType || reading.sensorDetails?.[0]?.type || "";
+      const typeGroups = new Map();
+      for (const [sensorId, { sensor, readings }] of sensorDataBySensorId) {
+        const sensorKey = `${runId}:${sensorId}`;
+        const offset = Number.isFinite(mergedSyncOffsets[sensorKey]) ? mergedSyncOffsets[sensorKey] : 0;
+        const type = sensor.sensorType || String(sensorId);
+        const sorted = [...readings].sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+        if (!typeGroups.has(type)) typeGroups.set(type, []);
+        typeGroups.get(type).push({ sensorId, offset, sorted });
+      }
 
-        const label = findLabel(ts);
+      if (typeGroups.size === 0) continue;
+
+      const [primaryType] = typeGroups.keys();
+      const primaryEntry = typeGroups.get(primaryType)[0];
+
+      const rangeLabelStats = new Map();
+      if (enabledFields.has("labelStats") && rangeLabels.length > 0) {
+        for (const [type, sensors] of typeGroups) {
+          for (const label of rangeLabels) {
+            const start = Number(label.startTimestamp);
+            const end = Number(label.endTimestamp);
+            const axisAccum = [];
+            for (const { offset, sorted } of sensors) {
+              for (const r of sorted) {
+                const origTs = Number(r.timestamp);
+                if (origTs < start || origTs > end) continue;
+                (Array.isArray(r.data) ? r.data : []).forEach((v, ai) => {
+                  const n = Number(v);
+                  if (!Number.isFinite(n)) return;
+                  if (!axisAccum[ai]) axisAccum[ai] = { sum: 0, sumSq: 0, count: 0, min: Infinity, max: -Infinity };
+                  axisAccum[ai].sum += n;
+                  axisAccum[ai].sumSq += n * n;
+                  axisAccum[ai].count++;
+                  if (n < axisAccum[ai].min) axisAccum[ai].min = n;
+                  if (n > axisAccum[ai].max) axisAccum[ai].max = n;
+                });
+              }
+            }
+            if (!axisAccum.some(Boolean)) continue;
+            const axisStats = axisAccum.map((acc) => {
+              if (!acc || acc.count === 0) return { rms: null, std: null, p2p: null };
+              const mean = acc.sum / acc.count;
+              return {
+                rms: Math.sqrt(acc.sumSq / acc.count),
+                std: Math.sqrt(Math.max(0, acc.sumSq / acc.count - mean * mean)),
+                p2p: acc.max - acc.min,
+              };
+            });
+            if (!rangeLabelStats.has(label.id)) rangeLabelStats.set(label.id, new Map());
+            rangeLabelStats.get(label.id).set(type, axisStats);
+          }
+        }
+      }
+
+      for (const primaryReading of primaryEntry.sorted) {
+        const origTs = Number(primaryReading.timestamp);
+        const shiftedTs = origTs + primaryEntry.offset;
+
+        const valuesByType = new Map();
+        for (const [type, sensors] of typeGroups) {
+          const axisAccum = [];
+          for (const { offset, sorted } of sensors) {
+            const nearest = findNearest(sorted, shiftedTs - offset);
+            if (!nearest) continue;
+            (Array.isArray(nearest.data) ? nearest.data : []).forEach((v, ai) => {
+              const n = Number(v);
+              if (!Number.isFinite(n)) return;
+              if (!axisAccum[ai]) axisAccum[ai] = { sum: 0, count: 0 };
+              axisAccum[ai].sum += n;
+              axisAccum[ai].count++;
+            });
+          }
+          if (!axisAccum.some(Boolean)) continue;
+          const averaged = axisAccum.map((acc) => (acc ? acc.sum / acc.count : null));
+          if (averaged.length > (maxAxesByType.get(type) || 0)) maxAxesByType.set(type, averaged.length);
+          valuesByType.set(type, averaged);
+        }
+
+        if (valuesByType.size === 0) continue;
+
+        const label = findLabel(origTs);
+        const statsByType = enabledFields.has("labelStats") && label?.kind === "range"
+          ? (rangeLabelStats.get(label.id) || new Map())
+          : new Map();
 
         dataRows.push({
           runId:     runIdStr,
           runName,
           runDate,
           context,
-          sensorId:  reading.sensorId,
-          sensorType,
-          timestamp: ts,
-          axisValues,
+          timestamp: shiftedTs,
+          valuesByType,
           labelId:   label?.id   || "",
           labelText: label?.text || "",
           labelKind: label?.kind || "",
+          statsByType,
         });
       }
     }
@@ -1862,36 +2114,73 @@ runRouter.post("/export/multi-csv", async (req, res) => {
       });
     }
 
-    // Build CSV header.
-    const axisHeaders = Array.from({ length: maxAxes }, (_, i) => axisColumnName(i));
+    const axisLabel = (i) => (i === 0 ? "x" : i === 1 ? "y" : i === 2 ? "z" : String(i));
+    const sortedTypes = [...maxAxesByType.keys()].sort();
+
+    const sensorValueHeaders = enabledFields.has("sensorValues")
+      ? sortedTypes.flatMap((type) => {
+          const abbrev = abbreviateSensorType(type);
+          return Array.from({ length: maxAxesByType.get(type) || 0 }, (_, i) => `${abbrev}_${axisLabel(i)}`);
+        })
+      : [];
+
+    const statHeaders = enabledFields.has("labelStats")
+      ? sortedTypes.flatMap((type) => {
+          const abbrev = abbreviateSensorType(type);
+          return Array.from({ length: maxAxesByType.get(type) || 0 }, (_, i) => [
+            `${abbrev}_label_rms_${axisLabel(i)}`,
+            `${abbrev}_label_std_${axisLabel(i)}`,
+            `${abbrev}_label_p2p_${axisLabel(i)}`,
+          ]).flat();
+        })
+      : [];
+
     const headers = [
       ...(enabledFields.has("runId")       ? ["runId"]       : []),
       ...(enabledFields.has("runName")      ? ["runName"]      : []),
       ...(enabledFields.has("runDate")      ? ["runDate"]      : []),
       ...(enabledFields.has("context")      ? ["context"]      : []),
-      ...(enabledFields.has("sensorId")     ? ["sensorId"]     : []),
-      ...(enabledFields.has("sensorType")   ? ["sensorType"]   : []),
       ...(enabledFields.has("timestamp")    ? ["timestamp"]    : []),
-      ...(enabledFields.has("sensorValues") ? axisHeaders      : []),
+      ...sensorValueHeaders,
       ...(enabledFields.has("labels")       ? ["labelId", "labelText", "labelKind"] : []),
+      ...statHeaders,
     ];
 
     const lines = [buildCsvLine(headers)];
     for (const row of dataRows) {
-      const axisCells = Array.from(
-        { length: maxAxes },
-        (_, i) => (row.axisValues[i] !== undefined ? row.axisValues[i] : "")
-      );
+      const valueCells = enabledFields.has("sensorValues")
+        ? sortedTypes.flatMap((type) => {
+            const vals = row.valuesByType.get(type) || [];
+            return Array.from({ length: maxAxesByType.get(type) || 0 }, (_, i) =>
+              vals[i] !== null && vals[i] !== undefined ? vals[i] : ""
+            );
+          })
+        : [];
+
+      const statCells = enabledFields.has("labelStats")
+        ? sortedTypes.flatMap((type) => {
+            const typeStats = row.statsByType.get(type) || [];
+            return Array.from({ length: maxAxesByType.get(type) || 0 }, (_, i) => {
+              const s = typeStats[i];
+              if (!s) return ["", "", ""];
+              return [
+                s.rms !== null ? s.rms.toFixed(6) : "",
+                s.std !== null ? s.std.toFixed(6) : "",
+                s.p2p !== null ? s.p2p.toFixed(6) : "",
+              ];
+            }).flat();
+          })
+        : [];
+
       lines.push(buildCsvLine([
-        ...(enabledFields.has("runId")       ? [row.runId]       : []),
-        ...(enabledFields.has("runName")      ? [row.runName]      : []),
-        ...(enabledFields.has("runDate")      ? [row.runDate]      : []),
-        ...(enabledFields.has("context")      ? [row.context]      : []),
-        ...(enabledFields.has("sensorId")     ? [row.sensorId]     : []),
-        ...(enabledFields.has("sensorType")   ? [row.sensorType]   : []),
-        ...(enabledFields.has("timestamp")    ? [row.timestamp]    : []),
-        ...(enabledFields.has("sensorValues") ? axisCells           : []),
+        ...(enabledFields.has("runId")       ? [row.runId]    : []),
+        ...(enabledFields.has("runName")      ? [row.runName]  : []),
+        ...(enabledFields.has("runDate")      ? [row.runDate]  : []),
+        ...(enabledFields.has("context")      ? [row.context]  : []),
+        ...(enabledFields.has("timestamp")    ? [row.timestamp]: []),
+        ...valueCells,
         ...(enabledFields.has("labels")       ? [row.labelId, row.labelText, row.labelKind] : []),
+        ...statCells,
       ]));
     }
 
@@ -2203,6 +2492,7 @@ runRouter.post("/upload", async (req, res) => {
 
     // For CSV uploads: parse early to detect column labels (axes) before any DB work.
     let csvReadings = null;
+    let csvSegments = null;
     let uploadedAxes = isBinUpload ? sensorConfig.binaryAxes : null;
     if (isCsvUpload) {
       let csvResult;
@@ -2215,6 +2505,7 @@ runRouter.post("/upload", async (req, res) => {
         return res.status(400).json({ message: "Upload did not contain any sensor readings." });
       }
       csvReadings = csvResult.readings;
+      csvSegments = csvResult.segments;
       uploadedAxes = csvResult.axes;
     }
 
@@ -2546,10 +2837,28 @@ runRouter.post("/upload", async (req, res) => {
       );
     }
 
+    let labelsCreated = 0;
+    if (isCsvUpload && Array.isArray(csvSegments) && csvSegments.some((s) => s)) {
+      const inferredLabels = inferLabelsFromSegments(
+        csvReadings,
+        csvSegments,
+        resolvedRunId.toString(),
+        resolvedSensorId
+      );
+      if (inferredLabels.length > 0) {
+        const runLabelsColl = await getCollection(db, "run_labels");
+        const now = new Date();
+        await runLabelsColl.insertMany(
+          inferredLabels.map((label) => ({ ...label, runId: resolvedRunId, createdAt: now, updatedAt: now }))
+        );
+        labelsCreated = inferredLabels.length;
+      }
+    }
+
     return res.status(runCreated ? 201 : 200).json({
       message: runCreated
-        ? `Run created and ${isCsvUpload ? "CSV" : "BIN"} data uploaded successfully.`
-        : `${isCsvUpload ? "CSV" : "BIN"} sensor data uploaded to existing run successfully.`,
+        ? `Run created and CSV data uploaded successfully.${labelsCreated ? ` ${labelsCreated} label(s) imported.` : ""}`
+        : `CSV sensor data uploaded to existing run successfully.${labelsCreated ? ` ${labelsCreated} label(s) imported.` : ""}`,
       runId: resolvedRunId,
       name: resolvedRunName || `Run ${resolvedRunId.toString()}`,
       context: resolvedContext,
@@ -2557,6 +2866,7 @@ runRouter.post("/upload", async (req, res) => {
       createdRun: runCreated,
       sensorType: resolvedSensorType,
       sensorId: resolvedSensorId,
+      labelsCreated,
     });
   } catch (error) {
     return res.status(500).json({

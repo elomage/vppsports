@@ -1,12 +1,8 @@
-/**
- * Moving average filter — smooths a signal by averaging over a sliding window.
- */
 module.exports = {
   id: "movingaverage",
   label: "Mov Avg",
   description:
-    "Replaces each sample with the mean of the surrounding window. " +
-    "Larger windows produce heavier smoothing at the cost of lag.",
+    "Averages the values in a specified window.",
   params: [
     {
       key: "windowSize",

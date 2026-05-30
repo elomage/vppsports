@@ -35,9 +35,8 @@ const ModelVisualizer = ({ selectedRun, sliderValue, effectiveTimestamps, remove
     const containerRef = useRef(null);
     const [gyroReadings, setGyroReadings] = useState([]);
     const [loadError, setLoadError] = useState(null);
-    const [sensitivity, setSensitivity] = useState(0.01);
+    const [sensitivity, setSensitivity] = useState(0.05);
 
-    // Fetch gyroscope sensor data whenever the run changes.
     useEffect(() => {
         const runId = selectedRun?._id;
         if (!runId) {
@@ -111,7 +110,7 @@ const ModelVisualizer = ({ selectedRun, sliderValue, effectiveTimestamps, remove
         const controls = new OrbitControls(camera, renderer.domElement);
         controlsRef.current = controls;
 
-        const FRAME_INTERVAL = 1000 / 30;
+        const FRAME_INTERVAL = 1000 / 60;
         let lastFrameTime = 0;
         const animate = (now) => {
             requestAnimationFrame(animate);
@@ -138,12 +137,9 @@ const ModelVisualizer = ({ selectedRun, sliderValue, effectiveTimestamps, remove
         };
     }, []);
 
-    // Update rotation on every slider tick.
     useEffect(() => {
         if (!objectRef.current || gyroReadings.length === 0) return;
 
-        // Use effectiveTimestamps (same array the playback slider indexes into) with
-        // totalTimestamps as a fallback before effectiveTimestamps has been computed.
         const timestamps = effectiveTimestamps ?? selectedRun?.totalTimestamps;
         const currentTs = timestamps?.[sliderValue];
         if (currentTs == null) return;
@@ -162,10 +158,6 @@ const ModelVisualizer = ({ selectedRun, sliderValue, effectiveTimestamps, remove
         <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderBottom: '1px solid #dee2e6', flexShrink: 0, gap: '12px' }}>
                 <button onClick={resetZoom} className="btn btn-sm btn-outline-primary">Reset Zoom</button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
-                    {/* <label style={{ fontSize: '13px', whiteSpace: 'nowrap', margin: 0 }}>Sensitivity: {sensitivity.toFixed(2)}x</label>
-                    <input type="range" min="0.01" max="2" step="0.01" value={sensitivity} onChange={e => setSensitivity(Number(e.target.value))} style={{ flex: 1 }} /> */}
-                </div>
                 {loadError && <span style={{ fontSize: '12px', color: '#dc3545' }}>Failed to load gyroscope data</span>}
                 {!loadError && gyroReadings.length === 0 && selectedRun && (
                     <span style={{ fontSize: '12px', color: '#6c757d' }}>No gyroscope sensor found</span>

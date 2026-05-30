@@ -14,7 +14,7 @@ const toDatetimeLocal = (dateStr) => {
   }
 };
 
-const InfoVisualizer = ({ selectedRun }) => {
+const InfoVisualizer = ({ selectedRun, removeFunction }) => {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -87,15 +87,20 @@ const InfoVisualizer = ({ selectedRun }) => {
   return (
     <>
       <figure id="run-info">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
           <b>
             <figcaption id="run-info-title">Selected run: {selectedRun._id}</figcaption>
           </b>
-          {!editing && (
-            <button onClick={startEdit} className="btn btn-sm btn-outline-secondary">
-              Edit
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {!editing && (
+              <button onClick={startEdit} className="btn btn-sm btn-outline-secondary">
+                Edit
+              </button>
+            )}
+            <button type="button" className="btn btn-sm btn-outline-danger" onClick={removeFunction}>
+              Remove
             </button>
-          )}
+          </div>
         </div>
 
         {editing ? (

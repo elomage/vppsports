@@ -4,9 +4,7 @@ import {
   createUser,
   deleteFilter,
   deleteRun,
-  exportMultiRunArff,
   exportMultiRunCsv,
-  exportRunArff,
   fetchContexts,
   fetchDeletedContexts,
   fetchDeletedUsers,
@@ -23,6 +21,7 @@ import {
   updateUser,
   uploadFilter,
 } from "./api";
+import MultiRunExport from "./MultiRunExport";
 
 const normalizeContext = (value) =>
   String(value || "")
@@ -54,17 +53,6 @@ const createEmptyUserForm = () => ({
   contextIds: [],
 });
 
-const CSV_FIELD_GROUPS = [
-  { key: "runId", label: "Run ID" },
-  { key: "runName", label: "Run Name" },
-  { key: "runDate", label: "Run Date" },
-  { key: "context", label: "Context" },
-  { key: "sensorId", label: "Sensor ID" },
-  { key: "sensorType", label: "Sensor Type" },
-  { key: "timestamp", label: "Timestamp" },
-  { key: "sensorValues", label: "Sensor Values" },
-  { key: "labels", label: "Labels" },
-];
 
 const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
   const [selectedRunId, setSelectedRunId] = useState("");
@@ -111,21 +99,6 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
   });
   const [pluginHasContextConfig, setPluginHasContextConfig] = useState(false);
 
-  const [multiRunSelectedIds, setMultiRunSelectedIds] = useState(new Set());
-  const [isMultiExporting, setIsMultiExporting] = useState(false);
-  const [multiExportStatus, setMultiExportStatus] = useState({
-    type: "idle",
-    message: "",
-  });
-
-  const [csvFields, setCsvFields] = useState(() =>
-    Object.fromEntries(CSV_FIELD_GROUPS.map(({ key }) => [key, true])),
-  );
-  const toggleCsvField = (key) =>
-    setCsvFields((prev) => ({ ...prev, [key]: !prev[key] }));
-  const enabledCsvFields = CSV_FIELD_GROUPS.filter(
-    ({ key }) => csvFields[key],
-  ).map(({ key }) => key);
 
   const sortedRuns = useMemo(
     () =>
@@ -653,20 +626,14 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
     doDelete();
   };
 
-  const handleExport = async (variant) => {
+  const handleExportCsv = async () => {
     if (!selectedRunId || isExporting) return;
 
     setIsExporting(true);
-    setDeleteStatus({
-      type: "info",
-      message:
-        variant === "resampled"
-          ? "Preparing resampled ARFF export..."
-          : "Preparing feature ARFF export...",
-    });
+    setDeleteStatus({ type: "info", message: "Preparing CSV export..." });
 
     try {
-      const { blob, fileName } = await exportRunArff(selectedRunId, variant);
+      const { blob, fileName } = await exportMultiRunCsv([selectedRunId]);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -675,109 +642,14 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-
-      setDeleteStatus({
-        type: "success",
-        message:
-          variant === "resampled"
-            ? "Resampled ARFF export downloaded."
-            : "Feature ARFF export downloaded.",
-      });
+      setDeleteStatus({ type: "success", message: "CSV export downloaded." });
     } catch (error) {
       setDeleteStatus({
         type: "error",
-        message:
-          error instanceof Error ? error.message : "Failed to export run.",
+        message: error instanceof Error ? error.message : "Failed to export run.",
       });
     } finally {
       setIsExporting(false);
-    }
-  };
-
-  const toggleMultiRunSelection = (runId, checked) => {
-    setMultiRunSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (checked) {
-        next.add(runId);
-      } else {
-        next.delete(runId);
-      }
-      return next;
-    });
-  };
-
-  const handleMultiExport = async (variant = "wide") => {
-    if (isMultiExporting || multiRunSelectedIds.size === 0) return;
-
-    setIsMultiExporting(true);
-    setMultiExportStatus({
-      type: "info",
-      message: `Exporting ${multiRunSelectedIds.size} run(s) as ${variant} ARFF...`,
-    });
-
-    try {
-      const { blob, fileName } = await exportMultiRunArff(
-        [...multiRunSelectedIds],
-        variant,
-      );
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-
-      setMultiExportStatus({
-        type: "success",
-        message: `Exported ${multiRunSelectedIds.size} run(s) as ${variant} ARFF.`,
-      });
-    } catch (error) {
-      setMultiExportStatus({
-        type: "error",
-        message:
-          error instanceof Error ? error.message : "Multi-run export failed.",
-      });
-    } finally {
-      setIsMultiExporting(false);
-    }
-  };
-
-  const handleMultiCsvExport = async () => {
-    if (isMultiExporting || multiRunSelectedIds.size === 0) return;
-
-    setIsMultiExporting(true);
-    setMultiExportStatus({
-      type: "info",
-      message: `Exporting ${multiRunSelectedIds.size} run(s) as CSV...`,
-    });
-
-    try {
-      const { blob, fileName } = await exportMultiRunCsv(
-        [...multiRunSelectedIds],
-        enabledCsvFields,
-      );
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-
-      setMultiExportStatus({
-        type: "success",
-        message: `Exported ${multiRunSelectedIds.size} run(s) as CSV.`,
-      });
-    } catch (error) {
-      setMultiExportStatus({
-        type: "error",
-        message: error instanceof Error ? error.message : "CSV export failed.",
-      });
-    } finally {
-      setIsMultiExporting(false);
     }
   };
 
@@ -908,34 +780,10 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
             <button
               className="btn btn-outline-primary"
               type="button"
-              onClick={() => handleExport("features")}
+              onClick={handleExportCsv}
               disabled={!selectedRunId || isDeleting || isExporting}
             >
-              {isExporting ? "Exporting..." : "Export ARFF"}
-            </button>
-            <button
-              className="btn btn-outline-secondary"
-              type="button"
-              onClick={() => handleExport("resampled")}
-              disabled={!selectedRunId || isDeleting || isExporting}
-            >
-              Resampled ARFF
-            </button>
-            <button
-              className="btn btn-outline-success"
-              type="button"
-              onClick={() => handleExport("wide")}
-              disabled={!selectedRunId || isDeleting || isExporting}
-            >
-              Wide Features ARFF
-            </button>
-            <button
-              className="btn btn-outline-warning"
-              type="button"
-              onClick={() => handleExport("apriori")}
-              disabled={!selectedRunId || isDeleting || isExporting}
-            >
-              Apriori ARFF
+              {isExporting ? "Exporting..." : "Export CSV"}
             </button>
           </div>
           {deleteStatus.message && (
@@ -948,173 +796,7 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
         </div>
       </div>
 
-      <div className="upload-card col m-2">
-        <h3>Multi-run export</h3>
-        <div>
-          <strong>Select runs to combine into a single ARFF dataset</strong>
-        </div>
-        {sortedRuns.length === 0 ? (
-          <div className="upload-status">No runs available.</div>
-        ) : (
-          <div
-            style={{
-              maxHeight: "240px",
-              overflowY: "auto",
-              border: "1px solid #dee2e6",
-              borderRadius: "4px",
-              padding: "6px",
-            }}
-          >
-            {sortedRuns.map((run) => (
-              <div
-                key={run._id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  padding: "2px 0",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  id={`multi-run-${run._id}`}
-                  checked={multiRunSelectedIds.has(run._id)}
-                  onChange={(e) =>
-                    toggleMultiRunSelection(run._id, e.target.checked)
-                  }
-                  disabled={isMultiExporting}
-                />
-                <label
-                  htmlFor={`multi-run-${run._id}`}
-                  style={{ margin: 0, cursor: "pointer" }}
-                >
-                  {run.name || run._id}
-                  {run.date
-                    ? ` — ${new Date(run.date).toLocaleDateString()}`
-                    : ""}
-                </label>
-              </div>
-            ))}
-          </div>
-        )}
-        <div style={{ marginTop: "10px" }}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: "4px",
-            }}
-          >
-            <strong style={{ fontSize: "0.85em" }}>CSV fields</strong>
-            <span style={{ fontSize: "0.8em", display: "flex", gap: "8px" }}>
-              <button
-                className="btn btn-link btn-sm p-0"
-                style={{ fontSize: "0.8em" }}
-                onClick={() =>
-                  setCsvFields(
-                    Object.fromEntries(
-                      CSV_FIELD_GROUPS.map(({ key }) => [key, true]),
-                    ),
-                  )
-                }
-              >
-                all
-              </button>
-              <button
-                className="btn btn-link btn-sm p-0"
-                style={{ fontSize: "0.8em" }}
-                onClick={() =>
-                  setCsvFields(
-                    Object.fromEntries(
-                      CSV_FIELD_GROUPS.map(({ key }) => [key, false]),
-                    ),
-                  )
-                }
-              >
-                none
-              </button>
-            </span>
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
-            {CSV_FIELD_GROUPS.map(({ key, label }) => (
-              <label
-                key={key}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "4px",
-                  fontSize: "0.85em",
-                  cursor: "pointer",
-                  userSelect: "none",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={csvFields[key]}
-                  onChange={() => toggleCsvField(key)}
-                  disabled={isMultiExporting}
-                />
-                {label}
-              </label>
-            ))}
-          </div>
-        </div>
-
-        <div className="upload-actions" style={{ marginTop: "8px" }}>
-          <button
-            className="btn btn-outline-primary"
-            type="button"
-            onClick={handleMultiCsvExport}
-            disabled={
-              isMultiExporting ||
-              multiRunSelectedIds.size === 0 ||
-              enabledCsvFields.length === 0
-            }
-          >
-            {isMultiExporting
-              ? "Exporting..."
-              : `Export CSV (${multiRunSelectedIds.size} run(s))`}
-          </button>
-          <button
-            className="btn btn-outline-success"
-            type="button"
-            onClick={() => handleMultiExport("wide")}
-            disabled={isMultiExporting || multiRunSelectedIds.size === 0}
-          >
-            {isMultiExporting
-              ? "Exporting..."
-              : `Wide ARFF (${multiRunSelectedIds.size} run(s))`}
-          </button>
-          <button
-            className="btn btn-outline-warning"
-            type="button"
-            onClick={() => handleMultiExport("apriori")}
-            disabled={isMultiExporting || multiRunSelectedIds.size === 0}
-          >
-            {isMultiExporting
-              ? "Exporting..."
-              : `Apriori ARFF (${multiRunSelectedIds.size} run(s))`}
-          </button>
-          {multiRunSelectedIds.size > 0 && (
-            <button
-              className="btn btn-outline-secondary btn-sm"
-              type="button"
-              onClick={() => setMultiRunSelectedIds(new Set())}
-              disabled={isMultiExporting}
-            >
-              Clear
-            </button>
-          )}
-        </div>
-        {multiExportStatus.message && (
-          <div
-            className={`upload-status ${multiExportStatus.type !== "idle" ? `is-${multiExportStatus.type}` : ""}`}
-          >
-            {multiExportStatus.message}
-          </div>
-        )}
-      </div>
+      <MultiRunExport runs={sortedRuns} />
 
       <div className="upload-card col m-2">
         <h3>Context management</h3>
@@ -1482,7 +1164,6 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
           )}
         </div>
 
-        {/* Filter list */}
         {isLoadingFilters && (
           <div className="upload-file-meta">Loading filters…</div>
         )}
@@ -1494,7 +1175,6 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
                 <tr>
                   <th>ID</th>
                   <th>Label</th>
-                  {/* <th>Type</th> */}
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -1505,13 +1185,6 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
                       <code>{filter.id}</code>
                     </td>
                     <td>{filter.label}</td>
-                    {/* <td>
-                      <span
-                        className={`badge ${filter.builtin ? "bg-secondary" : "bg-primary"}`}
-                      >
-                        {filter.builtin ? "Built-in" : "Custom"}
-                      </span>
-                    </td> */}
                     <td>
                       {!filter.builtin && (
                         <button
@@ -1542,7 +1215,6 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
           context. Global defaults apply when a context has no specific config.
         </p>
 
-        {/* Context selector */}
         <div className="mb-2">
           <label htmlFor="plugin-context-select">Context</label>
           <select
@@ -1561,7 +1233,6 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
           </select>
         </div>
 
-        {/* Type tabs */}
         <div className="btn-group mb-3" role="group">
           <button
             type="button"
@@ -1581,7 +1252,6 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
           </button>
         </div>
 
-        {/* Status */}
         {pluginContextId &&
           pluginHasContextConfig &&
           pluginStatus.type === "idle" && (
@@ -1600,7 +1270,6 @@ const AdminPanel = ({ runs, onRunDeleted, onUserCreated }) => {
           </div>
         )}
 
-        {/* Plugin list */}
         {isLoadingPlugins ? (
           <div className="upload-file-meta">Loading plugins…</div>
         ) : pluginList.length > 0 ? (

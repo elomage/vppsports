@@ -172,7 +172,6 @@ export async function logout() {
       body: JSON.stringify({}),
     });
   } catch (error) {
-    // Always clear local state even if backend logout fails.
   } finally {
     setAccessToken(null);
     notifyAuthFailure();
@@ -416,6 +415,46 @@ export async function exportRunArff(runId, variant = "features", points) {
   };
 }
 
+export async function exportAprioriCsv(runIds, numBins) {
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (accessToken) {
+    headers.set("Authorization", `Bearer ${accessToken}`);
+  }
+
+  const response = await fetch(`${SERVER_URL}/run/export/apriori-csv`, {
+    method: "POST",
+    headers,
+    credentials: "include",
+    body: JSON.stringify({ runIds, numBins }),
+  });
+
+  if (response.status === 401) {
+    notifyAuthFailure();
+    throw new UnauthorizedError();
+  }
+
+  if (!response.ok) {
+    const payload = await parseResponse(response);
+    const message =
+      typeof payload === "string"
+        ? payload
+        : payload?.error
+          ? `${payload?.message || `Request failed (${response.status})`}: ${payload.error}`
+          : payload?.message || `Request failed (${response.status})`;
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("content-disposition") || "";
+  const fileNameMatch = disposition.match(/filename="([^"]+)"/i);
+  const dateStamp = new Date().toISOString().slice(0, 10);
+
+  return {
+    blob,
+    fileName: fileNameMatch?.[1] || `multi-run-apriori-${dateStamp}.csv`,
+  };
+}
+
 export async function exportMultiRunCsv(runIds, fields) {
   const headers = new Headers({ "Content-Type": "application/json" });
   if (accessToken) {
@@ -456,45 +495,6 @@ export async function exportMultiRunCsv(runIds, fields) {
   };
 }
 
-export async function exportMultiRunArff(runIds, variant = "wide") {
-  const headers = new Headers({ "Content-Type": "application/json" });
-  if (accessToken) {
-    headers.set("Authorization", `Bearer ${accessToken}`);
-  }
-
-  const response = await fetch(`${SERVER_URL}/run/export/multi-arff`, {
-    method: "POST",
-    headers,
-    credentials: "include",
-    body: JSON.stringify({ runIds, variant }),
-  });
-
-  if (response.status === 401) {
-    notifyAuthFailure();
-    throw new UnauthorizedError();
-  }
-
-  if (!response.ok) {
-    const payload = await parseResponse(response);
-    const message =
-      typeof payload === "string"
-        ? payload
-        : payload?.error
-          ? `${payload?.message || `Request failed (${response.status})`}: ${payload.error}`
-          : payload?.message || `Request failed (${response.status})`;
-    throw new Error(message);
-  }
-
-  const blob = await response.blob();
-  const disposition = response.headers.get("content-disposition") || "";
-  const fileNameMatch = disposition.match(/filename="([^"]+)"/i);
-  const timestamp = new Date().toISOString().slice(0, 10);
-
-  return {
-    blob,
-    fileName: fileNameMatch?.[1] || `multi-run-${variant}-${timestamp}.arff`,
-  };
-}
 
 export async function createUser(payload) {
   return request("/auth/users", {

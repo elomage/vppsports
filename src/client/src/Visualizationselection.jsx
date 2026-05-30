@@ -32,10 +32,6 @@ export default function ComponentSelector({ selectedRun, effectiveTimestamps, sl
     ]);
     const [hasVideoForRun, setHasVideoForRun] = useState(true);
     const [containerSize, setContainerSize] = useState({ width: window.innerWidth, height: window.innerHeight });
-
-    // Plugin assignment state.
-    // vizPlugins: array of { id, enabled, order } or null when no config (all enabled).
-    // enabledFilterIds: array of enabled filter IDs or null (all enabled).
     const [vizPlugins, setVizPlugins] = useState(null);
     const [enabledFilterIds, setEnabledFilterIds] = useState(null);
 
@@ -85,7 +81,6 @@ export default function ComponentSelector({ selectedRun, effectiveTimestamps, sl
             } catch (error) {
                 if (isCancelled) return;
 
-                // Fail closed: hide video component if availability check fails.
                 setHasVideoForRun(false);
                 setSelectedComponent((prev) => prev.filter((component) => component.type !== 'video'));
             }
@@ -98,7 +93,6 @@ export default function ComponentSelector({ selectedRun, effectiveTimestamps, sl
         };
     }, [selectedRun?._id]);
 
-    // Fetch plugin assignments whenever the run's context changes.
     useEffect(() => {
         const contextId = selectedRun?.contextId
             ? String(selectedRun.contextId)
@@ -177,8 +171,6 @@ export default function ComponentSelector({ selectedRun, effectiveTimestamps, sl
         };
     }, []);
 
-    // Set of viz plugin IDs that are enabled for the current context.
-    // null vizPlugins = no config loaded yet, default to all enabled.
     const enabledVizTypes = vizPlugins
         ? new Set(vizPlugins.filter((p) => p.enabled).map((p) => p.id))
         : new Set(Object.keys(componentsMap));
@@ -353,15 +345,12 @@ function ResizeHandle({ leftComponent, rightComponent, onResize }) {
             const deltaRatio = deltaX / containerWidth;
             const totalGrow = startPosRef.current.totalGrow;
 
-            // Calculate new flex-grow values based on drag distance
             let newLeftGrow = startPosRef.current.leftGrow + (deltaRatio * totalGrow);
             let newRightGrow = startPosRef.current.rightGrow - (deltaRatio * totalGrow);
 
-            // Ensure minimum sizes
             newLeftGrow = Math.max(0.1, newLeftGrow);
             newRightGrow = Math.max(0.1, newRightGrow);
 
-            // Normalize to maintain total
             const sum = newLeftGrow + newRightGrow;
             newLeftGrow = (newLeftGrow / sum) * totalGrow;
             newRightGrow = (newRightGrow / sum) * totalGrow;
@@ -406,7 +395,6 @@ function ResizeHandle({ leftComponent, rightComponent, onResize }) {
                 }
             }}
         >
-            {/* Visual indicator */}
             <div style={{
                 position: 'absolute',
                 top: '50%',

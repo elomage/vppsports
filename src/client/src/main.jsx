@@ -12,7 +12,6 @@ import zoomPlugin from 'chartjs-plugin-zoom';
 import moment from 'moment';
 import annotationPlugin from 'chartjs-plugin-annotation';
 import 'chartjs-adapter-moment';
-// import Popper from '@popperjs/core';
 
 Chart.register(zoomPlugin, annotationPlugin);
 
