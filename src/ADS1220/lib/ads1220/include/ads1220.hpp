@@ -87,6 +87,8 @@ public:
     @return Returns the uint between 1 to 128x
     */
    uint8_t gainValueFromBits(uint8_t gain_bits);
+   bool isDataReady(bool wait);
+
 
 private:
     spi_inst_t *spi = nullptr;

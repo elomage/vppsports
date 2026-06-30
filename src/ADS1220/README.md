@@ -1,44 +1,29 @@
-# ADS1220 ADC Data logger
-Data acquisition system for reading bending sensor measurements using the ADS1220 24-bit ADC module on Raspberry Pi Pico W.
+# Project structure
 
-## Overview
+Project is organized into multiple folders:
 
-This project reads high-precision analog data from bending sensors via the ADS1220 ADC and logs the measurements to an SD card using the FatFS filesystem.
+- `/include` - Commonly used header files 
 
-## Project Structure
+- `/lib` - Custom written ADC1220 communication library and the SD card library
 
-```
-ADS1220/
-├── ADS1220.cpp           # Main application code
-├── ads1220_pins.hpp      # GPIO pin definitions
-├── config.hpp            # ADC and system configuration
-├── lib/                  # External libraries
-│   ├── ads1220/          # ADS1220 custom driver library
-│   └── no-OS-FatFS-SD-SPI-RPi-Pico/  # SD card FatFS library
-└── build/                # Build output directory
-```
- 
- Edit 'config.hpp' to modify:
- - ADC sampling rate
- - ADC gain settings
- - Buffer sizes
- - Debug/Production mode
+- `/src` - The main programs orgnized by function:
+    - `adc/` - Core ADC reading logic
+    - `joystick/` - Joystick/USB HID interface
+    - `tests/` - Testing utilities (SD card, checking the communication on PCB)
 
-## Building
+## Configuration
 
-1. Navigate to the build directory:
-   ```sh
-   cd build
-   ```
+ TO ENABLE THE JOYSTICK MODE USE DEFINE INTO `include/ads1220_pins.hpp` FILE (to use right pins)
 
-2. Configure the project:
-   ```sh
-   cmake ..
-   ```
+ YOU CAN DEFINE THE NUM OF USED ADCS AND THE DUAL CHANNEL MODE  IN `include/config.hpp` FILE (AT THE MOMENT MAX 4 ADCS):
+- Set `NUM_ADCS` (1,2,3, or 4)
+- Enable/Disable `DUAL_CHANNEL_MODE` by commenting out 
 
-3. Compile:
-   ```sh
-   make -j4
-   ```
+| NUM OF ADCs | SINGLE MODE (channels) | DUAL CHANNEL MODE (channels) |
+|---:|---:|---:|
+| 1 | 1 | 2 |
+| 2 | 2 | 4 |
+| 3 | 3 | 6 |
+| 4 | 4 | 8 |
 
-4. The compiled `.uf2` file will be in the `build/` directory
+Practically measured **655 Hz** on each channel using 4 ADCs and DUAL CHANNEL MODE
