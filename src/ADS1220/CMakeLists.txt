@@ -24,7 +24,7 @@ if (EXISTS ${picoVscode})
     include(${picoVscode})
 endif()
 # ====================================================================================
-set(PICO_BOARD pico_w CACHE STRING "Board type")
+set(PICO_BOARD pico CACHE STRING "Board type")
 
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
@@ -36,12 +36,12 @@ pico_sdk_init()
 
 # Add subsystems ADS1220 library and SD card
 add_subdirectory(lib/ads1220)
-add_subdirectory(lib/no-OS-FatFS-SD-SPI-RPi-Pico/FatFS_SPI build)
+add_subdirectory(lib/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico/src build)
 
 
 # Add a root-level executable that uses the ads1220 library
 add_executable(ads1220_root
-    ADS1220.cpp
+    src/adc/ADS1220.cpp include/hw_config.c
 )
 
 target_include_directories(ads1220_root PRIVATE
@@ -52,8 +52,9 @@ target_link_libraries(ads1220_root
     pico_stdlib
     pico_multicore
     ads1220::ads1220
-    FatFs_SPI
+    no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
     hardware_spi
+    hardware_i2c
     
 )
 
@@ -83,4 +84,63 @@ pico_add_extra_outputs(ads1220_root)
 
 # pico_add_extra_outputs(test-read-write)
 
+add_executable(testSD src/tests/testSD.cpp include/hw_config.c)
+target_include_directories(testSD PRIVATE  ${CMAKE_CURRENT_LIST_DIR})
 
+target_link_libraries(testSD 
+    pico_stdlib
+    hardware_spi
+    no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
+)
+
+pico_enable_stdio_usb(testSD 1)
+pico_enable_stdio_uart(testSD 0)
+
+pico_add_extra_outputs(testSD)
+
+# Add ads1220_joystick executable with same links as ads1220_root
+add_executable(ads1220_joystick
+    src/joystick/ADS1220_joystick.cpp
+    src/joystick/usb_descriptors.c
+)
+
+target_include_directories(ads1220_joystick PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+    src/joystick
+    ${PICO_SDK_PATH}/lib/tinyusb/src
+    ${PICO_SDK_PATH}/lib/tinyusb/hw/bsp
+)
+
+target_link_libraries(ads1220_joystick
+    pico_stdlib
+    pico_multicore
+    ads1220::ads1220
+    hardware_spi
+    tinyusb_device
+    tinyusb_board
+)
+
+pico_enable_stdio_usb(ads1220_joystick 0)
+pico_enable_stdio_uart(ads1220_joystick 0)
+
+pico_add_extra_outputs(ads1220_joystick)
+
+# --------------- Add ADS1220 communication test executable ----------------------
+add_executable(test1220
+    src/tests/test1220.cpp
+)
+
+target_include_directories(test1220 PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+)
+
+target_link_libraries(test1220
+    pico_stdlib
+    hardware_spi
+    hardware_gpio
+    ads1220::ads1220
+)
+
+pico_enable_stdio_usb(test1220 1)
+
+pico_add_extra_outputs(test1220)

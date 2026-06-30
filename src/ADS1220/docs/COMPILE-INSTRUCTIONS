@@ -1,0 +1,5 @@
+1. To compile the code create the build folder like mkdir build (be in the root folder of project)
+2. cmake -B build
+3. cmake --build build
+
+old way stopped working for some reason

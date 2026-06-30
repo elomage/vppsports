@@ -49,7 +49,7 @@ bool ADS1220::waitForDRDY(uint32_t timeout_ms)
         {
             return false; // timeout
         }
-        sleep_ms(1); // small timeout to avoid busy-waiting
+        // sleep_ms(1); // small timeout to avoid busy-waiting DONT WORK WITH 2000SPS
     }
     return true; // DRDY went LOW -> data ready
 }
@@ -149,8 +149,8 @@ void ADS1220::printRegisterValues()
 uint8_t ADS1220::gainValueFromBits(uint8_t gain_bits)
 {
     switch (gain_bits >> Config0::GAIN_SHIFT & 0x07)
-    {   // shift bits to right 1 bit, to have bits from 0 position,
-        // then use 0111 mask to take only 3 bits
+    { // shift bits to right 1 bit, to have bits from 0 position,
+      // then use 0111 mask to take only 3 bits
     case 0b000:
         return 1;
     case 0b001:
@@ -177,8 +177,30 @@ float ADS1220::rawToVoltage(int32_t raw, float v_ref, uint8_t gain)
     {
         return 0.0f;
     }
-    if( v_ref <= 0.0f) {
+    if (v_ref <= 0.0f)
+    {
         return 0.0f;
     }
     return (static_cast<float>(raw) / ADC_FULL_SCALE * (v_ref / gain));
+}
+
+bool ADS1220::isDataReady(bool wait)
+{
+    if (wait)
+    {
+        uint32_t start = time_us_32();
+        while (gpio_get(drdy_pin))
+        {
+            if (time_us_32() - start > 10000) // 10ms timeout
+            {
+                return false; // Timeout
+            }
+            tight_loop_contents();
+        }
+        return true;
+    }
+    else
+    {
+        return !gpio_get(drdy_pin);
+    }
 }
