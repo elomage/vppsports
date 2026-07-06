@@ -1,0 +1,12 @@
+rtklib:
+  version: "${RTKLIB_VERSION}"
+  rnx2rtkp_exe: "${RTKLIB_RNX2RTKP_EXE}"
+  config_file: "${RTKLIB_CONFIG_FILE}"
+
+outputs:
+  solution_pos: "solution.pos"
+  solution_csv: "solution.csv"
+  report: "ppk_report.txt"
+  command: "rnx2rtkp_command.txt"
+  stdout: "rnx2rtkp_stdout.txt"
+  stderr: "rnx2rtkp_stderr.txt"

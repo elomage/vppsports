@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IMU Kalman Workbench</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; font-family: Arial, sans-serif; color: #1d252c; }
+    body { display: grid; grid-template-columns: 430px minmax(0, 1fr); background: #f6f7f5; }
+    aside { border-right: 1px solid #c9d1cc; background: #fbfcfa; overflow: auto; }
+    main { position: relative; min-width: 0; }
+    #map { position: absolute; inset: 0; background: #dde5e1; }
+    .panel { padding: 14px; display: grid; gap: 14px; }
+    .topline { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    h1 { margin: 0; font-size: 20px; line-height: 1.2; }
+    a { color: #28666e; font-weight: 700; text-decoration: none; }
+    .section { display: grid; gap: 8px; border-top: 1px solid #d8dedb; padding-top: 12px; }
+    .section:first-of-type { border-top: 0; padding-top: 0; }
+    .label { font-size: 12px; font-weight: 800; color: #52606a; }
+    input, select, button {
+      font: inherit; border: 1px solid #aeb7b3; border-radius: 6px; background: #fff; color: #1d252c;
+    }
+    input, select { width: 100%; padding: 8px 9px; }
+    button { padding: 8px 10px; font-weight: 800; cursor: pointer; }
+    button.primary { background: #28666e; border-color: #28666e; color: #fff; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .recordings, .results { display: grid; gap: 6px; max-height: 260px; overflow: auto; }
+    .rec, .result {
+      display: grid; gap: 4px; padding: 8px; border: 1px solid #d1d8d4; border-radius: 6px; background: #fff;
+      text-align: left;
+    }
+    .rec.selected, .result.selected { border-color: #28666e; box-shadow: inset 3px 0 0 #28666e; }
+    .rec-title, .result-title { font-size: 12px; font-weight: 800; overflow-wrap: anywhere; }
+    .meta { font-size: 11px; color: #61707a; line-height: 1.35; }
+    .checks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+    .check { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; }
+    .check input { width: 16px; height: 16px; padding: 0; }
+    .status {
+      position: absolute; left: 14px; top: 14px; z-index: 500; max-width: 420px;
+      padding: 9px 11px; border: 1px solid #ccd4d0; border-radius: 6px; background: rgba(255,255,255,0.94);
+      font-size: 12px; color: #38454d; box-shadow: 0 1px 6px rgba(0,0,0,0.14);
+    }
+    .stats {
+      position: absolute; right: 14px; top: 14px; z-index: 500; min-width: 220px;
+      padding: 10px 12px; border: 1px solid #ccd4d0; border-radius: 6px; background: rgba(255,255,255,0.94);
+      font-size: 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.14);
+    }
+    .stats div { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+    .command-log { white-space: pre-wrap; max-height: 130px; overflow: auto; font-size: 11px; color: #38454d; background: #eef2ef; padding: 8px; border-radius: 6px; }
+    @media (max-width: 900px) {
+      body { grid-template-columns: 1fr; grid-template-rows: auto minmax(480px, 1fr); }
+      aside { max-height: 48vh; border-right: 0; border-bottom: 1px solid #c9d1cc; }
+    }
+  </style>
+</head>
+<body>
+  <aside>
+    <div class="panel">
+      <div class="topline">
+        <h1>IMU Kalman Workbench</h1>
+        <a href="index.html">Map viewer</a>
+      </div>
+
+      <div class="section">
+        <label class="label" for="search">Recordings</label>
+        <input id="search" type="search" placeholder="Filter by date or LOG number">
+        <div class="recordings" id="recordings"></div>
+      </div>
+
+      <div class="section">
+        <div class="label">IMU Recording</div>
+        <select id="imuSelect"></select>
+        <button id="assignBtn" type="button">Attach selected IMU</button>
+        <div class="meta" id="suggestion"></div>
+      </div>
+
+      <div class="section">
+        <div class="label">GNSS Sources</div>
+        <div class="checks">
+          <label class="check"><input id="srcBestnav" type="checkbox" value="bestnav" checked>Bestnav</label>
+          <label class="check"><input id="srcFixed" type="checkbox" value="fixed_ppk">Fixed PPK</label>
+          <label class="check"><input id="srcDgps" type="checkbox" value="dgps">DGPS</label>
+        </div>
+        <button id="allSourcesBtn" type="button">Select available sources</button>
+      </div>
+
+      <div class="section">
+        <div class="label">Alignment</div>
+        <select id="alignmentMode">
+          <option value="offset">Manual offset from GNSS start</option>
+          <option value="utc">Known IMU start UTC</option>
+          <option value="auto">Auto align by motion</option>
+        </select>
+        <div class="grid2">
+          <label><span class="label">Offset seconds</span><input id="timeOffset" type="number" step="0.1" value="0"></label>
+          <label><span class="label">IMU start UTC</span><input id="imuStartUtc" type="text" placeholder="2026-05-21T12:26:49Z"></label>
+        </div>
+        <div class="grid2">
+          <label><span class="label">Auto step s</span><input id="alignStep" type="number" step="0.1" value="0.5"></label>
+          <label><span class="label">Search padding s</span><input id="alignPadding" type="number" step="1" value="30"></label>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="label">Filter Settings</div>
+        <div class="grid3">
+          <label><span class="label">GNSS sigma m</span><input id="positionSigma" type="number" step="0.1" value="0.6"></label>
+          <label><span class="label">Accel noise</span><input id="accelNoise" type="number" step="0.1" value="2.0"></label>
+          <label><span class="label">Update period s</span><input id="updatePeriod" type="number" step="0.01" value="0.05"></label>
+        </div>
+        <button id="calculateBtn" class="primary" type="button">Calculate Kalman</button>
+      </div>
+
+      <div class="section">
+        <div class="label">Results</div>
+        <div class="results" id="results"></div>
+        <div class="command-log" id="log"></div>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <div id="map"></div>
+    <div class="status" id="status">Loading...</div>
+    <div class="stats" id="stats"></div>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const map = L.map("map", { preferCanvas: true }).setView([56.95, 24.1], 16);
+    L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+      attribution: "Tiles &copy; Esri",
+      maxNativeZoom: 19,
+      maxZoom: 24
+    }).addTo(map);
+    L.control.scale({ position: "bottomright", metric: true, imperial: false }).addTo(map);
+
+    const els = {
+      search: document.getElementById("search"),
+      recordings: document.getElementById("recordings"),
+      imuSelect: document.getElementById("imuSelect"),
+      assignBtn: document.getElementById("assignBtn"),
+      suggestion: document.getElementById("suggestion"),
+      srcBestnav: document.getElementById("srcBestnav"),
+      srcFixed: document.getElementById("srcFixed"),
+      srcDgps: document.getElementById("srcDgps"),
+      allSourcesBtn: document.getElementById("allSourcesBtn"),
+      alignmentMode: document.getElementById("alignmentMode"),
+      timeOffset: document.getElementById("timeOffset"),
+      imuStartUtc: document.getElementById("imuStartUtc"),
+      alignStep: document.getElementById("alignStep"),
+      alignPadding: document.getElementById("alignPadding"),
+      positionSigma: document.getElementById("positionSigma"),
+      accelNoise: document.getElementById("accelNoise"),
+      updatePeriod: document.getElementById("updatePeriod"),
+      calculateBtn: document.getElementById("calculateBtn"),
+      results: document.getElementById("results"),
+      log: document.getElementById("log"),
+      status: document.getElementById("status"),
+      stats: document.getElementById("stats")
+    };
+    let state = null;
+    let selectedRecording = null;
+    let activeLayer = null;
+    let activeDiffLayer = null;
+
+    function sourceLabel(source) {
+      return { bestnav: "Bestnav", fixed_ppk: "Fixed PPK", dgps: "DGPS" }[source] || source;
+    }
+
+    function fmtDuration(value) {
+      return value == null ? "?" : `${Number(value).toFixed(1)} s`;
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        ...options,
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+      });
+      const data = await response.json();
+      if (!response.ok || data.ok === false) throw new Error(data.error || `Request failed: ${response.status}`);
+      return data;
+    }
+
+    function availableSources(recording) {
+      return Object.entries(recording.sources || {}).filter(([, meta]) => meta.available).map(([name]) => name);
+    }
+
+    function renderRecordings() {
+      const text = els.search.value.trim().toLowerCase();
+      const rows = state.recordings.filter(recording => recording.name.toLowerCase().includes(text));
+      els.recordings.innerHTML = rows.map(recording => {
+        const sources = availableSources(recording).map(sourceLabel).join(", ") || "no GNSS source";
+        const imus = recording.assigned_imus.length ? `${recording.assigned_imus.length} IMU` : "no IMU";
+        return `<button class="rec ${selectedRecording?.name === recording.name ? "selected" : ""}" data-recording="${recording.name}" type="button">
+          <span class="rec-title">${recording.name}</span>
+          <span class="meta">${sources}<br>${imus}, ${recording.kalman_outputs.length} result(s)</span>
+        </button>`;
+      }).join("");
+      els.recordings.querySelectorAll("[data-recording]").forEach(button => {
+        button.addEventListener("click", () => selectRecording(button.dataset.recording));
+      });
+    }
+
+    function renderImus() {
+      const assigned = selectedRecording?.assigned_imus || [];
+      const options = [
+        ...assigned.map(imu => ({ ...imu, group: "Attached" })),
+        ...state.imu_inputs.map(imu => ({ ...imu, group: "in_imu" }))
+      ];
+      els.imuSelect.innerHTML = options.map(imu => `<option value="${imu.path}">${imu.group}: ${imu.name} (${fmtDuration(imu.duration_s)})</option>`).join("");
+      updateSuggestion();
+    }
+
+    function renderSources() {
+      const available = new Set(availableSources(selectedRecording || {}));
+      const mapping = { bestnav: els.srcBestnav, fixed_ppk: els.srcFixed, dgps: els.srcDgps };
+      for (const [source, input] of Object.entries(mapping)) {
+        input.disabled = !available.has(source);
+        if (!available.has(source)) input.checked = false;
+      }
+      if (![...Object.values(mapping)].some(input => input.checked && !input.disabled) && !els.srcBestnav.disabled) {
+        els.srcBestnav.checked = true;
+      }
+    }
+
+    function renderResults() {
+      const results = selectedRecording?.kalman_outputs || [];
+      els.results.innerHTML = results.map(result => `<button class="result" type="button" data-result="${result.name}">
+        <span class="result-title">${result.name}</span>
+        <span class="meta">${sourceLabel(result.source)}<br>${result.modified}</span>
+      </button>`).join("");
+      els.results.querySelectorAll("[data-result]").forEach(button => {
+        button.addEventListener("click", () => {
+          const result = results.find(item => item.name === button.dataset.result);
+          loadResult(result);
+        });
+      });
+    }
+
+    function updateSuggestion() {
+      const option = els.imuSelect.selectedOptions[0];
+      if (!option || !state) {
+        els.suggestion.textContent = "";
+        return;
+      }
+      const name = option.textContent.split(": ").pop().split(" (")[0];
+      const suggestions = state.suggestions[name] || [];
+      const best = suggestions[0];
+      els.suggestion.textContent = best ? `Closest by duration: ${best.recording}, delta ${best.delta_s.toFixed(1)} s` : "";
+    }
+
+    function selectRecording(name) {
+      selectedRecording = state.recordings.find(recording => recording.name === name) || null;
+      renderRecordings();
+      renderImus();
+      renderSources();
+      renderResults();
+      els.status.textContent = selectedRecording ? selectedRecording.name : "Choose a recording.";
+      const firstResult = selectedRecording?.kalman_outputs?.[0];
+      if (firstResult) loadResult(firstResult);
+    }
+
+    function selectedSources() {
+      return [els.srcBestnav, els.srcFixed, els.srcDgps]
+        .filter(input => input.checked && !input.disabled)
+        .map(input => input.value);
+    }
+
+    async function refreshState(preserve = true) {
+      const previous = selectedRecording?.name;
+      state = await api("/api/state");
+      selectedRecording = previous && preserve
+        ? state.recordings.find(recording => recording.name === previous)
+        : state.recordings[0];
+      renderRecordings();
+      renderImus();
+      renderSources();
+      renderResults();
+      els.status.textContent = selectedRecording ? selectedRecording.name : "No recordings found.";
+    }
+
+    async function assignSelectedImu() {
+      if (!selectedRecording) return;
+      els.assignBtn.disabled = true;
+      els.status.textContent = "Attaching IMU...";
+      try {
+        await api("/api/assign", {
+          method: "POST",
+          body: JSON.stringify({
+            recording: selectedRecording.name,
+            imu: els.imuSelect.value,
+            note: "assigned in IMU Kalman Workbench"
+          })
+        });
+        await refreshState(true);
+        els.status.textContent = "IMU attached.";
+      } catch (error) {
+        els.status.textContent = error.message;
+      } finally {
+        els.assignBtn.disabled = false;
+      }
+    }
+
+    async function calculate() {
+      if (!selectedRecording) return;
+      const sources = selectedSources();
+      if (!sources.length) {
+        els.status.textContent = "Choose at least one GNSS source.";
+        return;
+      }
+      els.calculateBtn.disabled = true;
+      els.status.textContent = `Calculating ${sources.length} trajectory${sources.length === 1 ? "" : "ies"}...`;
+      els.log.textContent = "";
+      try {
+        const result = await api("/api/calculate", {
+          method: "POST",
+          body: JSON.stringify({
+            recording: selectedRecording.name,
+            imu: els.imuSelect.value,
+            sources,
+            alignment_mode: els.alignmentMode.value,
+            time_offset_s: Number(els.timeOffset.value || 0),
+            imu_start_utc: els.imuStartUtc.value.trim(),
+            align_step_s: Number(els.alignStep.value || 0.5),
+            align_padding_s: Number(els.alignPadding.value || 30),
+            position_sigma_m: Number(els.positionSigma.value || 0.6),
+            accel_noise: Number(els.accelNoise.value || 2),
+            gnss_update_period_s: Number(els.updatePeriod.value || 0.05)
+          })
+        });
+        els.log.textContent = result.commands.map(item => [
+          item.command.join(" "),
+          item.stdout.trim(),
+          item.stderr.trim()
+        ].filter(Boolean).join("\n")).join("\n\n");
+        await refreshState(true);
+        els.status.textContent = result.ok ? "Calculation finished." : "Calculation finished with errors.";
+        const newest = selectedRecording.kalman_outputs[0];
+        if (newest) loadResult(newest);
+      } catch (error) {
+        els.status.textContent = error.message;
+      } finally {
+        els.calculateBtn.disabled = false;
+      }
+    }
+
+    function styleFeature(feature) {
+      return {
+        color: feature.properties.color || "#111827",
+        weight: feature.properties.distance_m ? 2 : 4,
+        opacity: feature.properties.distance_m ? 0.7 : 0.95
+      };
+    }
+
+    async function loadResult(result) {
+      if (!selectedRecording || !result) return;
+      els.status.textContent = `Loading ${result.name}...`;
+      const query = new URLSearchParams({
+        recording: selectedRecording.name,
+        source: result.source || "bestnav",
+        kalman: result.name,
+        dead: result.dead_name || ""
+      });
+      const data = await api(`/api/result?${query.toString()}`);
+      if (activeLayer) map.removeLayer(activeLayer);
+      if (activeDiffLayer) map.removeLayer(activeDiffLayer);
+      activeLayer = L.geoJSON(data.tracks, {
+        style: styleFeature,
+        onEachFeature: (feature, layer) => layer.bindPopup(`${feature.properties.label}<br>${feature.properties.points} points`)
+      }).addTo(map);
+      activeDiffLayer = L.geoJSON(data.differences, {
+        style: styleFeature,
+        onEachFeature: (feature, layer) => layer.bindPopup(`Difference ${feature.properties.distance_m} m<br>Time delta ${feature.properties.time_delta_s} s`)
+      }).addTo(map);
+      const bounds = activeLayer.getBounds();
+      if (bounds.isValid()) map.fitBounds(bounds, { padding: [28, 28], maxZoom: 21 });
+      els.stats.innerHTML = [
+        ["Result", result.name],
+        ["Source", sourceLabel(data.source)],
+        ["Matches", data.stats.matches || 0],
+        ["Median", data.stats.median_m == null ? "n/a" : `${data.stats.median_m} m`],
+        ["P95", data.stats.p95_m == null ? "n/a" : `${data.stats.p95_m} m`],
+        ["Max", data.stats.max_m == null ? "n/a" : `${data.stats.max_m} m`]
+      ].map(([key, value]) => `<div><span>${key}</span><strong>${value}</strong></div>`).join("");
+      els.results.querySelectorAll(".result").forEach(button => {
+        button.classList.toggle("selected", button.dataset.result === result.name);
+      });
+      els.status.textContent = "Result shown.";
+    }
+
+    els.search.addEventListener("input", renderRecordings);
+    els.imuSelect.addEventListener("change", updateSuggestion);
+    els.assignBtn.addEventListener("click", assignSelectedImu);
+    els.calculateBtn.addEventListener("click", calculate);
+    els.allSourcesBtn.addEventListener("click", () => {
+      for (const input of [els.srcBestnav, els.srcFixed, els.srcDgps]) {
+        input.checked = !input.disabled;
+      }
+    });
+
+    refreshState(false).catch(error => {
+      els.status.textContent = error.message;
+    });
+  </script>
+</body>
+</html>

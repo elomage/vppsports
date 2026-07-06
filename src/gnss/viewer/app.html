@@ -1,0 +1,699 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GNSS Processing Dashboard</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; font-family: Arial, sans-serif; color: #1d252c; }
+    body { display: grid; grid-template-columns: 430px minmax(0, 1fr); background: #f5f7f6; }
+    aside { background: #fbfcfa; border-right: 1px solid #c9d1cc; overflow: auto; }
+    main { position: relative; min-width: 0; }
+    #map { position: absolute; inset: 0; background: #dfe6e2; }
+    .panel { padding: 14px; display: grid; gap: 12px; }
+    .topline { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    h1 { margin: 0; font-size: 20px; line-height: 1.2; }
+    a { color: #28666e; font-weight: 800; text-decoration: none; }
+    .section { display: grid; gap: 8px; border-top: 1px solid #d8dedb; padding-top: 12px; }
+    .section:first-of-type { border-top: 0; padding-top: 0; }
+    .label { display: block; font-size: 12px; font-weight: 800; color: #52606a; margin-bottom: 4px; }
+    input, select, button {
+      font: inherit; border: 1px solid #aeb7b3; border-radius: 6px; background: #fff; color: #1d252c;
+    }
+    input, select { width: 100%; padding: 8px 9px; }
+    button { padding: 8px 10px; font-weight: 800; cursor: pointer; }
+    button.primary { background: #28666e; color: #fff; border-color: #28666e; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .recordings, .results, .layers { display: grid; gap: 6px; max-height: 230px; overflow: auto; }
+    .rec, .result {
+      display: grid; gap: 4px; padding: 8px; border: 1px solid #d1d8d4; border-radius: 6px; background: #fff; text-align: left;
+    }
+    .rec.selected, .result.selected { border-color: #28666e; box-shadow: inset 3px 0 0 #28666e; }
+    .rec-title, .result-title { font-size: 12px; font-weight: 800; overflow-wrap: anywhere; }
+    .meta { font-size: 11px; color: #61707a; line-height: 1.35; }
+    .checks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+    .check, .layer-row { display: grid; grid-template-columns: 18px 16px minmax(0, 1fr) 34px 52px 64px; gap: 7px; align-items: center; font-size: 12px; font-weight: 700; }
+    .check { display: flex; }
+    .check input, .layer-row input[type="checkbox"] { width: 16px; height: 16px; padding: 0; }
+    input[type="color"] { width: 34px; height: 26px; padding: 1px; }
+    input[type="number"] { padding: 6px; }
+    .layer-row input[hidden] { display: none; }
+    .swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.25); background: var(--layer-color, #111827); }
+    .tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+    .tabs button[aria-pressed="true"] { background: #dcefed; border-color: #28666e; }
+    .tab-panel { display: none; gap: 8px; }
+    .tab-panel.active { display: grid; }
+    .status, .stats {
+      position: absolute; z-index: 500; padding: 9px 11px; border: 1px solid #ccd4d0; border-radius: 6px;
+      background: rgba(255,255,255,0.94); font-size: 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.14);
+    }
+    .status { left: 14px; top: 14px; max-width: 520px; }
+    .stats { right: 14px; top: 14px; min-width: 230px; }
+    .stats div { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+    .map-legend {
+      position: absolute; z-index: 500; left: 14px; bottom: 28px; width: min(280px, calc(100% - 28px));
+      display: none; gap: 6px; padding: 9px; border: 1px solid #ccd4d0; border-radius: 6px;
+      background: rgba(255,255,255,0.94); box-shadow: 0 1px 6px rgba(0,0,0,0.14);
+      font-size: 12px;
+    }
+    .map-legend.visible { display: grid; }
+    .legend-title { font-weight: 800; color: #52606a; }
+    .legend-row {
+      display: grid; grid-template-columns: 16px 14px minmax(0, 1fr) auto; gap: 7px; align-items: center;
+      padding: 3px 0; font-weight: 700;
+    }
+    .legend-row input { width: 16px; height: 16px; padding: 0; }
+    .legend-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .timeline {
+      position: absolute; z-index: 500; left: 310px; right: 14px; bottom: 28px;
+      display: none; grid-template-columns: auto minmax(130px, 1fr) auto auto; gap: 9px; align-items: center;
+      padding: 9px 11px; border: 1px solid #ccd4d0; border-radius: 6px;
+      background: rgba(255,255,255,0.94); box-shadow: 0 1px 6px rgba(0,0,0,0.14); font-size: 12px;
+    }
+    .timeline.visible { display: grid; }
+    .timeline label { display: flex; align-items: center; gap: 6px; font-weight: 800; white-space: nowrap; }
+    .timeline input[type="checkbox"] { width: 16px; height: 16px; padding: 0; }
+    .timeline input[type="range"] { padding: 0; }
+    .time-readout { font-weight: 800; min-width: 88px; text-align: right; }
+    .log { white-space: pre-wrap; max-height: 150px; overflow: auto; font-size: 11px; color: #38454d; background: #eef2ef; padding: 8px; border-radius: 6px; }
+    .busy-overlay {
+      position: absolute; inset: 0; z-index: 2000; display: none; place-items: center;
+      background: rgba(245,247,246,0.72); backdrop-filter: blur(2px);
+    }
+    body.busy .busy-overlay { display: grid; }
+    .busy-card {
+      width: min(420px, calc(100vw - 32px)); display: grid; gap: 10px;
+      padding: 16px; border: 1px solid #b8c4be; border-radius: 8px;
+      background: rgba(255,255,255,0.96); box-shadow: 0 8px 28px rgba(0,0,0,0.18);
+    }
+    .busy-row { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; align-items: center; }
+    .spinner {
+      width: 24px; height: 24px; border-radius: 50%;
+      border: 3px solid #c8d3ce; border-top-color: #28666e;
+      animation: spin 0.8s linear infinite;
+    }
+    .busy-title { font-weight: 800; font-size: 14px; }
+    .busy-detail { font-size: 12px; color: #52606a; overflow-wrap: anywhere; }
+    .busy-bar { height: 5px; overflow: hidden; border-radius: 999px; background: #dde5e1; }
+    .busy-bar span {
+      display: block; width: 42%; height: 100%; border-radius: inherit; background: #28666e;
+      animation: busybar 1.2s ease-in-out infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes busybar {
+      0% { transform: translateX(-110%); }
+      50% { transform: translateX(80%); }
+      100% { transform: translateX(260%); }
+    }
+    @media (max-width: 920px) {
+      body { grid-template-columns: 1fr; grid-template-rows: auto minmax(520px, 1fr); }
+      aside { max-height: 50vh; border-right: 0; border-bottom: 1px solid #c9d1cc; }
+      .timeline { left: 14px; bottom: 14px; grid-template-columns: 1fr; }
+      .map-legend { bottom: 122px; }
+    }
+  </style>
+</head>
+<body>
+  <aside>
+    <div class="panel">
+      <div class="topline">
+        <h1>GNSS Processing Dashboard</h1>
+        <a href="index.html">Classic viewer</a>
+      </div>
+
+      <div class="section">
+        <label class="label" for="search">Recording</label>
+        <input id="search" type="search" placeholder="Filter recordings">
+        <div class="recordings" id="recordings"></div>
+      </div>
+
+      <div class="tabs">
+        <button data-tab="process" type="button" aria-pressed="true">Process</button>
+        <button data-tab="imu" type="button">IMU</button>
+        <button data-tab="layers" type="button">Layers</button>
+        <button data-tab="results" type="button">Results</button>
+      </div>
+
+      <div id="tab-process" class="tab-panel active">
+        <div class="section">
+          <div class="grid2">
+            <label><span class="label">Base</span><select id="baseSelect"></select></label>
+            <label><span class="label">PPK mode</span><select id="ppkMode"><option value="fixed">fixed</option><option value="float">float</option><option value="dgps">dgps</option><option value="all">all</option></select></label>
+          </div>
+          <label><span class="label">RINEX obs source</span><select id="obsSource"><option value="auto">auto</option><option value="rangeb">rangeb</option><option value="rangecmpb">rangecmpb</option><option value="obsvmb">obsvmb</option><option value="obsvmcmpb">obsvmcmpb</option><option value="obsvhb">obsvhb</option><option value="obsvhcmpb">obsvhcmpb</option></select></label>
+          <div class="grid2">
+            <button data-action="extract_csv" type="button">Extract CSV</button>
+            <button data-action="filter_csv" type="button">Filter CSV</button>
+            <button data-action="rinex" type="button">Build RINEX</button>
+            <button data-action="observation_single" type="button">Observation single</button>
+            <button data-action="ppk" class="primary" type="button">Run PPK</button>
+          </div>
+          <button data-action="process_all" class="primary" type="button">Process all for recording</button>
+          <button data-action="viewer_refresh" type="button">Refresh viewer data</button>
+        </div>
+      </div>
+
+      <div id="tab-imu" class="tab-panel">
+        <div class="section">
+          <label><span class="label">IMU recording</span><select id="imuSelect"></select></label>
+          <button id="assignBtn" type="button">Attach selected IMU</button>
+          <div class="meta" id="suggestion"></div>
+          <div class="label">Kalman sources</div>
+          <div class="checks">
+            <label class="check"><input id="srcBestnav" type="checkbox" value="bestnav" checked>Bestnav</label>
+            <label class="check"><input id="srcFixed" type="checkbox" value="fixed_ppk">Fixed PPK</label>
+            <label class="check"><input id="srcDgps" type="checkbox" value="dgps">DGPS</label>
+          </div>
+          <button id="allSourcesBtn" type="button">Select available sources</button>
+          <label><span class="label">Alignment</span><select id="alignmentMode"><option value="offset">manual offset</option><option value="utc">known IMU UTC start</option><option value="auto">auto align</option></select></label>
+          <div class="grid2">
+            <label><span class="label">Offset seconds</span><input id="timeOffset" type="number" step="0.1" value="0"></label>
+            <label><span class="label">IMU start UTC</span><input id="imuStartUtc" type="text" placeholder="2026-05-21T12:26:49Z"></label>
+          </div>
+          <div class="grid2">
+            <label><span class="label">IMU trajectory anchor</span><select id="imuTrajectorySource"><option value="bestnav">Bestnav</option><option value="fixed_ppk">Fixed PPK</option><option value="dgps">DGPS</option></select></label>
+            <label><span class="label">Start delays s</span><input id="imuStartDelays" type="text" value="0" placeholder="0, 1, 2.5"></label>
+          </div>
+          <div class="grid2">
+            <label><span class="label">Auto step s</span><input id="alignStep" type="number" step="0.1" value="0.5"></label>
+            <label><span class="label">Padding s</span><input id="alignPadding" type="number" step="1" value="30"></label>
+          </div>
+          <div class="grid3">
+            <label><span class="label">GNSS sigma</span><input id="positionSigma" type="number" step="0.1" value="0.6"></label>
+            <label><span class="label">Accel noise</span><input id="accelNoise" type="number" step="0.1" value="2.0"></label>
+            <label><span class="label">Update s</span><input id="updatePeriod" type="number" step="0.01" value="0.05"></label>
+          </div>
+          <button id="imuTrajectoryBtn" type="button">Create IMU trajectory</button>
+          <button id="calculateBtn" class="primary" type="button">Calculate Kalman</button>
+        </div>
+      </div>
+
+      <div id="tab-layers" class="tab-panel">
+        <div class="section">
+          <div class="layers" id="layers"></div>
+          <button id="fitBtn" type="button">Fit visible layers</button>
+        </div>
+      </div>
+
+      <div id="tab-results" class="tab-panel">
+        <div class="section">
+          <div class="results" id="results"></div>
+          <div class="log" id="log"></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <div id="map"></div>
+    <div class="status" id="status">Loading...</div>
+    <div class="stats" id="stats"></div>
+    <div class="map-legend" id="mapLegend" aria-label="Visible trajectory layers"></div>
+    <div class="timeline" id="timeline">
+      <label><input id="timeFilter" type="checkbox">Time</label>
+      <input id="timeSlider" type="range" min="0" max="1000" value="1000" step="1" disabled>
+      <span class="time-readout" id="timeValue">--:--:--</span>
+      <span class="meta" id="timeRange">No timed data</span>
+    </div>
+    <div class="busy-overlay" id="busyOverlay" aria-live="polite" aria-busy="true">
+      <div class="busy-card">
+        <div class="busy-row">
+          <div class="spinner" aria-hidden="true"></div>
+          <div>
+            <div class="busy-title" id="busyTitle">Working...</div>
+            <div class="busy-detail" id="busyDetail">Starting</div>
+          </div>
+        </div>
+        <div class="busy-bar"><span></span></div>
+        <div class="busy-detail" id="busyElapsed">Elapsed 0s</div>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const map = L.map("map", { preferCanvas: true }).setView([56.95, 24.1], 16);
+    const esri = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { attribution: "Tiles &copy; Esri", maxNativeZoom: 19, maxZoom: 24 }).addTo(map);
+    const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "&copy; OpenStreetMap contributors", maxNativeZoom: 19, maxZoom: 24 });
+    L.control.layers({ "Esri imagery": esri, "OpenStreetMap": osm }, null, { collapsed: false }).addTo(map);
+    L.control.scale({ position: "bottomright", metric: true, imperial: false }).addTo(map);
+
+    const layerLabels = {
+      receiver: "Receiver", ppk: "PPK fixed", float: "PPK float", dgps: "PPK DGPS",
+      observation: "Observation single", kalman: "Kalman GNSS+IMU", imu_dead_reckoning: "IMU diagnostic",
+      matches: "Fixed differences", float_matches: "Float differences", dgps_matches: "DGPS differences",
+      receiver_headings: "Receiver headings", ppk_headings: "PPK headings", float_headings: "Float headings",
+      dgps_headings: "DGPS headings", observation_headings: "Observation headings"
+    };
+    const defaultColors = {
+      receiver: "#1f77b4", ppk: "#d62728", float: "#9467bd", dgps: "#ff7f0e",
+      observation: "#2ca02c", kalman: "#111827", imu_dead_reckoning: "#00a6a6",
+      matches: "#f2994a", float_matches: "#b07aa1", dgps_matches: "#ffbf00",
+      receiver_headings: "#1f77b4", ppk_headings: "#d62728", float_headings: "#9467bd",
+      dgps_headings: "#ff7f0e", observation_headings: "#2ca02c"
+    };
+    const els = Object.fromEntries([...document.querySelectorAll("[id]")].map(el => [el.id, el]));
+    let state = null;
+    let selectedRecording = null;
+    let recordingData = null;
+    let layerState = {};
+    let layerPrefs = {};
+    let resultLayer = null;
+    let resultDiffLayer = null;
+    let timeExtent = null;
+    let currentTimeLimit = null;
+    let busyStartedAt = 0;
+    let busyTimer = null;
+
+    function sourceLabel(source) { return { bestnav: "Bestnav", fixed_ppk: "Fixed PPK", dgps: "DGPS" }[source] || source; }
+    function fmtDuration(value) { return value == null ? "?" : `${Number(value).toFixed(1)} s`; }
+    function setControlsDisabled(disabled) {
+      document.querySelectorAll("button, input, select").forEach(control => {
+        control.disabled = disabled;
+      });
+    }
+    function setBusy(title, detail = "") {
+      busyStartedAt = Date.now();
+      els.busyTitle.textContent = title;
+      els.busyDetail.textContent = detail;
+      els.busyElapsed.textContent = "Elapsed 0s";
+      els.status.textContent = title;
+      document.body.classList.add("busy");
+      setControlsDisabled(true);
+      window.clearInterval(busyTimer);
+      busyTimer = window.setInterval(() => {
+        const elapsed = Math.max(0, Math.round((Date.now() - busyStartedAt) / 1000));
+        els.busyElapsed.textContent = `Elapsed ${elapsed}s`;
+      }, 500);
+    }
+    function clearBusy(message = "") {
+      window.clearInterval(busyTimer);
+      busyTimer = null;
+      document.body.classList.remove("busy");
+      setControlsDisabled(false);
+      renderSources();
+      updateTimeLimit();
+      if (message) els.status.textContent = message;
+    }
+    async function api(path, options = {}) {
+      const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Request failed: ${response.status}`);
+      if (data.ok === false && data.error) throw new Error(data.error);
+      return data;
+    }
+    function availableSources(recording) {
+      return Object.entries(recording?.sources || {}).filter(([, meta]) => meta.available).map(([name]) => name);
+    }
+    function renderRecordings() {
+      const text = els.search.value.trim().toLowerCase();
+      const rows = state.recordings.filter(recording => recording.name.toLowerCase().includes(text));
+      els.recordings.innerHTML = rows.map(recording => {
+        const sources = availableSources(recording).map(sourceLabel).join(", ") || "no GNSS";
+        const imus = recording.assigned_imus.length ? `${recording.assigned_imus.length} IMU` : "no IMU";
+        return `<button class="rec ${selectedRecording?.name === recording.name ? "selected" : ""}" data-recording="${recording.name}" type="button"><span class="rec-title">${recording.name}</span><span class="meta">${sources}<br>${imus}, ${recording.kalman_outputs.length} Kalman run(s)</span></button>`;
+      }).join("");
+      els.recordings.querySelectorAll("[data-recording]").forEach(button => button.addEventListener("click", () => selectRecording(button.dataset.recording)));
+    }
+    function renderBases() {
+      els.baseSelect.innerHTML = state.bases.map(base => `<option value="${base.name}">${base.name}</option>`).join("");
+    }
+    function renderImus() {
+      const assigned = selectedRecording?.assigned_imus || [];
+      const options = [...assigned.map(imu => ({ ...imu, group: "Attached" })), ...state.imu_inputs.map(imu => ({ ...imu, group: "in_imu" }))];
+      els.imuSelect.innerHTML = options.map(imu => `<option value="${imu.path}">${imu.group}: ${imu.name} (${fmtDuration(imu.duration_s)})</option>`).join("");
+      updateSuggestion();
+    }
+    function renderSources() {
+      const available = new Set(availableSources(selectedRecording));
+      const mapping = { bestnav: els.srcBestnav, fixed_ppk: els.srcFixed, dgps: els.srcDgps };
+      for (const [source, input] of Object.entries(mapping)) {
+        input.disabled = !available.has(source);
+        if (!available.has(source)) input.checked = false;
+      }
+      if (![...Object.values(mapping)].some(input => input.checked && !input.disabled) && !els.srcBestnav.disabled) els.srcBestnav.checked = true;
+      [...els.imuTrajectorySource.options].forEach(option => { option.disabled = !available.has(option.value); });
+      if (!available.has(els.imuTrajectorySource.value)) {
+        els.imuTrajectorySource.value = available.has("fixed_ppk") ? "fixed_ppk" : (available.values().next().value || "bestnav");
+      }
+    }
+    function renderResults() {
+      const results = selectedRecording?.kalman_outputs || [];
+      els.results.innerHTML = results.map(result => `<button class="result" type="button" data-result="${result.name}"><span class="result-title">${result.name}</span><span class="meta">${sourceLabel(result.source)}<br>${result.modified}</span></button>`).join("");
+      els.results.querySelectorAll("[data-result]").forEach(button => button.addEventListener("click", () => loadResult(results.find(item => item.name === button.dataset.result))));
+    }
+    function updateSuggestion() {
+      const option = els.imuSelect.selectedOptions[0];
+      if (!option || !state) { els.suggestion.textContent = ""; return; }
+      const name = option.textContent.split(": ").pop().split(" (")[0];
+      const best = (state.suggestions[name] || [])[0];
+      els.suggestion.textContent = best ? `Closest by duration: ${best.recording}, delta ${best.delta_s.toFixed(1)} s` : "";
+    }
+    function styleFeature(color) {
+      return feature => ({
+        color: color || feature.properties.color || "#111827",
+        weight: feature.properties.weight || (feature.properties.kind === "path" ? 4 : 2),
+        opacity: feature.properties.kind === "path" ? 0.95 : 0.72
+      });
+    }
+    function pointToLayer(color) {
+      return (feature, latlng) => L.circleMarker(latlng, { radius: feature.properties.index === 1 ? 5 : 2.6, color: color || feature.properties.color || "#111827", fillColor: color || feature.properties.color || "#111827", fillOpacity: 0.95, weight: 1 });
+    }
+    function popup(feature, layer) {
+      if (!feature.properties) return;
+      const rows = Object.entries(feature.properties).filter(([key]) => !["color", "kind", "times"].includes(key));
+      layer.bindPopup(rows.map(([key, value]) => `<b>${key}</b>: ${value}`).join("<br>"), { maxWidth: 360 });
+    }
+    function parseFeatureTime(value) {
+      const ms = Date.parse(value || "");
+      return Number.isFinite(ms) ? ms : null;
+    }
+    function formatTime(ms) {
+      if (!Number.isFinite(ms)) return "--:--:--";
+      return new Date(ms).toISOString().replace("T", " ").replace(".000Z", "Z");
+    }
+    function collectFeatureTimes(collection) {
+      const times = [];
+      for (const feature of collection?.features || []) {
+        for (const value of feature.properties?.times || []) {
+          const ms = parseFeatureTime(value);
+          if (ms !== null) times.push(ms);
+        }
+        const ms = parseFeatureTime(feature.properties?.time);
+        if (ms !== null) times.push(ms);
+      }
+      return times;
+    }
+    function updateTimeline() {
+      const times = Object.values(recordingData?.layers || {}).flatMap(collectFeatureTimes);
+      if (!times.length) {
+        timeExtent = null;
+        currentTimeLimit = null;
+        els.timeline.classList.remove("visible");
+        els.timeFilter.checked = false;
+        els.timeSlider.disabled = true;
+        els.timeRange.textContent = "No timed data";
+        return;
+      }
+      timeExtent = { min: Math.min(...times), max: Math.max(...times) };
+      els.timeline.classList.add("visible");
+      els.timeSlider.disabled = !els.timeFilter.checked;
+      els.timeRange.textContent = `${formatTime(timeExtent.min)} to ${formatTime(timeExtent.max)}`;
+      updateTimeLimit();
+    }
+    function updateTimeLimit() {
+      if (!timeExtent || !els.timeFilter.checked) {
+        currentTimeLimit = null;
+        els.timeSlider.disabled = true;
+        els.timeValue.textContent = timeExtent ? "All" : "--:--:--";
+        return;
+      }
+      els.timeSlider.disabled = false;
+      const fraction = Number(els.timeSlider.value || 0) / 1000;
+      currentTimeLimit = timeExtent.min + (timeExtent.max - timeExtent.min) * fraction;
+      els.timeValue.textContent = formatTime(currentTimeLimit);
+    }
+    function featureWithinTime(feature) {
+      if (currentTimeLimit === null) return true;
+      const times = feature.properties?.times || [];
+      if (times.length) return times.some(value => {
+        const ms = parseFeatureTime(value);
+        return ms !== null && ms <= currentTimeLimit;
+      });
+      const ms = parseFeatureTime(feature.properties?.time);
+      return ms === null || ms <= currentTimeLimit;
+    }
+    function featureBeforeTime(feature) {
+      if (currentTimeLimit === null) return feature;
+      if (feature.geometry?.type !== "LineString" || !Array.isArray(feature.properties?.times)) return featureWithinTime(feature) ? feature : null;
+      const coords = [];
+      const times = [];
+      feature.geometry.coordinates.forEach((coord, index) => {
+        const ms = parseFeatureTime(feature.properties.times[index]);
+        if (ms !== null && ms <= currentTimeLimit) {
+          coords.push(coord);
+          times.push(feature.properties.times[index]);
+        }
+      });
+      if (coords.length < 2) return null;
+      return {
+        ...feature,
+        geometry: { ...feature.geometry, coordinates: coords },
+        properties: { ...feature.properties, times, points_visible: coords.length },
+      };
+    }
+    function filterCollectionByTime(collection) {
+      if (currentTimeLimit === null) return collection;
+      return {
+        ...collection,
+        features: (collection?.features || []).map(featureBeforeTime).filter(Boolean),
+      };
+    }
+    function finiteNumber(value, fallback, min, max) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return fallback;
+      return Math.max(min, Math.min(max, parsed));
+    }
+    function defaultLineStyle(name) {
+      return {
+        weight: name.endsWith("_headings") ? 2 : (["matches", "float_matches", "dgps_matches"].includes(name) ? 2 : 4),
+        headingLengthM: 1.5
+      };
+    }
+    function headingEndpoint(lat, lon, headingDeg, lengthM) {
+      const radius = 6371000;
+      const distance = lengthM / radius;
+      const bearing = headingDeg * Math.PI / 180;
+      const lat1 = lat * Math.PI / 180;
+      const lon1 = lon * Math.PI / 180;
+      const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distance) + Math.cos(lat1) * Math.sin(distance) * Math.cos(bearing));
+      const lon2 = lon1 + Math.atan2(
+        Math.sin(bearing) * Math.sin(distance) * Math.cos(lat1),
+        Math.cos(distance) - Math.sin(lat1) * Math.sin(lat2)
+      );
+      return [lon2 * 180 / Math.PI, lat2 * 180 / Math.PI];
+    }
+    function displayCollection(collection, style) {
+      if (!collection || !style) return collection;
+      return {
+        ...collection,
+        features: (collection.features || []).map(feature => {
+          const heading = Number(feature.properties?.heading_deg);
+          const start = feature.geometry?.coordinates?.[0];
+          const properties = { ...feature.properties, weight: style.weight };
+          if (feature.properties?.kind !== "heading" || !Array.isArray(start) || !Number.isFinite(heading)) {
+            return { ...feature, properties };
+          }
+          return {
+            ...feature,
+            properties,
+            geometry: {
+              ...feature.geometry,
+              coordinates: [start, headingEndpoint(start[1], start[0], heading, style.headingLengthM)]
+            }
+          };
+        })
+      };
+    }
+    function layerColor(name) {
+      return layerPrefs[name]?.color || defaultColors[name] || "#111827";
+    }
+    function layerStyle(name) {
+      return { ...defaultLineStyle(name), ...(layerPrefs[name] || {}) };
+    }
+    function layerChecked(name) {
+      return layerPrefs[name]?.checked ?? true;
+    }
+    function setLayerPref(name, patch) {
+      layerPrefs[name] = { color: layerColor(name), checked: layerChecked(name), ...layerStyle(name), ...(layerPrefs[name] || {}), ...patch };
+    }
+    function layerRowHtml(name, collection, compact = false) {
+      const label = layerLabels[name] || name;
+      const color = layerColor(name);
+      const style = layerStyle(name);
+      const checked = layerChecked(name) ? "checked" : "";
+      const count = collection?.features?.length || 0;
+      if (compact) {
+        return `<label class="legend-row" title="${label}">
+          <input data-layer-toggle="${name}" type="checkbox" ${checked}>
+          <span class="swatch" data-layer-swatch="${name}" style="--layer-color:${color}"></span>
+          <span class="legend-name">${label}</span>
+          <span class="meta">${count}</span>
+        </label>`;
+      }
+      return `<label class="layer-row">
+        <input data-layer-toggle="${name}" type="checkbox" ${checked}>
+        <span class="swatch" data-layer-swatch="${name}" style="--layer-color:${color}"></span>
+        <span>${label} <span class="meta">(${count})</span></span>
+        <input data-layer-color="${name}" type="color" value="${color}">
+        <input data-layer-style="${name}" data-style-field="weight" type="number" min="1" max="14" step="1" value="${style.weight}" title="Line thickness" aria-label="${label} line thickness">
+        <input data-layer-style="${name}" data-style-field="headingLengthM" type="number" min="0.1" max="50" step="0.1" value="${style.headingLengthM}" title="Heading length in meters" aria-label="${label} heading length in meters" ${name.endsWith("_headings") ? "" : "disabled hidden"}>
+      </label>`;
+    }
+    function syncLayerControls(name, patch) {
+      setLayerPref(name, patch);
+      document.querySelectorAll(`[data-layer-toggle="${name}"]`).forEach(input => { input.checked = layerChecked(name); });
+      document.querySelectorAll(`[data-layer-color="${name}"]`).forEach(input => { input.value = layerColor(name); });
+      document.querySelectorAll(`[data-layer-swatch="${name}"]`).forEach(swatch => { swatch.style.setProperty("--layer-color", layerColor(name)); });
+      document.querySelectorAll(`[data-layer-style="${name}"]`).forEach(input => { input.value = layerStyle(name)[input.dataset.styleField]; });
+      drawLayers();
+    }
+    function bindLayerControls(root) {
+      root.querySelectorAll("[data-layer-toggle]").forEach(input => input.addEventListener("input", () => syncLayerControls(input.dataset.layerToggle, { checked: input.checked })));
+      root.querySelectorAll("[data-layer-color]").forEach(input => input.addEventListener("input", () => syncLayerControls(input.dataset.layerColor, { color: input.value })));
+      root.querySelectorAll("[data-layer-style]").forEach(input => input.addEventListener("input", () => {
+        const defaults = defaultLineStyle(input.dataset.layerStyle);
+        const bounds = input.dataset.styleField === "weight" ? [1, 14] : [0.1, 50];
+        const value = finiteNumber(input.value, defaults[input.dataset.styleField], bounds[0], bounds[1]);
+        syncLayerControls(input.dataset.layerStyle, { [input.dataset.styleField]: value });
+      }));
+    }
+    function drawLayers() {
+      Object.values(layerState).forEach(item => { if (item.layer && map.hasLayer(item.layer)) map.removeLayer(item.layer); });
+      layerState = {};
+      if (!recordingData) return;
+      for (const [name, collection] of Object.entries(recordingData.layers || {})) {
+        const color = layerColor(name);
+        const checked = layerChecked(name);
+        const layer = L.geoJSON(displayCollection(filterCollectionByTime(collection), layerStyle(name)), { style: styleFeature(color), pointToLayer: pointToLayer(color), onEachFeature: popup });
+        layerState[name] = { layer, collection };
+        if (checked) layer.addTo(map);
+      }
+    }
+    function renderLayers() {
+      if (!recordingData) { els.layers.innerHTML = ""; els.mapLegend.innerHTML = ""; els.mapLegend.classList.remove("visible"); return; }
+      const rows = Object.entries(recordingData.layers || {}).filter(([, collection]) => collection?.features?.length);
+      els.layers.innerHTML = rows.map(([name, collection]) => layerRowHtml(name, collection)).join("");
+      els.mapLegend.innerHTML = rows.length ? `<div class="legend-title">Trajectories</div>${rows.map(([name, collection]) => layerRowHtml(name, collection, true)).join("")}` : "";
+      els.mapLegend.classList.toggle("visible", rows.length > 0);
+      bindLayerControls(els.layers);
+      bindLayerControls(els.mapLegend);
+      updateTimeline();
+      drawLayers();
+      fitVisibleLayers();
+    }
+    function fitVisibleLayers() {
+      const group = L.featureGroup(Object.values(layerState).filter(item => map.hasLayer(item.layer)).map(item => item.layer));
+      const bounds = group.getBounds();
+      if (bounds.isValid()) map.fitBounds(bounds, { padding: [28, 28], maxZoom: 21 });
+    }
+    async function loadRecordingData() {
+      recordingData = null;
+      updateTimeline();
+      const data = await api(`/api/recording-data?recording=${encodeURIComponent(selectedRecording.name)}`);
+      recordingData = data.data;
+      renderLayers();
+      els.stats.innerHTML = Object.entries(selectedRecording.stats || {}).slice(0, 8).map(([key, value]) => `<div><span>${key}</span><strong>${JSON.stringify(value)}</strong></div>`).join("");
+    }
+    async function selectRecording(name) {
+      selectedRecording = state.recordings.find(recording => recording.name === name) || null;
+      renderRecordings(); renderImus(); renderSources(); renderResults();
+      if (!selectedRecording) {
+        els.status.textContent = "Choose a recording.";
+        return;
+      }
+      setBusy("Loading recording", selectedRecording.name);
+      try {
+        await loadRecordingData();
+        clearBusy(selectedRecording.name);
+      } catch (error) {
+        clearBusy(error.message);
+      }
+    }
+    async function refreshState(preserve = true) {
+      const previous = selectedRecording?.name;
+      setBusy("Refreshing dashboard", "Reading recordings, IMU files, bases, and viewer data");
+      state = await api("/api/state");
+      selectedRecording = previous && preserve ? state.recordings.find(recording => recording.name === previous) : state.recordings[0];
+      renderBases(); renderRecordings(); renderImus(); renderSources(); renderResults();
+      if (selectedRecording) await loadRecordingData();
+      clearBusy(selectedRecording ? selectedRecording.name : "No recordings found.");
+    }
+    function selectedSources() {
+      return [els.srcBestnav, els.srcFixed, els.srcDgps].filter(input => input.checked && !input.disabled).map(input => input.value);
+    }
+    function commandLog(results) {
+      return results.map(item => [item.command.join(" "), item.stdout?.trim(), item.stderr?.trim()].filter(Boolean).join("\n")).join("\n\n");
+    }
+    function parseDelays() {
+      return els.imuStartDelays.value.split(/[;,]/).map(item => item.trim()).filter(Boolean).map(Number).filter(Number.isFinite);
+    }
+    async function runStep(action) {
+      if (!selectedRecording) return;
+      setBusy(`Running ${action}`, selectedRecording.name);
+      try {
+        const result = await api("/api/run-step", { method: "POST", body: JSON.stringify({ recording: selectedRecording.name, action, base: els.baseSelect.value, ppk_mode: els.ppkMode.value, rinex_obs_source: els.obsSource.value, force: true, refresh_viewer: true }) });
+        els.log.textContent = commandLog(result.results);
+        await refreshState(true);
+        clearBusy(result.ok ? `${action} finished.` : `${action} finished with errors.`);
+      } catch (error) {
+        clearBusy(error.message);
+      }
+    }
+    async function assignSelectedImu() {
+      if (!selectedRecording) return;
+      setBusy("Attaching IMU", selectedRecording.name);
+      try {
+        await api("/api/assign", { method: "POST", body: JSON.stringify({ recording: selectedRecording.name, imu: els.imuSelect.value, note: "assigned in unified dashboard" }) });
+        await refreshState(true);
+        clearBusy("IMU attached.");
+      } catch (error) { clearBusy(error.message); }
+    }
+    async function calculate() {
+      if (!selectedRecording) return;
+      const sources = selectedSources();
+      if (!sources.length) { els.status.textContent = "Choose at least one GNSS source."; return; }
+      setBusy("Calculating Kalman", `${selectedRecording.name}: ${sources.map(sourceLabel).join(", ")}`);
+      try {
+        const result = await api("/api/calculate", { method: "POST", body: JSON.stringify({ recording: selectedRecording.name, imu: els.imuSelect.value, sources, alignment_mode: els.alignmentMode.value, time_offset_s: Number(els.timeOffset.value || 0), imu_start_utc: els.imuStartUtc.value.trim(), align_step_s: Number(els.alignStep.value || 0.5), align_padding_s: Number(els.alignPadding.value || 30), position_sigma_m: Number(els.positionSigma.value || 0.6), accel_noise: Number(els.accelNoise.value || 2), gnss_update_period_s: Number(els.updatePeriod.value || 0.05) }) });
+        els.log.textContent = commandLog(result.commands);
+        await refreshState(true);
+        clearBusy(result.ok ? "Kalman finished." : "Kalman finished with errors.");
+      } catch (error) { clearBusy(error.message); }
+    }
+    async function createImuTrajectory() {
+      if (!selectedRecording) return;
+      const delays = parseDelays();
+      if (!delays.length) { els.status.textContent = "Enter at least one start delay."; return; }
+      setBusy("Creating IMU trajectory", `${selectedRecording.name}: delays ${delays.join(", ")} s`);
+      try {
+        const result = await api("/api/imu-trajectory", { method: "POST", body: JSON.stringify({ recording: selectedRecording.name, imu: els.imuSelect.value, source: els.imuTrajectorySource.value, alignment_mode: els.alignmentMode.value, time_offset_s: Number(els.timeOffset.value || 0), imu_start_utc: els.imuStartUtc.value.trim(), align_step_s: Number(els.alignStep.value || 0.5), align_padding_s: Number(els.alignPadding.value || 30), position_sigma_m: Number(els.positionSigma.value || 0.6), accel_noise: Number(els.accelNoise.value || 2), gnss_update_period_s: Number(els.updatePeriod.value || 0.05), start_delays_s: delays }) });
+        els.log.textContent = commandLog(result.commands);
+        await refreshState(true);
+        clearBusy(result.ok ? "IMU trajectory finished." : "IMU trajectory finished with errors.");
+      } catch (error) { clearBusy(error.message); }
+    }
+    async function loadResult(result) {
+      if (!selectedRecording || !result) return;
+      const query = new URLSearchParams({ recording: selectedRecording.name, source: result.source || "bestnav", kalman: result.name, dead: result.dead_name || "" });
+      const data = await api(`/api/result?${query.toString()}`);
+      if (resultLayer) map.removeLayer(resultLayer);
+      if (resultDiffLayer) map.removeLayer(resultDiffLayer);
+      resultLayer = L.geoJSON(data.tracks, { style: feature => ({ color: feature.properties.color, weight: 4, opacity: 0.95 }) }).addTo(map);
+      resultDiffLayer = L.geoJSON(data.differences, { style: feature => ({ color: feature.properties.color, weight: 2, opacity: 0.7 }) }).addTo(map);
+      const bounds = resultLayer.getBounds();
+      if (bounds.isValid()) map.fitBounds(bounds, { padding: [28, 28], maxZoom: 21 });
+      els.stats.innerHTML = [["Result", result.name], ["Source", sourceLabel(data.source)], ["Matches", data.stats.matches || 0], ["Median", data.stats.median_m == null ? "n/a" : `${data.stats.median_m} m`], ["P95", data.stats.p95_m == null ? "n/a" : `${data.stats.p95_m} m`], ["Max", data.stats.max_m == null ? "n/a" : `${data.stats.max_m} m`]].map(([key, value]) => `<div><span>${key}</span><strong>${value}</strong></div>`).join("");
+    }
+    document.querySelectorAll("[data-tab]").forEach(button => button.addEventListener("click", () => {
+      document.querySelectorAll("[data-tab]").forEach(item => item.setAttribute("aria-pressed", item === button ? "true" : "false"));
+      document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.toggle("active", panel.id === `tab-${button.dataset.tab}`));
+    }));
+    document.querySelectorAll("[data-action]").forEach(button => button.addEventListener("click", () => runStep(button.dataset.action)));
+    els.search.addEventListener("input", renderRecordings);
+    els.fitBtn.addEventListener("click", fitVisibleLayers);
+    els.imuSelect.addEventListener("change", updateSuggestion);
+    els.assignBtn.addEventListener("click", assignSelectedImu);
+    els.imuTrajectoryBtn.addEventListener("click", createImuTrajectory);
+    els.calculateBtn.addEventListener("click", calculate);
+    els.timeFilter.addEventListener("input", () => { updateTimeLimit(); drawLayers(); });
+    els.timeSlider.addEventListener("input", () => { updateTimeLimit(); drawLayers(); });
+    els.allSourcesBtn.addEventListener("click", () => [els.srcBestnav, els.srcFixed, els.srcDgps].forEach(input => input.checked = !input.disabled));
+    refreshState(false).catch(error => { clearBusy(error.message); });
+  </script>
+</body>
+</html>

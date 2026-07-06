@@ -1,0 +1,3 @@
+station_id,provider,name,latitude_deg,longitude_deg,height_m,enabled,obs_url_template,nav_url_template
+EX01,EPN,Example Station 1,56.95,24.10,10.0,true,https://example.org/gnss/{station}/{yyyy}/{doy}/{station}_{yyyy}{doy}.obs,https://example.org/gnss/{station}/{yyyy}/{doy}/brdc{doy}0.{yy}n
+EX02,EPN,Example Station 2,57.00,23.80,12.0,true,https://example.org/gnss/{station}/{yyyy}/{doy}/{station}_{yyyy}{doy}.obs,https://example.org/gnss/{station}/{yyyy}/{doy}/brdc{doy}0.{yy}n

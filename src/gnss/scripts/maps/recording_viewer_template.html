@@ -1,0 +1,1175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GNSS Recording Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; font-family: Arial, sans-serif; color: #1d252c; }
+    body { display: grid; grid-template-columns: 400px minmax(0, 1fr); background: #f4f1ea; }
+    aside { border-right: 1px solid #c5c9c7; background: #fbfaf7; overflow: auto; }
+    .panel { padding: 16px; }
+    h1 { font-size: 20px; line-height: 1.2; margin: 0 0 14px; font-weight: 800; }
+    label, .section-label { display: block; font-size: 12px; font-weight: 700; color: #52606a; margin-bottom: 6px; }
+    input[type="search"] {
+      width: 100%; border: 1px solid #aeb7b3; border-radius: 6px; padding: 9px 10px;
+      background: #fff; color: #1d252c; font-size: 14px;
+    }
+    input[type="color"] {
+      width: 32px; height: 26px; padding: 1px; border: 1px solid #aeb7b3; border-radius: 5px;
+      background: #fff; cursor: pointer;
+    }
+    input[type="number"] {
+      width: 100%; border: 1px solid #aeb7b3; border-radius: 5px; padding: 5px 6px;
+      background: #fff; color: #1d252c; font-size: 12px;
+    }
+    .field { margin-bottom: 14px; }
+    .toggles { display: grid; gap: 8px; margin: 14px 0; }
+    .toggle {
+      display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: center;
+      min-height: 34px; padding: 7px 8px; border: 1px solid #d1d8d4; border-radius: 6px; background: #fff;
+      font-size: 14px;
+    }
+    .toggle input { width: 16px; height: 16px; margin: 0; }
+    .toggle[aria-disabled="true"] { opacity: 0.45; }
+    .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+    .count { color: #61707a; font-size: 12px; }
+    .draw-order { border-top: 1px solid #d8dedb; padding-top: 12px; margin-top: 12px; }
+    .section-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .section-header .section-label { margin-bottom: 0; }
+    .section-toggle {
+      border: 1px solid #aeb7b3; border-radius: 6px; background: #fff; color: #1d252c;
+      padding: 5px 8px; font-size: 12px; font-weight: 700; cursor: pointer;
+    }
+    .section-toggle:hover { background: #f3f7f5; }
+    .order-list { display: grid; gap: 6px; margin-top: 8px; }
+    .order-list.collapsed { display: none; }
+    .order-item {
+      display: grid; grid-template-columns: minmax(0, 1fr) repeat(2, 30px); gap: 6px; align-items: center;
+      min-height: 34px; padding: 6px 7px; border: 1px solid #d1d8d4; border-radius: 6px; background: #fff;
+      font-size: 12px; font-weight: 700; color: #1d252c;
+    }
+    .order-item[aria-disabled="true"] { opacity: 0.45; }
+    .order-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .order-item button {
+      width: 30px; height: 26px; border: 1px solid #aeb7b3; border-radius: 5px; background: #fff;
+      color: #1d252c; font-size: 13px; font-weight: 800; cursor: pointer;
+    }
+    .order-item button:hover:not(:disabled) { background: #f3f7f5; }
+    .order-item button:disabled { opacity: 0.35; cursor: default; }
+    .order-empty { color: #61707a; font-size: 12px; padding: 6px 2px; }
+    .stats { border-top: 1px solid #d8dedb; padding-top: 12px; margin-top: 12px; font-size: 13px; line-height: 1.45; }
+    .stats div { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; }
+    .stats span:first-child { color: #52606a; }
+    .stats strong { text-align: right; }
+    .recordings { border-top: 1px solid #d8dedb; margin-top: 12px; padding-top: 12px; }
+    .recording-list { display: grid; gap: 8px; }
+    .rec-item {
+      border: 1px solid #d1d8d4; border-radius: 6px; background: #fff; padding: 8px 9px;
+    }
+    .rec-item.selected { border-color: #28666e; box-shadow: inset 3px 0 0 #28666e; }
+    .rec-check {
+      display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; align-items: start;
+      margin: 0; color: #1d252c; font-size: 13px; cursor: pointer;
+    }
+    .rec-check input { width: 16px; height: 16px; margin: 0; }
+    .rec-name { min-width: 0; overflow-wrap: anywhere; }
+    .style-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px;
+      margin: 9px 0 0 26px;
+    }
+    .style-field {
+      display: grid; grid-template-columns: 32px 52px 64px minmax(0, 1fr); gap: 6px; align-items: center;
+      margin: 0; font-size: 11px; font-weight: 700; color: #52606a;
+    }
+    .style-field[aria-disabled="true"] { opacity: 0.4; }
+    .style-field input[hidden] { display: none; }
+    .list-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 8px 0 10px; }
+    .list-actions button {
+      border: 1px solid #aeb7b3; border-radius: 6px; background: #fff; color: #1d252c;
+      padding: 7px 9px; font-size: 12px; font-weight: 700; cursor: pointer;
+    }
+    .map-wrap { position: relative; min-width: 0; }
+    #map { position: absolute; inset: 0; background: #dfe5e2; }
+    .status {
+      position: absolute; left: 16px; top: 16px; z-index: 500; padding: 8px 10px;
+      border-radius: 6px; background: rgba(255,255,255,0.92); border: 1px solid #ccd4d0;
+      font-size: 12px; color: #38454d;
+    }
+    .leaflet-control-scale {
+      margin-top: 8px;
+      padding: 6px 8px;
+      border: 1px solid #ccd4d0;
+      border-radius: 6px;
+      background: rgba(255,255,255,0.92);
+      box-shadow: 0 1px 5px rgba(0,0,0,0.25);
+    }
+    .leaflet-control-scale-line {
+      background: transparent;
+      border-color: #1d252c;
+      color: #1d252c;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .fit-recordings {
+      position: absolute; right: 16px; bottom: 16px; z-index: 1000;
+      border: 1px solid #8f9b96; border-radius: 6px; background: rgba(255,255,255,0.96);
+      color: #1d252c; padding: 9px 11px; font-size: 12px; font-weight: 800;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.16); cursor: pointer;
+    }
+    .fit-recordings:hover:not(:disabled) { background: #f3f7f5; }
+    .fit-recordings:disabled { opacity: 0.5; cursor: default; }
+    .manual-tools {
+      position: absolute; left: 16px; bottom: 16px; z-index: 1000;
+      display: grid; grid-template-columns: repeat(3, minmax(0, auto)); gap: 6px;
+      padding: 7px; border: 1px solid #8f9b96; border-radius: 6px;
+      background: rgba(255,255,255,0.96); box-shadow: 0 2px 8px rgba(0,0,0,0.16);
+    }
+    .manual-tools button {
+      border: 1px solid #aeb7b3; border-radius: 5px; background: #fff; color: #1d252c;
+      min-width: 48px; padding: 7px 8px; font-size: 12px; font-weight: 800; cursor: pointer;
+    }
+    .manual-tools button:hover:not(:disabled) { background: #f3f7f5; }
+    .manual-tools button[aria-pressed="true"] { border-color: #28666e; background: #dcefed; color: #12383c; }
+    .manual-tools button:disabled { opacity: 0.45; cursor: default; }
+    .map-wrap.drawing #map { cursor: crosshair; }
+    .time-panel {
+      position: absolute; left: 210px; right: 124px; bottom: 16px; z-index: 1000;
+      display: grid; gap: 10px; max-height: 34vh; overflow: auto;
+      padding: 12px; border: 1px solid #8f9b96; border-radius: 6px;
+      background: rgba(255,255,255,0.96); box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+    }
+    .time-panel:empty { display: none; }
+    .time-panel.collapsed { display: none; }
+    .time-toggle {
+      position: absolute; right: 16px; bottom: 58px; z-index: 1001;
+      border: 1px solid #8f9b96; border-radius: 6px; background: rgba(255,255,255,0.96);
+      color: #1d252c; padding: 9px 11px; font-size: 12px; font-weight: 800;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.16); cursor: pointer;
+    }
+    .legend-toggle {
+      position: absolute; left: 16px; top: 58px; z-index: 1001;
+      border: 1px solid #8f9b96; border-radius: 6px; background: rgba(255,255,255,0.96);
+      color: #1d252c; padding: 9px 11px; font-size: 12px; font-weight: 800;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.16); cursor: pointer;
+    }
+    .map-legend {
+      position: absolute; left: 16px; top: 100px; z-index: 1000;
+      display: grid; gap: 8px; width: fit-content; min-width: 280px;
+      max-width: min(520px, calc(100% - 32px)); max-height: min(48vh, 440px);
+      overflow: auto; padding: 11px; border: 1px solid #8f9b96; border-radius: 6px;
+      background: rgba(255,255,255,0.96); box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+      font-size: 12px; color: #1d252c;
+    }
+    .map-legend.collapsed { display: none; }
+    .legend-title { color: #52606a; font-weight: 800; }
+    .legend-row {
+      display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; align-items: center;
+      min-height: 24px;
+    }
+    .line-swatch {
+      display: inline-block; width: 28px; height: 0; border-top: 4px solid var(--line-color, #111827);
+      border-radius: 999px;
+    }
+    .legend-name { min-width: 0; max-width: 450px; overflow-wrap: anywhere; font-weight: 700; line-height: 1.3; }
+    .legend-empty { color: #61707a; font-weight: 700; }
+    .time-row { display: grid; grid-template-columns: minmax(120px, 220px) minmax(0, 1fr); gap: 12px; align-items: center; }
+    .time-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 800; color: #1d252c; }
+    .time-control { display: grid; gap: 5px; min-width: 0; }
+    .time-labels { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; font-weight: 700; color: #52606a; }
+    .range-pair { position: relative; height: 28px; }
+    .range-pair input[type="range"] {
+      position: absolute; inset: 0; width: 100%; margin: 0; background: transparent; pointer-events: none;
+      accent-color: #28666e;
+    }
+    .range-pair input[type="range"]::-webkit-slider-thumb { pointer-events: auto; }
+    .range-pair input[type="range"]::-moz-range-thumb { pointer-events: auto; }
+    @media (max-width: 820px) {
+      .time-row { grid-template-columns: 1fr; gap: 6px; }
+      .manual-tools { left: 10px; bottom: 10px; }
+      .fit-recordings { right: 10px; bottom: 10px; }
+      .time-panel { left: 10px; right: 10px; bottom: 58px; max-height: 32vh; }
+      .time-toggle { right: 10px; bottom: 58px; }
+      .legend-toggle { left: 10px; top: 52px; }
+      .map-legend { left: 10px; top: 94px; width: fit-content; min-width: 260px; max-width: calc(100% - 20px); max-height: 36vh; }
+      .legend-name { max-width: calc(100vw - 86px); }
+    }
+    @media (max-width: 820px) {
+      body { grid-template-columns: 1fr; grid-template-rows: auto minmax(420px, 1fr); }
+      aside { max-height: 46vh; border-right: 0; border-bottom: 1px solid #c5c9c7; }
+    }
+  </style>
+</head>
+<body>
+  <aside>
+    <div class="panel">
+      <h1>GNSS Recording Viewer</h1>
+      <div class="field"><a href="app.html" style="color:#28666e;font-weight:800;text-decoration:none;">Open unified processing dashboard</a></div>
+      <div class="field">
+        <label for="search">Filter recordings</label>
+        <input id="search" type="search" placeholder="Type date, LOG number, name">
+      </div>
+      <div class="toggles">
+        <label class="toggle" id="receiverToggle"><input type="checkbox" id="showReceiver" checked><span><span class="swatch" style="background:#1f77b4"></span>Receiver path</span><span class="count" id="receiverCount"></span></label>
+        <label class="toggle" id="ppkToggle"><input type="checkbox" id="showPpk" checked><span><span class="swatch" style="background:#d62728"></span>PPK fixed path</span><span class="count" id="ppkCount"></span></label>
+        <label class="toggle" id="floatToggle"><input type="checkbox" id="showFloat" checked><span><span class="swatch" style="background:#9467bd"></span>PPK float path</span><span class="count" id="floatCount"></span></label>
+        <label class="toggle" id="dgpsToggle"><input type="checkbox" id="showDgps" checked><span><span class="swatch" style="background:#ff7f0e"></span>PPK DGPS path</span><span class="count" id="dgpsCount"></span></label>
+        <label class="toggle" id="observationToggle"><input type="checkbox" id="showObservation"><span><span class="swatch" style="background:#2ca02c"></span>Observation single</span><span class="count" id="observationCount"></span></label>
+        <label class="toggle" id="kalmanToggle"><input type="checkbox" id="showKalman" checked><span><span class="swatch" style="background:#111827"></span>Kalman GNSS+IMU</span><span class="count" id="kalmanCount"></span></label>
+        <label class="toggle" id="imuDeadReckoningToggle"><input type="checkbox" id="showImuDeadReckoning"><span><span class="swatch" style="background:#00a6a6"></span>IMU diagnostic path</span><span class="count" id="imuDeadReckoningCount"></span></label>
+        <label class="toggle" id="matchesToggle"><input type="checkbox" id="showMatches" checked><span><span class="swatch" style="background:#f2994a"></span>Fixed difference lines</span><span class="count" id="matchesCount"></span></label>
+        <label class="toggle" id="floatMatchesToggle"><input type="checkbox" id="showFloatMatches"><span><span class="swatch" style="background:#b07aa1"></span>Float difference lines</span><span class="count" id="floatMatchesCount"></span></label>
+        <label class="toggle" id="dgpsMatchesToggle"><input type="checkbox" id="showDgpsMatches"><span><span class="swatch" style="background:#ffbf00"></span>DGPS difference lines</span><span class="count" id="dgpsMatchesCount"></span></label>
+        <label class="toggle" id="receiverHeadingsToggle"><input type="checkbox" id="showReceiverHeadings"><span><span class="swatch" style="background:#1f77b4"></span>Receiver headings</span><span class="count" id="receiverHeadingsCount"></span></label>
+        <label class="toggle" id="ppkHeadingsToggle"><input type="checkbox" id="showPpkHeadings"><span><span class="swatch" style="background:#d62728"></span>PPK fixed headings</span><span class="count" id="ppkHeadingsCount"></span></label>
+        <label class="toggle" id="floatHeadingsToggle"><input type="checkbox" id="showFloatHeadings"><span><span class="swatch" style="background:#9467bd"></span>PPK float headings</span><span class="count" id="floatHeadingsCount"></span></label>
+        <label class="toggle" id="dgpsHeadingsToggle"><input type="checkbox" id="showDgpsHeadings"><span><span class="swatch" style="background:#ff7f0e"></span>PPK DGPS headings</span><span class="count" id="dgpsHeadingsCount"></span></label>
+        <label class="toggle" id="observationHeadingsToggle"><input type="checkbox" id="showObservationHeadings"><span><span class="swatch" style="background:#2ca02c"></span>Observation headings</span><span class="count" id="observationHeadingsCount"></span></label>
+      </div>
+      <div class="draw-order">
+        <div class="section-header">
+          <span class="section-label">Draw order</span>
+          <button class="section-toggle" id="orderToggle" type="button" aria-expanded="true">Hide order</button>
+        </div>
+        <div class="order-list" id="orderList"></div>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="recordings">
+        <span class="section-label">Recordings</span>
+        <div class="list-actions">
+          <button id="selectVisible" type="button">Select visible</button>
+          <button id="clearSelection" type="button">Clear</button>
+          <button id="refreshData" type="button">Refresh data</button>
+        </div>
+        <div class="recording-list" id="recordingList"></div>
+      </div>
+    </div>
+  </aside>
+  <main class="map-wrap">
+    <div id="map"></div>
+    <div class="manual-tools" id="manualTools" aria-label="Manual drawing tools">
+      <button id="manualDot" type="button" title="Place manual dots">Dot</button>
+      <button id="manualPath" type="button" title="Draw a manual path">Path</button>
+      <button id="manualDone" type="button" title="Finish current path" disabled>Done</button>
+      <button id="manualUndo" type="button" title="Undo last manual point or shape" disabled>Undo</button>
+      <button id="manualClear" type="button" title="Clear manual dots and paths" disabled>Clear</button>
+    </div>
+    <button class="fit-recordings" id="fitSelected" type="button" title="Zoom to selected recordings" disabled>Fit selected</button>
+    <div class="status" id="status">Loading recordings...</div>
+    <button class="legend-toggle" id="legendToggle" type="button" aria-expanded="true">Hide legend</button>
+    <div class="map-legend" id="mapLegend" aria-label="Visible line colors"></div>
+    <button class="time-toggle" id="timeToggle" type="button" aria-expanded="true">Hide time</button>
+    <div class="time-panel" id="timePanel" aria-label="Recording time ranges"></div>
+  </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const map = L.map("map", { preferCanvas: true }).setView([56.95, 24.1], 18);
+    const esri = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+      attribution: "Tiles &copy; Esri",
+      maxNativeZoom: __ESRI_NATIVE_ZOOM__,
+      maxZoom: 24
+    }).addTo(map);
+    const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxNativeZoom: 19,
+      maxZoom: 24
+    });
+    L.control.layers({ "Esri imagery": esri, "OpenStreetMap": osm }, null, { collapsed: false }).addTo(map);
+    L.control.scale({
+      position: "topright",
+      metric: true,
+      imperial: false,
+      maxWidth: 160
+    }).addTo(map);
+
+    const layerConfig = {
+      receiver: { label: "Receiver", inputId: "showReceiver", toggleId: "receiverToggle", countId: "receiverCount" },
+      ppk: { label: "PPK fixed", inputId: "showPpk", toggleId: "ppkToggle", countId: "ppkCount" },
+      float: { label: "PPK float", inputId: "showFloat", toggleId: "floatToggle", countId: "floatCount" },
+      dgps: { label: "PPK DGPS", inputId: "showDgps", toggleId: "dgpsToggle", countId: "dgpsCount" },
+      observation: { label: "Observation", inputId: "showObservation", toggleId: "observationToggle", countId: "observationCount" },
+      kalman: { label: "Kalman GNSS+IMU", inputId: "showKalman", toggleId: "kalmanToggle", countId: "kalmanCount" },
+      imu_dead_reckoning: { label: "IMU diagnostic", inputId: "showImuDeadReckoning", toggleId: "imuDeadReckoningToggle", countId: "imuDeadReckoningCount" },
+      matches: { label: "Fixed difference", inputId: "showMatches", toggleId: "matchesToggle", countId: "matchesCount" },
+      float_matches: { label: "Float difference", inputId: "showFloatMatches", toggleId: "floatMatchesToggle", countId: "floatMatchesCount" },
+      dgps_matches: { label: "DGPS difference", inputId: "showDgpsMatches", toggleId: "dgpsMatchesToggle", countId: "dgpsMatchesCount" },
+      receiver_headings: { label: "Receiver headings", inputId: "showReceiverHeadings", toggleId: "receiverHeadingsToggle", countId: "receiverHeadingsCount" },
+      ppk_headings: { label: "PPK fixed headings", inputId: "showPpkHeadings", toggleId: "ppkHeadingsToggle", countId: "ppkHeadingsCount" },
+      float_headings: { label: "PPK float headings", inputId: "showFloatHeadings", toggleId: "floatHeadingsToggle", countId: "floatHeadingsCount" },
+      dgps_headings: { label: "PPK DGPS headings", inputId: "showDgpsHeadings", toggleId: "dgpsHeadingsToggle", countId: "dgpsHeadingsCount" },
+      observation_headings: { label: "Observation headings", inputId: "showObservationHeadings", toggleId: "observationHeadingsToggle", countId: "observationHeadingsCount" }
+    };
+    const colorPalettes = {
+      receiver: ["#1f77b4", "#9467bd", "#17becf", "#8c564b", "#7f7f7f", "#bcbd22"],
+      ppk: ["#d62728", "#e377c2", "#ff7f0e", "#4c78a8", "#9c755f", "#f58518"],
+      float: ["#9467bd", "#b07aa1", "#4c78a8", "#72b7b2", "#8c564b", "#af7aa1"],
+      dgps: ["#ff7f0e", "#f58518", "#f2c94c", "#e45756", "#b279a2", "#edc949"],
+      observation: ["#2ca02c", "#54a24b", "#59a14f", "#72b7b2", "#499894", "#b07aa1"],
+      kalman: ["#111827", "#28666e", "#4c78a8", "#8c564b", "#7f7f7f", "#12383c"],
+      imu_dead_reckoning: ["#00a6a6", "#17becf", "#499894", "#72b7b2", "#76b7b2", "#00c2a8"],
+      matches: ["#f2994a", "#f2c94c", "#e15759", "#edc949", "#b279a2", "#ff9da6"],
+      float_matches: ["#b07aa1", "#af7aa1", "#9467bd", "#9c755f", "#bab0ac", "#e377c2"],
+      dgps_matches: ["#ffbf00", "#f28e2b", "#edc949", "#f58518", "#e15759", "#ff9da6"],
+      receiver_headings: ["#1f77b4", "#4e79a7", "#17becf", "#76b7b2", "#59a14f", "#499894"],
+      ppk_headings: ["#d62728", "#e15759", "#ff7f0e", "#f28e2b", "#e377c2", "#ff9da6"],
+      float_headings: ["#9467bd", "#af7aa1", "#b07aa1", "#4c78a8", "#9c755f", "#bab0ac"],
+      dgps_headings: ["#ff7f0e", "#f58518", "#f2c94c", "#edc949", "#e45756", "#ffbf00"],
+      observation_headings: ["#2ca02c", "#54a24b", "#59a14f", "#72b7b2", "#499894", "#b07aa1"]
+    };
+    const els = {
+      search: document.getElementById("search"),
+      list: document.getElementById("recordingList"),
+      orderToggle: document.getElementById("orderToggle"),
+      orderList: document.getElementById("orderList"),
+      stats: document.getElementById("stats"),
+      status: document.getElementById("status"),
+      fitSelected: document.getElementById("fitSelected"),
+      mapWrap: document.querySelector(".map-wrap"),
+      manualTools: document.getElementById("manualTools"),
+      manualDot: document.getElementById("manualDot"),
+      manualPath: document.getElementById("manualPath"),
+      manualDone: document.getElementById("manualDone"),
+      manualUndo: document.getElementById("manualUndo"),
+      manualClear: document.getElementById("manualClear"),
+      legendToggle: document.getElementById("legendToggle"),
+      mapLegend: document.getElementById("mapLegend"),
+      timeToggle: document.getElementById("timeToggle"),
+      timePanel: document.getElementById("timePanel"),
+      selectVisible: document.getElementById("selectVisible"),
+      clearSelection: document.getElementById("clearSelection"),
+      refreshData: document.getElementById("refreshData")
+    };
+    const toggleMeta = Object.fromEntries(Object.entries(layerConfig).map(([name, config]) => [name, {
+      input: document.getElementById(config.inputId),
+      wrapper: document.getElementById(config.toggleId),
+      count: document.getElementById(config.countId)
+    }]));
+    const defaultLayerOrder = Object.keys(layerConfig);
+    const selectedIds = new Set();
+    const dataCache = new Map();
+    const recordingColors = new Map();
+    const recordingLineStyles = new Map();
+    const timeRanges = new Map();
+    const layerState = new Map();
+    const manualRenderer = L.svg({ padding: 0.5 });
+    const manualLayer = L.layerGroup().addTo(map);
+    const manualLayers = [];
+    let manifest = null;
+    let visibleRecordings = [];
+    let renderToken = 0;
+    let manualMode = null;
+    let activePath = null;
+    let activePathPoints = [];
+    let timePanelCollapsed = false;
+    let legendCollapsed = false;
+    let layerOrder = [];
+    let layerOrderCollapsed = false;
+    const storageKey = "gnss-recording-viewer-state-v1";
+
+    L.DomEvent.disableClickPropagation(els.manualTools);
+    L.DomEvent.disableClickPropagation(els.timePanel);
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[char]));
+    }
+
+    function cacheBustedUrl(url) {
+      const separator = url.includes("?") ? "&" : "?";
+      return `${url}${separator}_=${Date.now()}`;
+    }
+
+    async function fetchJsonFresh(url) {
+      const response = await fetch(cacheBustedUrl(url), { cache: "no-store" });
+      if (!response.ok) throw new Error(`Could not load ${url}`);
+      return response.json();
+    }
+
+    function loadUiState() {
+      try {
+        return JSON.parse(localStorage.getItem(storageKey) || "{}");
+      } catch {
+        return {};
+      }
+    }
+
+    function saveUiState() {
+      const toggles = Object.fromEntries(Object.entries(toggleMeta).map(([name, meta]) => [name, meta.input.checked]));
+      const colors = Object.fromEntries([...recordingColors.entries()]);
+      const lineStyles = Object.fromEntries([...recordingLineStyles.entries()]);
+      const ranges = Object.fromEntries([...timeRanges.entries()]);
+      localStorage.setItem(storageKey, JSON.stringify({
+        selectedIds: [...selectedIds],
+        toggles,
+        colors,
+        lineStyles,
+        ranges,
+        layerOrder,
+        layerOrderCollapsed,
+        legendCollapsed,
+        timePanelCollapsed,
+        search: els.search.value
+      }));
+    }
+
+    function applyUiState(state) {
+      selectedIds.clear();
+      const knownIds = new Set(manifest.recordings.map(recording => recording.id));
+      if (Array.isArray(state.selectedIds)) {
+        state.selectedIds.filter(id => knownIds.has(id)).forEach(id => selectedIds.add(id));
+      } else if (manifest.recordings.length) {
+        selectedIds.add(manifest.recordings[0].id);
+      }
+      for (const [name, checked] of Object.entries(state.toggles || {})) {
+        if (toggleMeta[name]) toggleMeta[name].input.checked = Boolean(checked);
+      }
+      for (const [id, colors] of Object.entries(state.colors || {})) {
+        if (knownIds.has(id) && colors && typeof colors === "object") {
+          recordingColors.set(id, { ...colorsFor(id), ...colors });
+        }
+      }
+      for (const [id, styles] of Object.entries(state.lineStyles || {})) {
+        if (knownIds.has(id) && styles && typeof styles === "object") {
+          recordingLineStyles.set(id, { ...lineStylesFor(id), ...styles });
+        }
+      }
+      timeRanges.clear();
+      for (const [id, range] of Object.entries(state.ranges || {})) {
+        if (knownIds.has(id) && range && Number.isFinite(range.start) && Number.isFinite(range.end)) {
+          timeRanges.set(id, { start: range.start, end: range.end });
+        }
+      }
+      layerOrder = Array.isArray(state.layerOrder) ? state.layerOrder.filter(key => typeof key === "string") : [];
+      if (typeof state.search === "string") els.search.value = state.search;
+      timePanelCollapsed = Boolean(state.timePanelCollapsed);
+      legendCollapsed = Boolean(state.legendCollapsed);
+      layerOrderCollapsed = Boolean(state.layerOrderCollapsed);
+    }
+
+    function layerKey(recordingId, layerName) {
+      return `${recordingId}::${layerName}`;
+    }
+
+    function splitLayerKey(key) {
+      const separator = key.lastIndexOf("::");
+      if (separator < 0) return null;
+      return {
+        recordingId: key.slice(0, separator),
+        layerName: key.slice(separator + 2)
+      };
+    }
+
+    function recordingIndex(id) {
+      return Math.max(0, manifest.recordings.findIndex(recording => recording.id === id));
+    }
+
+    function colorsFor(id) {
+      if (!recordingColors.has(id)) {
+        const index = recordingIndex(id);
+        recordingColors.set(id, Object.fromEntries(Object.entries(colorPalettes).map(([name, palette]) => [
+          name,
+          palette[index % palette.length]
+        ])));
+      }
+      return recordingColors.get(id);
+    }
+
+    function defaultLineStyle(name) {
+      return {
+        weight: name.endsWith("_headings") ? 2 : (["matches", "float_matches", "dgps_matches"].includes(name) ? 2 : 4),
+        headingLengthM: 1.5
+      };
+    }
+
+    function lineStylesFor(id) {
+      if (!recordingLineStyles.has(id)) {
+        recordingLineStyles.set(id, Object.fromEntries(Object.keys(layerConfig).map(name => [
+          name,
+          defaultLineStyle(name)
+        ])));
+      }
+      return recordingLineStyles.get(id);
+    }
+
+    function lineStyleFor(id, name) {
+      return { ...defaultLineStyle(name), ...(lineStylesFor(id)[name] || {}) };
+    }
+
+    function finiteNumber(value, fallback, min, max) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return fallback;
+      return Math.max(min, Math.min(max, parsed));
+    }
+
+    function headingEndpoint(lat, lon, headingDeg, lengthM) {
+      const radius = 6371000;
+      const distance = lengthM / radius;
+      const bearing = headingDeg * Math.PI / 180;
+      const lat1 = lat * Math.PI / 180;
+      const lon1 = lon * Math.PI / 180;
+      const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distance) + Math.cos(lat1) * Math.sin(distance) * Math.cos(bearing));
+      const lon2 = lon1 + Math.atan2(
+        Math.sin(bearing) * Math.sin(distance) * Math.cos(lat1),
+        Math.cos(distance) - Math.sin(lat1) * Math.sin(lat2)
+      );
+      return [lon2 * 180 / Math.PI, lat2 * 180 / Math.PI];
+    }
+
+    function displayCollection(collection, style) {
+      if (!collection || !style) return collection;
+      return {
+        ...collection,
+        features: (collection.features || []).map(feature => {
+          const heading = Number(feature.properties?.heading_deg);
+          const start = feature.geometry?.coordinates?.[0];
+          if (feature.properties?.kind !== "heading" || !Array.isArray(start) || !Number.isFinite(heading)) return feature;
+          return {
+            ...feature,
+            geometry: {
+              ...feature.geometry,
+              coordinates: [start, headingEndpoint(start[1], start[0], heading, style.headingLengthM)]
+            }
+          };
+        })
+      };
+    }
+
+    function popupFromProps(recording, props) {
+      const rows = [[ "recording", recording.name ], ...Object.entries(props)]
+        .filter(([key]) => !["color", "kind"].includes(key));
+      return rows.map(([key, value]) => `<b>${escapeHtml(key)}</b>: ${escapeHtml(value)}`).join("<br>");
+    }
+
+    function makeLayer(recording, collection, fallbackColor, lineStyle) {
+      return L.geoJSON(displayCollection(filteredCollection(recording, collection), lineStyle), {
+        style: feature => ({
+          color: fallbackColor || feature.properties.color,
+          weight: lineStyle?.weight || (feature.properties.kind === "path" ? 4 : 2),
+          opacity: feature.properties.kind === "path" ? 0.95 : 0.72
+        }),
+        pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
+          radius: feature.properties.index === 1 ? 5 : 2.6,
+          color: fallbackColor || feature.properties.color,
+          fillColor: fallbackColor || feature.properties.color,
+          fillOpacity: 0.95,
+          weight: 1
+        }),
+        onEachFeature: (feature, layer) => {
+          if (feature.properties) layer.bindPopup(popupFromProps(recording, feature.properties), { maxWidth: 360 });
+        }
+      });
+    }
+
+    function layerPointCount(collection) {
+      if (!collection) return 0;
+      const path = collection.features.find(feature => feature.properties.kind === "path");
+      if (path) return path.properties.points;
+      return collection.features.length;
+    }
+
+    function parseTimeMs(value) {
+      if (!value) return NaN;
+      const parsed = Date.parse(value);
+      return Number.isFinite(parsed) ? parsed : NaN;
+    }
+
+    function recordingTimeBounds(recording) {
+      const extent = recording.time_extent;
+      if (!Array.isArray(extent) || extent.length !== 2) return null;
+      const min = parseTimeMs(extent[0]);
+      const max = parseTimeMs(extent[1]);
+      if (!Number.isFinite(min) || !Number.isFinite(max) || min >= max) return null;
+      return { min, max };
+    }
+
+    function ensureTimeRange(recording) {
+      const bounds = recordingTimeBounds(recording);
+      if (!bounds) return null;
+      const stored = timeRanges.get(recording.id);
+      const start = stored ? Math.max(bounds.min, Math.min(bounds.max, stored.start)) : bounds.min;
+      const end = stored ? Math.max(bounds.min, Math.min(bounds.max, stored.end)) : bounds.max;
+      const range = start <= end ? { start, end } : { start: end, end: start };
+      timeRanges.set(recording.id, range);
+      return { ...bounds, ...range };
+    }
+
+    function featureTimeMs(feature) {
+      return parseTimeMs(feature?.properties?.time || feature?.properties?.ppk_time);
+    }
+
+    function featureInRange(feature, range) {
+      if (!range) return true;
+      const time = featureTimeMs(feature);
+      return !Number.isFinite(time) || (time >= range.start && time <= range.end);
+    }
+
+    function clippedPathFeature(feature, range) {
+      const times = feature?.properties?.times;
+      const coordinates = feature?.geometry?.coordinates;
+      if (!range || !Array.isArray(times) || !Array.isArray(coordinates) || times.length !== coordinates.length) return feature;
+      const kept = coordinates.filter((_, index) => {
+        const time = parseTimeMs(times[index]);
+        return !Number.isFinite(time) || (time >= range.start && time <= range.end);
+      });
+      if (kept.length < 2) return null;
+      return {
+        ...feature,
+        geometry: { ...feature.geometry, coordinates: kept },
+        properties: { ...feature.properties, points: kept.length, times: undefined }
+      };
+    }
+
+    function filteredCollection(recording, collection) {
+      const range = ensureTimeRange(recording);
+      if (!collection || !range) return collection;
+      const features = collection.features.map(feature => {
+        if (feature.properties?.kind === "path") return clippedPathFeature(feature, range);
+        return featureInRange(feature, range) ? feature : null;
+      }).filter(Boolean);
+      return { ...collection, features };
+    }
+
+    async function getRecordingData(recording) {
+      if (!dataCache.has(recording.id)) {
+        dataCache.set(recording.id, fetchJsonFresh(recording.data));
+      }
+      return dataCache.get(recording.id);
+    }
+
+    function removeCurrentLayers() {
+      for (const layerGroup of layerState.values()) {
+        for (const layer of Object.values(layerGroup)) {
+          if (layer && map.hasLayer(layer)) map.removeLayer(layer);
+        }
+      }
+      layerState.clear();
+    }
+
+    function applyLayerOrder() {
+      for (const key of [...layerOrder].reverse()) {
+        const parts = splitLayerKey(key);
+        if (!parts) continue;
+        const layer = layerState.get(parts.recordingId)?.[parts.layerName];
+        if (layer && map.hasLayer(layer)) layer.bringToFront();
+      }
+      manualLayers.forEach(layer => {
+        if (layer.bringToFront && map.hasLayer(layer)) layer.bringToFront();
+      });
+    }
+
+    function combinedBounds(recordings) {
+      if (!recordings.length) return null;
+      return recordings.reduce((bounds, recording) => [
+        [Math.min(bounds[0][0], recording.bounds[0][0]), Math.min(bounds[0][1], recording.bounds[0][1])],
+        [Math.max(bounds[1][0], recording.bounds[1][0]), Math.max(bounds[1][1], recording.bounds[1][1])]
+      ], recordings[0].bounds);
+    }
+
+    function selectedRecordings() {
+      if (!manifest) return [];
+      return manifest.recordings.filter(recording => selectedIds.has(recording.id));
+    }
+
+    function fitSelectedRecordings() {
+      const bounds = combinedBounds(selectedRecordings());
+      if (bounds) map.fitBounds(bounds, { padding: [28, 28], maxZoom: 22 });
+    }
+
+    function updateManualControls() {
+      const hasActivePath = Boolean(activePath);
+      const hasManualLayers = manualLayers.length > 0;
+      els.mapWrap.classList.toggle("drawing", Boolean(manualMode));
+      els.manualDot.setAttribute("aria-pressed", manualMode === "dot" ? "true" : "false");
+      els.manualPath.setAttribute("aria-pressed", manualMode === "path" ? "true" : "false");
+      els.manualDone.disabled = !hasActivePath;
+      els.manualUndo.disabled = !hasActivePath && !hasManualLayers;
+      els.manualClear.disabled = !hasActivePath && !hasManualLayers;
+    }
+
+    function setManualMode(mode) {
+      manualMode = manualMode === mode ? null : mode;
+      updateManualControls();
+    }
+
+    function manualPopup(type, latlng) {
+      return `<b>${type}</b><br>${latlng.lat.toFixed(8)}, ${latlng.lng.toFixed(8)}`;
+    }
+
+    function addManualDot(latlng) {
+      const dot = L.circleMarker(latlng, {
+        renderer: manualRenderer,
+        radius: 6,
+        color: "#111827",
+        fillColor: "#00c2a8",
+        fillOpacity: 0.95,
+        weight: 2
+      }).bindPopup(manualPopup("Manual dot", latlng));
+      manualLayer.addLayer(dot);
+      manualLayers.push(dot);
+      updateManualControls();
+    }
+
+    function addManualPathPoint(latlng) {
+      activePathPoints.push(latlng);
+      if (!activePath) {
+        activePath = L.polyline(activePathPoints, {
+          renderer: manualRenderer,
+          color: "#00c2a8",
+          weight: 4,
+          opacity: 0.95
+        }).bindPopup("Manual path");
+        manualLayer.addLayer(activePath);
+        manualLayers.push(activePath);
+      } else {
+        activePath.setLatLngs(activePathPoints);
+      }
+      updateManualControls();
+    }
+
+    function finishManualPath() {
+      activePath = null;
+      activePathPoints = [];
+      updateManualControls();
+    }
+
+    function undoManual() {
+      if (activePath) {
+        activePathPoints.pop();
+        if (activePathPoints.length) {
+          activePath.setLatLngs(activePathPoints);
+        } else {
+          manualLayer.removeLayer(activePath);
+          manualLayers.pop();
+          finishManualPath();
+        }
+      } else {
+        const layer = manualLayers.pop();
+        if (layer) manualLayer.removeLayer(layer);
+      }
+      updateManualControls();
+    }
+
+    function clearManual() {
+      manualLayer.clearLayers();
+      manualLayers.length = 0;
+      activePath = null;
+      activePathPoints = [];
+      updateManualControls();
+    }
+
+    map.on("click", event => {
+      if (manualMode === "dot") addManualDot(event.latlng);
+      if (manualMode === "path") addManualPathPoint(event.latlng);
+    });
+
+    function renderStats(recordings) {
+      if (!recordings.length) {
+        els.stats.innerHTML = `<div><span>Selected</span><strong>0 recordings</strong></div>`;
+        return;
+      }
+      const totals = recordings.reduce((acc, recording) => {
+        acc.receiver += recording.stats.receiver_points || 0;
+        acc.ppk += recording.stats.ppk_points || 0;
+        acc.float += recording.stats.float_points || 0;
+        acc.dgps += recording.stats.dgps_points || 0;
+        acc.observation += recording.stats.observation_single_points || 0;
+        acc.kalman += recording.stats.kalman_points || 0;
+        acc.imuDeadReckoning += recording.stats.imu_dead_reckoning_points || 0;
+        acc.matches += recording.stats.matches || 0;
+        acc.floatMatches += recording.stats.float_matches || 0;
+        acc.dgpsMatches += recording.stats.dgps_matches || 0;
+        for (const [quality, count] of Object.entries(recording.stats.ppk_quality || {})) {
+          acc.quality[quality] = (acc.quality[quality] || 0) + count;
+        }
+        return acc;
+      }, { receiver: 0, ppk: 0, float: 0, dgps: 0, observation: 0, kalman: 0, imuDeadReckoning: 0, matches: 0, floatMatches: 0, dgpsMatches: 0, quality: {} });
+      const quality = Object.keys(totals.quality).length
+        ? Object.entries(totals.quality).map(([q, count]) => `Q${q}: ${count}`).join(", ")
+        : "n/a";
+      const rows = [
+        ["Selected", `${recordings.length} recording${recordings.length === 1 ? "" : "s"}`],
+        ["Receiver", `${totals.receiver} points`],
+        ["PPK fixed", `${totals.ppk} points`],
+        ["PPK float", `${totals.float} points`],
+        ["PPK DGPS", `${totals.dgps} points`],
+        ["Observation single", `${totals.observation} points`],
+        ["Kalman GNSS+IMU", `${totals.kalman} points`],
+        ["IMU diagnostic", `${totals.imuDeadReckoning} points`],
+        ["Fixed matches", `${totals.matches}`],
+        ["Float matches", `${totals.floatMatches}`],
+        ["DGPS matches", `${totals.dgpsMatches}`],
+        ["PPK quality", quality]
+      ];
+      if (recordings.length === 1 && recordings[0].stats.horizontal_median_m !== undefined) {
+        const stats = recordings[0].stats;
+        rows.push(["Horizontal median", `${stats.horizontal_median_m} m`]);
+        rows.push(["Horizontal p95", `${stats.horizontal_p95_m} m`]);
+        rows.push(["3D median", `${stats.distance_3d_median_m} m`]);
+      }
+      els.stats.innerHTML = rows.map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`).join("");
+    }
+
+    function formatTimeLabel(ms) {
+      return new Date(ms).toISOString().slice(11, 19);
+    }
+
+    function updateTimePanelVisibility() {
+      const hasRows = Boolean(els.timePanel.children.length);
+      els.timePanel.classList.toggle("collapsed", timePanelCollapsed);
+      els.timeToggle.hidden = !hasRows;
+      els.timeToggle.textContent = timePanelCollapsed ? "Show time" : "Hide time";
+      els.timeToggle.setAttribute("aria-expanded", timePanelCollapsed ? "false" : "true");
+    }
+
+    function updateLegendVisibility() {
+      const hasRows = Boolean(els.mapLegend.children.length);
+      els.mapLegend.classList.toggle("collapsed", legendCollapsed || !hasRows);
+      els.legendToggle.hidden = !hasRows;
+      els.legendToggle.textContent = legendCollapsed ? "Show legend" : "Hide legend";
+      els.legendToggle.setAttribute("aria-expanded", legendCollapsed ? "false" : "true");
+    }
+
+    function updateLayerOrderVisibility() {
+      els.orderList.classList.toggle("collapsed", layerOrderCollapsed);
+      els.orderToggle.textContent = layerOrderCollapsed ? "Show order" : "Hide order";
+      els.orderToggle.setAttribute("aria-expanded", layerOrderCollapsed ? "false" : "true");
+    }
+
+    function toggleTimePanel() {
+      timePanelCollapsed = !timePanelCollapsed;
+      updateTimePanelVisibility();
+      saveUiState();
+    }
+
+    function toggleLegend() {
+      legendCollapsed = !legendCollapsed;
+      updateLegendVisibility();
+      saveUiState();
+    }
+
+    function toggleLayerOrder() {
+      layerOrderCollapsed = !layerOrderCollapsed;
+      updateLayerOrderVisibility();
+      saveUiState();
+    }
+
+    function setTimeRangeValue(id, edge, value) {
+      const range = timeRanges.get(id);
+      if (!range) return;
+      const next = Math.round(Number(value));
+      if (!Number.isFinite(next)) return;
+      if (edge === "start") range.start = Math.min(next, range.end);
+      else range.end = Math.max(next, range.start);
+      timeRanges.set(id, range);
+    }
+
+    function updateTimeRowLabels(row, range) {
+      row.querySelector("[data-time-label='start']").textContent = formatTimeLabel(range.start);
+      row.querySelector("[data-time-label='end']").textContent = formatTimeLabel(range.end);
+      row.querySelector("[data-time-input='start']").value = range.start;
+      row.querySelector("[data-time-input='end']").value = range.end;
+    }
+
+    function renderTimeControls(recordings) {
+      const withTime = recordings.map(recording => ({ recording, range: ensureTimeRange(recording) })).filter(item => item.range);
+      els.timePanel.innerHTML = withTime.map(({ recording, range }) => `
+        <div class="time-row" data-time-row="${recording.id}">
+          <div class="time-name" title="${escapeHtml(recording.name)}">${escapeHtml(recording.name)}</div>
+          <div class="time-control">
+            <div class="time-labels">
+              <span data-time-label="start">${formatTimeLabel(range.start)}</span>
+              <span data-time-label="end">${formatTimeLabel(range.end)}</span>
+            </div>
+            <div class="range-pair">
+              <input data-time-input="start" data-recording-id="${recording.id}" type="range" min="${range.min}" max="${range.max}" step="1000" value="${range.start}" aria-label="${escapeHtml(recording.name)} start time">
+              <input data-time-input="end" data-recording-id="${recording.id}" type="range" min="${range.min}" max="${range.max}" step="1000" value="${range.end}" aria-label="${escapeHtml(recording.name)} end time">
+            </div>
+          </div>
+        </div>
+      `).join("");
+
+      els.timePanel.querySelectorAll("[data-time-input]").forEach(input => {
+        input.addEventListener("input", () => {
+          setTimeRangeValue(input.dataset.recordingId, input.dataset.timeInput, input.value);
+          const row = input.closest("[data-time-row]");
+          updateTimeRowLabels(row, timeRanges.get(input.dataset.recordingId));
+          saveUiState();
+          updateMap({ fit: false, renderTimeControls: false });
+        });
+      });
+      updateTimePanelVisibility();
+    }
+
+    function updateCounts(datasets) {
+      for (const [name, meta] of Object.entries(toggleMeta)) {
+        const count = datasets.reduce((sum, { recording, data }) => sum + layerPointCount(filteredCollection(recording, data.layers[name])), 0);
+        meta.count.textContent = count ? count : "";
+      }
+    }
+
+    function visibleLayerEntries(recordings) {
+      return recordings.flatMap(recording => defaultLayerOrder
+        .filter(name => recording.available[name] && toggleMeta[name]?.input.checked)
+        .map(name => ({
+          key: layerKey(recording.id, name),
+          recording,
+          name,
+          label: `${recording.name} - ${layerConfig[name].label}`,
+          color: colorsFor(recording.id)[name],
+          lineStyle: lineStyleFor(recording.id, name)
+        })));
+    }
+
+    function syncVisibleLayerOrder(recordings) {
+      const entries = visibleLayerEntries(recordings);
+      const visibleKeys = entries.map(entry => entry.key);
+      const visibleKeySet = new Set(visibleKeys);
+      layerOrder = [
+        ...layerOrder.filter(key => visibleKeySet.has(key)),
+        ...visibleKeys.filter(key => !layerOrder.includes(key))
+      ];
+      return entries;
+    }
+
+    function moveLayerOrder(key, direction) {
+      const index = layerOrder.indexOf(key);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= layerOrder.length) return;
+      [layerOrder[index], layerOrder[nextIndex]] = [layerOrder[nextIndex], layerOrder[index]];
+      renderLayerOrderControls(selectedRecordings());
+      applyLayerOrder();
+      saveUiState();
+    }
+
+    function renderLayerOrderControls(recordings) {
+      const entriesByKey = new Map(syncVisibleLayerOrder(recordings).map(entry => [entry.key, entry]));
+      if (!layerOrder.length) {
+        els.orderList.innerHTML = `<div class="order-empty">No visible layers</div>`;
+        updateLayerOrderVisibility();
+        return;
+      }
+      els.orderList.innerHTML = layerOrder.map((key, index) => {
+        const entry = entriesByKey.get(key);
+        if (!entry) return "";
+        return `<div class="order-item" data-order-layer="${escapeHtml(key)}">
+          <span class="order-name" title="${escapeHtml(entry.label)}"><span class="swatch" style="background:${entry.color}"></span>${escapeHtml(entry.label)}</span>
+          <button type="button" data-order-move="${escapeHtml(key)}" data-direction="-1" title="Draw ${escapeHtml(entry.label)} higher" ${index === 0 ? "disabled" : ""}>Up</button>
+          <button type="button" data-order-move="${escapeHtml(key)}" data-direction="1" title="Draw ${escapeHtml(entry.label)} lower" ${index === layerOrder.length - 1 ? "disabled" : ""}>Dn</button>
+        </div>`;
+      }).join("");
+      els.orderList.querySelectorAll("[data-order-move]").forEach(button => {
+        button.addEventListener("click", () => moveLayerOrder(button.dataset.orderMove, Number(button.dataset.direction)));
+      });
+      updateLayerOrderVisibility();
+    }
+
+    function renderLegend(recordings) {
+      const entries = visibleLayerEntries(recordings);
+      if (!entries.length) {
+        els.mapLegend.innerHTML = "";
+        updateLegendVisibility();
+        return;
+      }
+      els.mapLegend.innerHTML = `<div class="legend-title">Visible line colors</div>${entries.map(entry => `
+        <div class="legend-row" title="${escapeHtml(entry.label)}">
+          <span class="line-swatch" style="--line-color:${entry.color};border-top-width:${entry.lineStyle.weight}px"></span>
+          <span class="legend-name">${escapeHtml(entry.label)}</span>
+        </div>
+      `).join("")}`;
+      updateLegendVisibility();
+    }
+
+    function syncLayerToggles(recordings) {
+      for (const [name, meta] of Object.entries(toggleMeta)) {
+        const available = recordings.some(recording => recording.available[name]);
+        meta.input.disabled = !available;
+        meta.wrapper.setAttribute("aria-disabled", available ? "false" : "true");
+        for (const layerGroup of layerState.values()) {
+          const layer = layerGroup[name];
+          if (!layer) continue;
+          if (available && meta.input.checked && !map.hasLayer(layer)) layer.addTo(map);
+          if ((!available || !meta.input.checked) && map.hasLayer(layer)) map.removeLayer(layer);
+        }
+      }
+      renderLayerOrderControls(recordings);
+      renderLegend(recordings);
+      applyLayerOrder();
+    }
+
+    async function updateMap({ fit = true, renderTimeControls: shouldRenderTimeControls = true } = {}) {
+      const token = ++renderToken;
+      const recordings = manifest.recordings.filter(recording => selectedIds.has(recording.id));
+      renderStats(recordings);
+      renderLayerOrderControls(recordings);
+      if (shouldRenderTimeControls) renderTimeControls(recordings);
+      els.fitSelected.disabled = !recordings.length;
+      if (!recordings.length) {
+        removeCurrentLayers();
+        updateCounts([]);
+        syncLayerToggles([]);
+        els.timePanel.innerHTML = "";
+        updateTimePanelVisibility();
+        renderLegend([]);
+        els.status.textContent = "Select one or more recordings.";
+        return;
+      }
+      els.status.textContent = `Loading ${recordings.length} recording${recordings.length === 1 ? "" : "s"}...`;
+      const datasets = await Promise.all(recordings.map(async recording => ({
+        recording,
+        data: await getRecordingData(recording)
+      })));
+      if (token !== renderToken) return;
+      removeCurrentLayers();
+      for (const { recording, data } of datasets) {
+        const colors = colorsFor(recording.id);
+        layerState.set(recording.id, Object.fromEntries(Object.keys(layerConfig).map(name => [
+          name,
+          makeLayer(recording, data.layers[name], colors[name], lineStyleFor(recording.id, name))
+        ])));
+      }
+      updateCounts(datasets);
+      syncLayerToggles(recordings);
+      if (fit) fitSelectedRecordings();
+      els.status.textContent = recordings.length === 1 ? recordings[0].name : `${recordings.length} recordings shown`;
+    }
+
+    function renderRecordingControls(recordings) {
+      visibleRecordings = recordings;
+      els.list.innerHTML = recordings.map(recording => {
+        const colors = colorsFor(recording.id);
+        const selected = selectedIds.has(recording.id);
+        const styleControls = Object.entries(layerConfig).map(([name, config]) => {
+          const available = recording.available[name];
+          const style = lineStyleFor(recording.id, name);
+          const isHeading = name.endsWith("_headings");
+          return `<label class="style-field" aria-disabled="${available ? "false" : "true"}">
+            <input type="color" data-color-id="${recording.id}" data-layer="${name}" value="${colors[name]}" ${available ? "" : "disabled"}>
+            <input type="number" data-style-id="${recording.id}" data-style-layer="${name}" data-style-field="weight" min="1" max="14" step="1" value="${style.weight}" title="Line thickness" aria-label="${escapeHtml(config.label)} line thickness" ${available ? "" : "disabled"}>
+            <input type="number" data-style-id="${recording.id}" data-style-layer="${name}" data-style-field="headingLengthM" min="0.1" max="50" step="0.1" value="${style.headingLengthM}" title="Heading length in meters" aria-label="${escapeHtml(config.label)} heading length in meters" ${available && isHeading ? "" : "disabled hidden"}>
+            <span>${config.label}</span>
+          </label>`;
+        }).join("");
+        return `<div class="rec-item ${selected ? "selected" : ""}" data-id="${recording.id}">
+          <label class="rec-check">
+            <input type="checkbox" data-recording-id="${recording.id}" ${selected ? "checked" : ""}>
+            <span class="rec-name">${escapeHtml(recording.name)}</span>
+          </label>
+          <div class="style-grid">${styleControls}</div>
+        </div>`;
+      }).join("");
+
+      els.list.querySelectorAll("[data-recording-id]").forEach(input => {
+        input.addEventListener("change", () => {
+          if (input.checked) selectedIds.add(input.dataset.recordingId);
+          else selectedIds.delete(input.dataset.recordingId);
+          renderRecordingControls(visibleRecordings);
+          saveUiState();
+          updateMap({ fit: false });
+        });
+      });
+      els.list.querySelectorAll("[data-color-id]").forEach(input => {
+        const applyColor = () => {
+          colorsFor(input.dataset.colorId)[input.dataset.layer] = input.value;
+          saveUiState();
+          updateMap({ fit: false });
+        };
+        input.addEventListener("input", applyColor);
+        input.addEventListener("change", applyColor);
+      });
+      els.list.querySelectorAll("[data-style-id]").forEach(input => {
+        const applyStyle = () => {
+          const styles = lineStylesFor(input.dataset.styleId);
+          const name = input.dataset.styleLayer;
+          const defaults = defaultLineStyle(name);
+          const current = { ...defaults, ...(styles[name] || {}) };
+          const bounds = input.dataset.styleField === "weight" ? [1, 14] : [0.1, 50];
+          current[input.dataset.styleField] = finiteNumber(input.value, defaults[input.dataset.styleField], bounds[0], bounds[1]);
+          input.value = current[input.dataset.styleField];
+          styles[name] = current;
+          saveUiState();
+          updateMap({ fit: false });
+        };
+        input.addEventListener("input", applyStyle);
+        input.addEventListener("change", applyStyle);
+      });
+    }
+
+    function filterRecordings() {
+      const text = els.search.value.trim().toLowerCase();
+      const recordings = manifest.recordings.filter(recording => recording.name.toLowerCase().includes(text));
+      renderRecordingControls(recordings.length ? recordings : manifest.recordings);
+      saveUiState();
+    }
+
+    async function reloadData({ preserveSelection = false, fit = true } = {}) {
+      const previousSelection = [...selectedIds];
+      manifest = await fetchJsonFresh("manifest.json");
+      dataCache.clear();
+      removeCurrentLayers();
+      if (!manifest.recordings.length) {
+        selectedIds.clear();
+        renderRecordingControls([]);
+        renderStats([]);
+        updateCounts([]);
+        syncLayerToggles([]);
+        renderLegend([]);
+        els.status.textContent = "No usable recordings found.";
+        saveUiState();
+        return;
+      }
+      if (preserveSelection) {
+        const knownIds = new Set(manifest.recordings.map(recording => recording.id));
+        selectedIds.clear();
+        previousSelection.filter(id => knownIds.has(id)).forEach(id => selectedIds.add(id));
+      } else {
+        applyUiState(loadUiState());
+      }
+      filterRecordings();
+      saveUiState();
+      await updateMap({ fit });
+    }
+
+    async function init() {
+      await reloadData({ preserveSelection: false });
+      els.search.addEventListener("input", filterRecordings);
+      els.selectVisible.addEventListener("click", () => {
+        visibleRecordings.forEach(recording => selectedIds.add(recording.id));
+        renderRecordingControls(visibleRecordings);
+        saveUiState();
+        updateMap({ fit: false });
+      });
+      els.clearSelection.addEventListener("click", () => {
+        selectedIds.clear();
+        renderRecordingControls(visibleRecordings);
+        saveUiState();
+        updateMap({ fit: false });
+      });
+      els.refreshData.addEventListener("click", () => reloadData({ preserveSelection: true, fit: false }));
+      els.fitSelected.addEventListener("click", fitSelectedRecordings);
+      els.manualDot.addEventListener("click", () => setManualMode("dot"));
+      els.manualPath.addEventListener("click", () => setManualMode("path"));
+      els.manualDone.addEventListener("click", finishManualPath);
+      els.manualUndo.addEventListener("click", undoManual);
+      els.manualClear.addEventListener("click", clearManual);
+      els.timeToggle.addEventListener("click", toggleTimePanel);
+      els.legendToggle.addEventListener("click", toggleLegend);
+      els.orderToggle.addEventListener("click", toggleLayerOrder);
+      updateManualControls();
+      updateTimePanelVisibility();
+      updateLegendVisibility();
+      updateLayerOrderVisibility();
+      Object.values(toggleMeta).forEach(meta => meta.input.addEventListener("change", () => {
+        saveUiState();
+        updateMap({ fit: false });
+      }));
+    }
+    init().catch(error => {
+      console.error(error);
+      els.status.textContent = error.message;
+    });
+  </script>
+</body>
+</html>

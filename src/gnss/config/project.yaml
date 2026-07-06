@@ -1,0 +1,37 @@
+project_name: "um982_ppk_demo"
+
+inputs:
+  # Use ONE of these modes:
+  #
+  # Mode A: already-converted rover RINEX
+  #   set rover_obs and rover_nav
+  #
+  # Mode B: raw BIN + external converter
+  #   set gnss_bin and tools.bin_to_rinex_* below
+
+  gnss_bin: null
+  rover_obs: "C:/data/rover/LOG00001.obs"
+  rover_nav: "C:/data/rover/LOG00001.nav"
+
+tools:
+  # Required: RTKLIB command-line solver
+  rnx2rtkp_exe: "C:/Users/MazaisMilumins/Documents/uni/kamaninas/resolve_ppk/RTKLIB_2.4.3_b34/RTKLIB_2.4.3_b34/bin/rnx2rtkp.exe"
+
+  # Optional: BIN -> RINEX converter
+  bin_to_rinex_exe: null
+  bin_to_rinex_command_template: null
+  # Example when you have a converter:
+  # bin_to_rinex_exe: "C:/tools/vendor_converter/converter.exe"
+  # bin_to_rinex_command_template: "\"{exe}\" -i \"{input_bin}\" -o \"{output_dir}\""
+
+workspace:
+  root_dir: "workspace"
+
+base_station:
+  station_catalog_csv: "config/base_stations.example.csv"
+  max_distance_km: 300.0
+
+solver:
+  rtklib_config: "config/rtklib_ppk.conf"
+  solution_filename: "solution.pos"
+  extra_args: []
