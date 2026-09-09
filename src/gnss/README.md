@@ -30,19 +30,18 @@ PowerShell:
 
 ```powershell
 git clone <repozitorija-adrese>
-cd Scripts_for_collected_data
+cd src/gnss
 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python -m pip install pyserial
 
 Copy-Item .env.example .env
 ```
 
-`pyserial` ir vajadzīgs datu ierakstīšanai no uztvērēja. Pašreiz tas nav
-iekļauts `requirements.txt`, tādēļ tas jāinstalē atsevišķi.
+`requirements.txt` ietver `pyserial`, kas vajadzīgs datu ierakstīšanai no
+uztvērēja.
 
 Minimālā darba plūsma jau saglabātam `.BIN` failam:
 
@@ -424,11 +423,50 @@ python scripts/imu_kalman.py <ieraksts> `
   --update-viewer
 ```
 
+Akselerometra bias kalibracija no statiska IMU ieraksta:
+
+```powershell
+python scripts/imu_bias_calibration.py in_imu/static.BIN `
+  --profile static_table `
+  --start-s 2 `
+  --end-s 60
+```
+
+Pilna IMU pēcapstrādes profila kalibrācija (bias + drift/ZUPT iestatījumi) no nekustīga brauciena:
+
+```powershell
+python scripts/imu_processing_profile.py in_imu/brauciens_5.BIN `
+  --profile from_static_brauciens_5 `
+  --recording out/20260521_125445Z_LOG00005 `
+  --start-s 2 `
+  --end-s 60
+```
+
+Profils tiek saglabats `config/imu_processing_profiles.csv`. Pec tam to var pielietot
+Kalman vai IMU diagnostikas aprēķinam (viewer: izvēlies profilu un Calculate Kalman):
+
+```powershell
+python scripts/imu_kalman.py <ieraksts> `
+  --imu out/<ieraksts>/imu/brauciens_1.csv `
+  --source bestnav `
+  --accel-bias -0.0457,0.0338,0.5442 `
+  --drift-correct `
+  --static-speed-mps 0.2 `
+  --accel-residual-gate-mps2 0.065 `
+  --update-viewer
+```
+
+Vai viewer dashboard IMU cilnē: **Calibrate from static recording** → izvēlies to pašu **IMU processing profile** uz kustīgā brauciena → **Calculate Kalman with profile**.
+
+Vecais bias-only fails joprojām lasās kā migrācija uz processing profiliem.
+
 GNSS avoti:
 
 - `bestnav` - uztvērēja koordinātas;
 - `fixed_ppk` - `ppk/solution.csv`;
-- `dgps` - `ppk/solution_dgps.csv`.
+- `float_ppk` - `ppk/solution_float.csv`;
+- `dgps` - `ppk/solution_dgps.csv`;
+- `observation` - `ppk/observation_single.csv`.
 
 Laika sasaistes varianti:
 
@@ -443,7 +481,11 @@ Galvenie rezultāti:
 ```text
 imu/kalman_<avots>_<imu>.csv
 imu/imu_dead_reckoning_<avots>_<imu>.csv
+imu/imu_drift_corrected_<avots>_<imu>.csv
 ```
+
+Drift korekcija pirms Kalman (pēc noklusējuma ieslēgta): residual gate + ZUPT, kad GNSS ātrums ≈ 0.
+Parametri: `--static-speed-mps`, `--accel-residual-gate-mps2`, `--no-drift-correct`.
 
 Zemas `--auto-align` pārliecības gadījumā rezultāts jāpārbauda pret zināmu
 `--time-offset-s` vai `--imu-start-utc`.
@@ -490,9 +532,8 @@ Aktuālajai darba plūsmai svarīgi faili:
 - `config/rtklib_ppk_dgps.conf` - koda diferenciālais rezerves risinājums.
 
 `config/project.yaml` un `scripts/pipeline/process_trip.py` pieder vecākai
-cauruļvada versijai. `process_trip.py` pašreiz nevar darboties, jo repozitorijā
-nav tā importētā `src/ppk_pipeline` moduļa. Jaunai apstrādei jāizmanto
-`scripts/process_recording_all.py`.
+cauruļvada versijai. `process_trip.py` tikai izvada novecošanas ziņojumu un
+norāda uz `scripts/process_recording_all.py`.
 
 ## Problēmu novēršana
 
@@ -509,7 +550,7 @@ Vispirms palaid `unicore_n4_extract.py` un `filter_zero_coords.py` vai pilno
 **`No module named serial`**
 
 ```powershell
-python -m pip install pyserial
+python -m pip install -r requirements.txt
 ```
 
 **RTKLIB izpildfails nav atrasts**

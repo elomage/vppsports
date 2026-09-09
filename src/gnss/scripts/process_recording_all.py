@@ -220,13 +220,10 @@ def process_recording(args: argparse.Namespace, session_dir: Path) -> int:
     print()
     print(f"Report: {report_path}")
 
-    failures = [result for result in results if not result.ok and not result.name.startswith("Create ")]
+    failures = [result for result in results if not result.ok]
     if failures:
         print("Some steps failed for this recording. See the report above for details.")
         return 1
-    optional_failures = [result for result in results if not result.ok]
-    if optional_failures:
-        print("Some optional steps failed for this recording. See the report above for details.")
     return 0
 
 

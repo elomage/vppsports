@@ -71,10 +71,27 @@ def sampled_path_points(points: list[TrackPoint], max_path_points: int | None) -
     return sampled
 
 
-def track_geojson(points: list[TrackPoint], color: str, sample_every: int, max_path_points: int | None = None) -> dict[str, Any]:
+def marker_sample_step(point_count: int, target_markers: int) -> int:
+    if point_count <= 0:
+        return 1
+    if target_markers <= 0 or point_count <= target_markers:
+        return 1
+    return max(1, math.ceil(point_count / target_markers))
+
+
+def track_geojson(
+    points: list[TrackPoint],
+    color: str,
+    sample_every: int | None = None,
+    max_path_points: int | None = None,
+    target_markers: int | None = None,
+) -> dict[str, Any]:
     features: list[dict[str, Any]] = []
     if points:
         path_points = sampled_path_points(points, max_path_points)
+        if sample_every is None:
+            sample_every = marker_sample_step(len(points), target_markers or len(points))
+        marker_indexes = sorted({0, len(points) - 1, *range(0, len(points), max(1, sample_every))})
         features.append({
             "type": "Feature",
             "geometry": {
@@ -86,11 +103,13 @@ def track_geojson(points: list[TrackPoint], color: str, sample_every: int, max_p
                 "label": points[0].label,
                 "color": color,
                 "points": len(points),
-                "times": [point_time_iso(point) for point in path_points],
+                "path_vertices": len(path_points),
+                "markers": len(marker_indexes),
+                # Keep times only for moderate paths; dense IMU times bloat the JSON heavily.
+                "times": [point_time_iso(point) for point in path_points] if len(path_points) <= 12_000 else [],
             },
         })
 
-        marker_indexes = sorted({0, len(points) - 1, *range(0, len(points), max(1, sample_every))})
         for index in marker_indexes:
             point = points[index]
             if not finite_pair(point):
@@ -267,7 +286,12 @@ def newest_matching_csv(directory: Path, pattern: str) -> Path | None:
     if not directory.is_dir():
         return None
     matches = sorted(directory.glob(pattern), key=lambda path: path.stat().st_mtime, reverse=True)
-    return matches[0] if matches else None
+    if not matches:
+        return None
+    # Among the newest few, prefer the longest file so a truncated auto-align
+    # run does not hide a full trajectory on the map.
+    recent = matches[:5]
+    return max(recent, key=lambda path: (path.stat().st_size, path.stat().st_mtime))
 
 
 def stats_for(
@@ -276,11 +300,13 @@ def stats_for(
     float_ppk: list[TrackPoint],
     dgps: list[TrackPoint],
     observation_single: list[TrackPoint],
-    kalman: list[TrackPoint],
+    kalman_by_source: dict[str, list[TrackPoint]],
     imu_dead_reckoning: list[TrackPoint],
+    imu_drift_corrected: list[TrackPoint],
     matches: list[Match],
     float_matches: list[Match],
     dgps_matches: list[Match],
+    observation_matches: list[Match],
 ) -> dict[str, Any]:
     q_counts: dict[str, int] = {}
     for point in ppk:
@@ -294,11 +320,18 @@ def stats_for(
         "float_points": len(float_ppk),
         "dgps_points": len(dgps),
         "observation_single_points": len(observation_single),
-        "kalman_points": len(kalman),
+        "kalman_bestnav_points": len(kalman_by_source.get("kalman_bestnav", [])),
+        "kalman_fixed_points": len(kalman_by_source.get("kalman_fixed", [])),
+        "kalman_float_points": len(kalman_by_source.get("kalman_float", [])),
+        "kalman_dgps_points": len(kalman_by_source.get("kalman_dgps", [])),
+        "kalman_observation_points": len(kalman_by_source.get("kalman_observation", [])),
+        "kalman_points": sum(len(points) for points in kalman_by_source.values()),
         "imu_dead_reckoning_points": len(imu_dead_reckoning),
+        "imu_drift_corrected_points": len(imu_drift_corrected),
         "matches": len(matches),
         "float_matches": len(float_matches),
         "dgps_matches": len(dgps_matches),
+        "observation_matches": len(observation_matches),
         "ppk_quality": q_counts,
     }
     if matches:
@@ -312,14 +345,23 @@ def stats_for(
     return stats
 
 
+KALMAN_LAYER_PATTERNS = {
+    "kalman_bestnav": ("kalman_bestnav_*.csv", "Kalman · Receiver", "#111827"),
+    "kalman_fixed": ("kalman_fixed_*.csv", "Kalman · Fixed", "#3b3b3b"),
+    "kalman_float": ("kalman_float_*.csv", "Kalman · Float", "#4b5563"),
+    "kalman_dgps": ("kalman_dgps_*.csv", "Kalman · DGPS", "#374151"),
+    "kalman_observation": ("kalman_observation_*.csv", "Kalman · Observation", "#1f2937"),
+}
+
+
 def load_recording(session_dir: Path, ppk_time_offset_s: float, max_time_delta_s: float) -> tuple[dict[str, Any], dict[str, Any]]:
     ppk_csv = session_dir / "ppk" / "solution.csv"
     float_csv = session_dir / "ppk" / "solution_float.csv"
     dgps_csv = session_dir / "ppk" / "solution_dgps.csv"
     single_csv = session_dir / "ppk" / "observation_single.csv"
     imu_dir = session_dir / "imu"
-    kalman_csv = newest_matching_csv(imu_dir, "kalman_*.csv")
     imu_dead_reckoning_csv = newest_matching_csv(imu_dir, "imu_dead_reckoning_*.csv")
+    imu_drift_corrected_csv = newest_matching_csv(imu_dir, "imu_drift_corrected_*.csv")
     solution_pos = session_dir / "ppk" / "solution.pos"
     float_pos = session_dir / "ppk" / "solution_float.pos"
     dgps_pos = session_dir / "ppk" / "solution_dgps.pos"
@@ -364,38 +406,64 @@ def load_recording(session_dir: Path, ppk_time_offset_s: float, max_time_delta_s
             heading_candidates=["direction", "heading_deg", "heading", "true_heading_deg"],
         )
 
-    kalman = load_optional_track(kalman_csv, "Kalman GNSS+IMU") if kalman_csv else []
+    kalman_by_source: dict[str, list[TrackPoint]] = {}
+    for layer_name, (pattern, label, _color) in KALMAN_LAYER_PATTERNS.items():
+        kalman_csv = newest_matching_csv(imu_dir, pattern)
+        kalman_by_source[layer_name] = load_optional_track(kalman_csv, label) if kalman_csv else []
     imu_dead_reckoning = load_optional_track(imu_dead_reckoning_csv, "IMU diagnostic") if imu_dead_reckoning_csv else []
+    imu_drift_corrected = (
+        load_optional_track(imu_drift_corrected_csv, "IMU drift-corrected") if imu_drift_corrected_csv else []
+    )
 
     matches = match_tracks(regular, ppk, ppk_time_offset_s, max_time_delta_s) if regular and ppk else []
     float_matches = match_tracks(regular, float_ppk, ppk_time_offset_s, max_time_delta_s) if regular and float_ppk else []
     dgps_matches = match_tracks(regular, dgps, ppk_time_offset_s, max_time_delta_s) if regular and dgps else []
+    observation_matches = (
+        match_tracks(regular, observation_single, ppk_time_offset_s, max_time_delta_s)
+        if regular and observation_single else []
+    )
     ppk = shifted_track_times(ppk, ppk_time_offset_s)
     float_ppk = shifted_track_times(float_ppk, ppk_time_offset_s)
     dgps = shifted_track_times(dgps, ppk_time_offset_s)
     observation_single = shifted_track_times(observation_single, ppk_time_offset_s)
-    all_points = regular + ppk + float_ppk + dgps + observation_single + kalman + imu_dead_reckoning
+    all_kalman_points = [point for points in kalman_by_source.values() for point in points]
+    all_points = regular + ppk + float_ppk + dgps + observation_single + all_kalman_points + imu_dead_reckoning + imu_drift_corrected
     bounds = bounds_for(all_points)
     if bounds is None:
         raise SystemExit(f"No usable coordinates found in {session_dir}")
 
+    # GNSS is usually ~1 Hz → draw every sample. High-rate IMU/Kalman keep a dense
+    # enough path for the map without shipping 100k vertices / markers (that made
+    # IMU recordings 20–70 MB and the dashboard appear blank while loading).
     layers = {
-        "receiver": track_geojson(regular, "#1f77b4", sample_every=25),
-        "ppk": track_geojson(ppk, "#d62728", sample_every=25),
-        "float": track_geojson(float_ppk, "#9467bd", sample_every=25),
-        "dgps": track_geojson(dgps, "#ff7f0e", sample_every=25),
-        "observation": track_geojson(observation_single, "#2ca02c", sample_every=25),
-        "kalman": track_geojson(kalman, "#111827", sample_every=250, max_path_points=5000),
-        "imu_dead_reckoning": track_geojson(imu_dead_reckoning, "#00a6a6", sample_every=250, max_path_points=5000),
-        "matches": matches_geojson(matches, every_n=3, ppk_time_offset_s=ppk_time_offset_s),
-        "float_matches": matches_geojson(float_matches, every_n=3, ppk_time_offset_s=ppk_time_offset_s),
-        "dgps_matches": matches_geojson(dgps_matches, every_n=3, ppk_time_offset_s=ppk_time_offset_s),
-        "receiver_headings": headings_geojson(regular, "#1f77b4", sample_every=25, length_m=1.5),
-        "ppk_headings": headings_geojson(ppk, "#d62728", sample_every=25, length_m=1.5),
-        "float_headings": headings_geojson(float_ppk, "#9467bd", sample_every=25, length_m=1.5),
-        "dgps_headings": headings_geojson(dgps, "#ff7f0e", sample_every=25, length_m=1.5),
-        "observation_headings": headings_geojson(observation_single, "#2ca02c", sample_every=25, length_m=1.5),
+        "receiver": track_geojson(regular, "#1f77b4", sample_every=1),
+        "ppk": track_geojson(ppk, "#d62728", sample_every=1),
+        "float": track_geojson(float_ppk, "#9467bd", sample_every=1),
+        "dgps": track_geojson(dgps, "#ff7f0e", sample_every=1),
+        "observation": track_geojson(observation_single, "#2ca02c", sample_every=1),
+        "imu_dead_reckoning": track_geojson(
+            imu_dead_reckoning, "#00a6a6", target_markers=1500, max_path_points=8_000
+        ),
+        "imu_drift_corrected": track_geojson(
+            imu_drift_corrected, "#0b6e4f", target_markers=1500, max_path_points=8_000
+        ),
+        "matches": matches_geojson(matches, every_n=1, ppk_time_offset_s=ppk_time_offset_s),
+        "float_matches": matches_geojson(float_matches, every_n=1, ppk_time_offset_s=ppk_time_offset_s),
+        "dgps_matches": matches_geojson(dgps_matches, every_n=1, ppk_time_offset_s=ppk_time_offset_s),
+        "observation_matches": matches_geojson(observation_matches, every_n=1, ppk_time_offset_s=ppk_time_offset_s),
+        "receiver_headings": headings_geojson(regular, "#1f77b4", sample_every=5, length_m=1.5),
+        "ppk_headings": headings_geojson(ppk, "#d62728", sample_every=5, length_m=1.5),
+        "float_headings": headings_geojson(float_ppk, "#9467bd", sample_every=5, length_m=1.5),
+        "dgps_headings": headings_geojson(dgps, "#ff7f0e", sample_every=5, length_m=1.5),
+        "observation_headings": headings_geojson(observation_single, "#2ca02c", sample_every=5, length_m=1.5),
     }
+    for layer_name, (_pattern, _label, color) in KALMAN_LAYER_PATTERNS.items():
+        layers[layer_name] = track_geojson(
+            kalman_by_source[layer_name],
+            color,
+            target_markers=1500,
+            max_path_points=8_000,
+        )
     summary = {
         "id": safe_id(session_dir.name),
         "name": session_dir.name,
@@ -407,11 +475,13 @@ def load_recording(session_dir: Path, ppk_time_offset_s: float, max_time_delta_s
             float_ppk,
             dgps,
             observation_single,
-            kalman,
+            kalman_by_source,
             imu_dead_reckoning,
+            imu_drift_corrected,
             matches,
             float_matches,
             dgps_matches,
+            observation_matches,
         ),
         "available": {
             "receiver": bool(regular),
@@ -419,16 +489,18 @@ def load_recording(session_dir: Path, ppk_time_offset_s: float, max_time_delta_s
             "float": bool(float_ppk),
             "dgps": bool(dgps),
             "observation": bool(observation_single),
-            "kalman": bool(kalman),
             "imu_dead_reckoning": bool(imu_dead_reckoning),
+            "imu_drift_corrected": bool(imu_drift_corrected),
             "matches": bool(matches),
             "float_matches": bool(float_matches),
             "dgps_matches": bool(dgps_matches),
+            "observation_matches": bool(observation_matches),
             "receiver_headings": bool(layers["receiver_headings"]["features"]),
             "ppk_headings": bool(layers["ppk_headings"]["features"]),
             "float_headings": bool(layers["float_headings"]["features"]),
             "dgps_headings": bool(layers["dgps_headings"]["features"]),
             "observation_headings": bool(layers["observation_headings"]["features"]),
+            **{name: bool(kalman_by_source[name]) for name in KALMAN_LAYER_PATTERNS},
         },
     }
     return summary, {"recording": summary["name"], "layers": layers}

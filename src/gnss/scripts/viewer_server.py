@@ -25,27 +25,50 @@ sys.path.insert(0, str(ROOT / "scripts" / "maps"))
 
 from assign_imu_recording import assign as assign_imu
 from assign_imu_recording import gnss_duration, imu_duration
-from imu_kalman import load_gnss, parse_time, source_csv
+from imu_kalman import GNSS_SOURCES, load_gnss, parse_time, source_csv
+from imu_processing_profile import (
+    DEFAULT_PROFILE_CSV as IMU_PROCESSING_PROFILES,
+    append_profile_cli_args,
+    list_profiles as list_imu_processing_profiles,
+    load_profile,
+    profile_kalman_overrides,
+)
 from session_paths import OUT_DIR, output_subdir, resolve_session_dir
 
-SOURCES = ("bestnav", "fixed_ppk", "dgps")
+SOURCES = GNSS_SOURCES
+IMU_BIAS_PROFILES = ROOT / "config" / "imu_bias_profiles.csv"  # legacy; prefer IMU_PROCESSING_PROFILES
+IMU_PROCESSING_PROFILES_PATH = IMU_PROCESSING_PROFILES
 LAYER_NAMES = (
     "receiver",
     "ppk",
     "float",
     "dgps",
     "observation",
-    "kalman",
+    "kalman_bestnav",
+    "kalman_fixed",
+    "kalman_float",
+    "kalman_dgps",
+    "kalman_observation",
     "imu_dead_reckoning",
+    "imu_drift_corrected",
     "matches",
     "float_matches",
     "dgps_matches",
+    "observation_matches",
     "receiver_headings",
     "ppk_headings",
     "float_headings",
     "dgps_headings",
     "observation_headings",
 )
+SOURCE_RUN_LABELS = {
+    "bestnav": "bestnav",
+    "fixed_ppk": "fixed",
+    "float_ppk": "float",
+    "dgps": "dgps",
+    "observation": "observation",
+}
+RUN_LABEL_TO_SOURCE = {label: source for source, label in SOURCE_RUN_LABELS.items()}
 
 
 @dataclass
@@ -88,9 +111,11 @@ def read_json_body(handler: SimpleHTTPRequestHandler) -> dict[str, Any]:
 
 
 def write_json(handler: SimpleHTTPRequestHandler, payload: Any, status: int = 200) -> None:
-    body = json.dumps(payload, indent=2).encode("utf-8")
+    # Compact JSON: IMU recording payloads are tens of MB; pretty-print slows every map switch.
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Cache-Control", "no-store")
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
@@ -127,7 +152,11 @@ def assigned_imus(session_dir: Path) -> list[dict[str, Any]]:
         return []
     rows = []
     for path in sorted(imu_dir.glob("*.csv"), key=lambda item: item.name.lower()):
-        if path.name == "assignment.csv" or path.name.startswith(("kalman_", "imu_dead_reckoning_")):
+        if path.name == "assignment.csv" or path.name.startswith((
+            "kalman_",
+            "imu_dead_reckoning_",
+            "imu_drift_corrected_",
+        )):
             continue
         duration = imu_duration(path)
         rows.append({
@@ -149,7 +178,7 @@ def kalman_outputs(session_dir: Path) -> list[dict[str, Any]]:
         source = ""
         parts = path.stem.split("_")
         if len(parts) >= 2:
-            source = parts[1] if parts[1] != "fixed" else "fixed_ppk"
+            source = RUN_LABEL_TO_SOURCE.get(parts[1], parts[1])
         dead_name = path.name.replace("kalman_", "imu_dead_reckoning_", 1)
         dead_path = imu_dir / dead_name
         rows.append({
@@ -228,9 +257,35 @@ def api_state() -> dict[str, Any]:
         "ok": True,
         "recordings": recordings,
         "imu_inputs": imus,
+        "imu_processing_profiles": list_imu_processing_profiles(IMU_PROCESSING_PROFILES_PATH),
+        "imu_bias_profiles": list_imu_bias_profiles(),
         "bases": list_bases(),
         "suggestions": make_suggestions(recordings, imus),
     }
+
+
+def list_imu_bias_profiles() -> list[dict[str, Any]]:
+    if not IMU_BIAS_PROFILES.is_file():
+        return []
+    rows = []
+    with IMU_BIAS_PROFILES.open("r", newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            profile = str(row.get("profile") or "").strip()
+            if not profile:
+                continue
+            rows.append({
+                "profile": profile,
+                "created_utc": row.get("created_utc") or "",
+                "source_imu": row.get("source_imu") or "",
+                "sample_count": safe_float(row.get("sample_count")),
+                "mean_norm_mps2": safe_float(row.get("mean_norm_mps2")),
+                "rms_residual_mps2": safe_float(row.get("rms_residual_mps2")),
+                "bias_ax_mps2": safe_float(row.get("bias_ax_mps2")),
+                "bias_ay_mps2": safe_float(row.get("bias_ay_mps2")),
+                "bias_az_mps2": safe_float(row.get("bias_az_mps2")),
+            })
+    return rows
 
 
 def list_bases() -> list[dict[str, Any]]:
@@ -348,7 +403,7 @@ def handle_run_step(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def source_run_label(source: str) -> str:
-    return source.replace("_ppk", "")
+    return SOURCE_RUN_LABELS.get(source, source.replace("_ppk", ""))
 
 
 def delay_run_label(delay_s: float) -> str:
@@ -388,6 +443,100 @@ def append_alignment_options(command: list[str], payload: dict[str, Any]) -> Non
         command.extend(["--time-offset-s", str(float(payload.get("time_offset_s", 0.0)))])
 
 
+def resolve_processing_profile(payload: dict[str, Any]) -> dict[str, object] | None:
+    if str(payload.get("imu_mode") or "processed").strip().lower() == "raw":
+        return None
+    name = str(payload.get("imu_processing_profile") or payload.get("accel_bias_profile") or "").strip()
+    if not name:
+        return None
+    try:
+        return load_profile(IMU_PROCESSING_PROFILES_PATH, name)
+    except SystemExit:
+        return None
+
+
+def append_accel_bias_options(command: list[str], payload: dict[str, Any]) -> None:
+    if str(payload.get("imu_mode") or "processed").strip().lower() == "raw":
+        return
+    profile = resolve_processing_profile(payload)
+    if profile is not None:
+        append_profile_cli_args(command, profile)
+        return
+    name = str(payload.get("accel_bias_profile") or "").strip()
+    if not name:
+        return
+    if not IMU_BIAS_PROFILES.is_file():
+        raise FileNotFoundError(f"IMU bias/processing profile not found for: {name}")
+    known = {row["profile"] for row in list_imu_bias_profiles()}
+    if name not in known:
+        raise ValueError(f"Unknown IMU profile: {name}")
+    command.extend(["--accel-bias-profile", str(IMU_BIAS_PROFILES), "--accel-bias-name", name])
+
+
+def append_drift_options(command: list[str], payload: dict[str, Any]) -> None:
+    if str(payload.get("imu_mode") or "processed").strip().lower() == "raw":
+        command.append("--no-drift-correct")
+        return
+    if resolve_processing_profile(payload) is not None:
+        return
+    if payload.get("drift_correct") is False:
+        command.append("--no-drift-correct")
+    else:
+        command.append("--drift-correct")
+    if payload.get("static_speed_mps") is not None:
+        command.extend(["--static-speed-mps", str(float(payload["static_speed_mps"]))])
+    if payload.get("accel_residual_gate_mps2") is not None:
+        command.extend(["--accel-residual-gate-mps2", str(float(payload["accel_residual_gate_mps2"]))])
+
+
+def kalman_numeric_args(payload: dict[str, Any]) -> dict[str, float]:
+    values = {
+        "position_sigma_m": float(payload.get("position_sigma_m", 0.6)),
+        "accel_noise": float(payload.get("accel_noise", 2.0)),
+        "gnss_update_period_s": float(payload.get("gnss_update_period_s", 0.05)),
+    }
+    profile = resolve_processing_profile(payload)
+    if profile is not None:
+        values.update(profile_kalman_overrides(profile))
+    return values
+
+
+def handle_calibrate_imu(payload: dict[str, Any]) -> dict[str, Any]:
+    imu_value = str(payload.get("imu") or "")
+    profile = str(payload.get("profile") or "").strip()
+    if not imu_value or not profile:
+        raise ValueError("imu and profile are required.")
+    recording = str(payload.get("recording") or "").strip()
+    session_dir = resolve_session_dir(recording) if recording else OUT_DIR
+    imu_path = resolve_imu_for_recording(session_dir, imu_value)
+    command = [
+        sys.executable,
+        script_path("imu_processing_profile.py"),
+        str(imu_path),
+        "--profile",
+        profile,
+        "--output",
+        str(IMU_PROCESSING_PROFILES_PATH),
+    ]
+    if recording:
+        command.extend(["--recording", recording])
+    start_s = str(payload.get("start_s") or "").strip()
+    end_s = str(payload.get("end_s") or "").strip()
+    if start_s:
+        command.extend(["--start-s", str(float(start_s))])
+    if end_s:
+        command.extend(["--end-s", str(float(end_s))])
+    result = run_command(command)
+    profiles = list_imu_processing_profiles(IMU_PROCESSING_PROFILES_PATH)
+    return {
+        "ok": result["returncode"] == 0,
+        "command": result,
+        "imu_processing_profiles": profiles,
+        "imu_bias_profiles": list_imu_bias_profiles(),
+        "profile": next((item for item in profiles if item["profile"] == profile), None),
+    }
+
+
 def handle_calculate(payload: dict[str, Any]) -> dict[str, Any]:
     recording = str(payload.get("recording") or "")
     imu_value = str(payload.get("imu") or "")
@@ -412,6 +561,8 @@ def handle_calculate(payload: dict[str, Any]) -> dict[str, Any]:
     for source in sources:
         output = imu_dir / f"kalman_{source_run_label(source)}_{imu_stem}_{run_id}.csv"
         dead_output = imu_dir / f"imu_dead_reckoning_{source_run_label(source)}_{imu_stem}_{run_id}.csv"
+        corrected_output = imu_dir / f"imu_drift_corrected_{source_run_label(source)}_{imu_stem}_{run_id}.csv"
+        nums = kalman_numeric_args(payload)
         command = [
             sys.executable,
             str(ROOT / "scripts" / "imu_kalman.py"),
@@ -421,17 +572,21 @@ def handle_calculate(payload: dict[str, Any]) -> dict[str, Any]:
             "--source",
             source,
             "--position-sigma-m",
-            str(float(payload.get("position_sigma_m", 0.6))),
+            str(nums["position_sigma_m"]),
             "--accel-noise",
-            str(float(payload.get("accel_noise", 2.0))),
+            str(nums["accel_noise"]),
             "--gnss-update-period-s",
-            str(float(payload.get("gnss_update_period_s", 0.05))),
+            str(nums["gnss_update_period_s"]),
             "--output",
             str(output),
             "--dead-output",
             str(dead_output),
+            "--corrected-output",
+            str(corrected_output),
         ]
         append_alignment_options(command, payload)
+        append_accel_bias_options(command, payload)
+        append_drift_options(command, payload)
         result = run_command(command)
         commands.append(result)
         if result["returncode"] == 0:
@@ -439,6 +594,7 @@ def handle_calculate(payload: dict[str, Any]) -> dict[str, Any]:
                 "source": source,
                 "kalman": output.name,
                 "dead": dead_output.name,
+                "corrected": corrected_output.name,
             })
 
     viewer_result = run_command([sys.executable, str(ROOT / "scripts" / "maps" / "build_recording_viewer.py")])
@@ -454,6 +610,45 @@ def handle_calculate(payload: dict[str, Any]) -> dict[str, Any]:
             "kalman_outputs": kalman_outputs(session_dir),
         },
     }
+
+
+def _imu_dead_only_command(
+    session_dir: Path,
+    imu_path: Path,
+    source: str,
+    delay_s: float,
+    payload: dict[str, Any],
+    *,
+    dead_output: Path,
+    corrected_output: Path,
+) -> list[str]:
+    nums = kalman_numeric_args(payload)
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "imu_kalman.py"),
+        str(session_dir),
+        "--imu",
+        str(imu_path),
+        "--source",
+        source,
+        "--dead-only",
+        "--imu-start-delay-s",
+        str(delay_s),
+        "--position-sigma-m",
+        str(nums["position_sigma_m"]),
+        "--accel-noise",
+        str(nums["accel_noise"]),
+        "--gnss-update-period-s",
+        str(nums["gnss_update_period_s"]),
+        "--dead-output",
+        str(dead_output),
+        "--corrected-output",
+        str(corrected_output),
+    ]
+    append_alignment_options(command, payload)
+    append_accel_bias_options(command, payload)
+    append_drift_options(command, payload)
+    return command
 
 
 def handle_imu_trajectory(payload: dict[str, Any]) -> dict[str, Any]:
@@ -472,33 +667,50 @@ def handle_imu_trajectory(payload: dict[str, Any]) -> dict[str, Any]:
     delays = parse_start_delays(payload.get("start_delays_s"))
     commands = []
     outputs = []
+    # Always produce both layers separately:
+    # 1) raw diagnostic (no bias / no ZUPT)
+    # 2) drift-corrected with the selected processing profile
+    raw_payload = {**payload, "imu_mode": "raw"}
+    processed_payload = {**payload, "imu_mode": "processed"}
     for delay_s in delays:
         dead_output = imu_dir / f"imu_dead_reckoning_{source_run_label(source)}_{imu_stem}_delay{delay_run_label(delay_s)}_{run_id}.csv"
-        command = [
-            sys.executable,
-            str(ROOT / "scripts" / "imu_kalman.py"),
-            str(session_dir),
-            "--imu",
-            str(imu_path),
-            "--source",
+        corrected_output = imu_dir / f"imu_drift_corrected_{source_run_label(source)}_{imu_stem}_delay{delay_run_label(delay_s)}_{run_id}.csv"
+        scratch_corrected = imu_dir / f"_scratch_corrected_raw_{delay_run_label(delay_s)}_{run_id}.csv"
+        scratch_dead = imu_dir / f"_scratch_dead_processed_{delay_run_label(delay_s)}_{run_id}.csv"
+
+        raw_cmd = _imu_dead_only_command(
+            session_dir,
+            imu_path,
             source,
-            "--dead-only",
-            "--imu-start-delay-s",
-            str(delay_s),
-            "--position-sigma-m",
-            str(float(payload.get("position_sigma_m", 0.6))),
-            "--accel-noise",
-            str(float(payload.get("accel_noise", 2.0))),
-            "--gnss-update-period-s",
-            str(float(payload.get("gnss_update_period_s", 0.05))),
-            "--dead-output",
-            str(dead_output),
-        ]
-        append_alignment_options(command, payload)
-        result = run_command(command)
-        commands.append(result)
-        if result["returncode"] == 0:
-            outputs.append({"source": source, "dead": dead_output.name, "start_delay_s": delay_s})
+            delay_s,
+            raw_payload,
+            dead_output=dead_output,
+            corrected_output=scratch_corrected,
+        )
+        proc_cmd = _imu_dead_only_command(
+            session_dir,
+            imu_path,
+            source,
+            delay_s,
+            processed_payload,
+            dead_output=scratch_dead,
+            corrected_output=corrected_output,
+        )
+        raw_result = run_command(raw_cmd)
+        proc_result = run_command(proc_cmd)
+        commands.extend([raw_result, proc_result])
+        for scratch in (scratch_corrected, scratch_dead):
+            try:
+                scratch.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if raw_result["returncode"] == 0 and proc_result["returncode"] == 0:
+            outputs.append({
+                "source": source,
+                "dead": dead_output.name,
+                "corrected": corrected_output.name,
+                "start_delay_s": delay_s,
+            })
 
     viewer_result = run_command([sys.executable, str(ROOT / "scripts" / "maps" / "build_recording_viewer.py")])
     ok = all(item["returncode"] == 0 for item in commands)
@@ -684,8 +896,14 @@ def handle_recording_data(query: dict[str, list[str]]) -> dict[str, Any]:
         run_command([sys.executable, script_path("maps", "build_recording_viewer.py")])
     if not data_path.is_file():
         raise FileNotFoundError(f"Viewer data not found for {session_dir.name}")
-    payload = json.loads(data_path.read_text(encoding="utf-8"))
-    return {"ok": True, "recording": session_dir.name, "layer_names": LAYER_NAMES, "data": payload}
+    # Do not re-parse/re-dump multi-decade-MB GeoJSON here — that blocked the server
+    # for ~50s on IMU rides and made the dashboard look empty.
+    return {
+        "ok": True,
+        "recording": session_dir.name,
+        "layer_names": LAYER_NAMES,
+        "data_url": f"data/{safe_id(session_dir.name)}.json",
+    }
 
 
 class ViewerHandler(SimpleHTTPRequestHandler):
@@ -732,6 +950,9 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 return
             if parsed.path == "/api/imu-trajectory":
                 write_json(self, handle_imu_trajectory(payload))
+                return
+            if parsed.path == "/api/calibrate-imu":
+                write_json(self, handle_calibrate_imu(payload))
                 return
             if parsed.path == "/api/run-step":
                 write_json(self, handle_run_step(payload))

@@ -35,7 +35,7 @@ def imu_duration(path: Path) -> float | None:
         return max(0.0, (last_ts - first_ts) / 1_000_000.0)
     try:
         samples = load_imu(path)
-    except Exception:
+    except BaseException:
         return None
     if len(samples) < 2:
         return None
@@ -123,7 +123,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Assign/convert an in_imu recording to a GNSS recording.")
     sub = parser.add_subparsers(dest="command", required=True)
     list_parser = sub.add_parser("list", help="List IMU/GNSS durations and likely matches")
-    list_parser.add_argument("--source", choices=["bestnav", "fixed_ppk", "dgps"], default="bestnav")
+    list_parser.add_argument("--source", choices=["bestnav", "fixed_ppk", "float_ppk", "dgps", "observation"], default="bestnav")
     assign_parser = sub.add_parser("assign", help="Copy and convert one IMU recording into out/<recording>/imu/")
     assign_parser.add_argument("recording", help="GNSS recording output directory or name inside out/")
     assign_parser.add_argument("imu", help="IMU file path or file name inside in_imu/")

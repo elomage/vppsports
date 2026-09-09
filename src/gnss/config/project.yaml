@@ -1,3 +1,5 @@
+# DEPRECATED: kept only as a reference for the old process_trip pipeline.
+# Use scripts/process_recording_all.py and config/ppk.yaml instead.
 project_name: "um982_ppk_demo"
 
 inputs:

@@ -38,6 +38,14 @@ class ImuSample:
 
 
 @dataclass
+class AccelBias:
+    ax_mps2: float
+    ay_mps2: float
+    az_mps2: float
+    name: str = ""
+
+
+@dataclass
 class GnssSample:
     time: datetime
     lat: float
@@ -137,7 +145,67 @@ def convert_imu_bin(bin_path: Path, csv_path: Path, sens_ug_per_lsb: float = 19.
             ])
 
 
-def load_imu(path: Path) -> list[ImuSample]:
+def apply_accel_bias(samples: list[ImuSample], bias: AccelBias | None) -> list[ImuSample]:
+    if bias is None:
+        return samples
+    return [
+        ImuSample(
+            sample.seconds,
+            sample.ax_mps2 - bias.ax_mps2,
+            sample.ay_mps2 - bias.ay_mps2,
+            sample.az_mps2 - bias.az_mps2,
+            sample.time,
+        )
+        for sample in samples
+    ]
+
+
+def parse_accel_bias(value: str | None) -> AccelBias | None:
+    if not value:
+        return None
+    parts = [part.strip() for part in value.replace(";", ",").split(",") if part.strip()]
+    if len(parts) != 3:
+        raise SystemExit("--accel-bias must have three comma-separated values: ax,ay,az in m/s^2")
+    try:
+        return AccelBias(float(parts[0]), float(parts[1]), float(parts[2]), "manual")
+    except ValueError as exc:
+        raise SystemExit(f"Invalid --accel-bias values: {value}") from exc
+
+
+def load_accel_bias_profile(path: Path, profile_name: str | None = None) -> AccelBias:
+    if not path.is_file():
+        raise SystemExit(f"Accelerometer bias profile not found: {path}")
+    with path.open("r", newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames:
+            raise SystemExit(f"Accelerometer bias profile has no header: {path}")
+        name_key = find_first_key(reader.fieldnames, ["profile", "name", "profile_name"])
+        ax_key = find_first_key(reader.fieldnames, ["bias_ax_mps2", "ax_bias_mps2", "bias_x_mps2"])
+        ay_key = find_first_key(reader.fieldnames, ["bias_ay_mps2", "ay_bias_mps2", "bias_y_mps2"])
+        az_key = find_first_key(reader.fieldnames, ["bias_az_mps2", "az_bias_mps2", "bias_z_mps2"])
+        if not ax_key or not ay_key or not az_key:
+            raise SystemExit(f"Bias profile needs bias_ax_mps2,bias_ay_mps2,bias_az_mps2 columns: {path}")
+        first: AccelBias | None = None
+        for row in reader:
+            name = str(row.get(name_key) or path.stem).strip() if name_key else path.stem
+            bias = AccelBias(
+                safe_float(row.get(ax_key)) or 0.0,
+                safe_float(row.get(ay_key)) or 0.0,
+                safe_float(row.get(az_key)) or 0.0,
+                name,
+            )
+            if first is None:
+                first = bias
+            if profile_name and name == profile_name:
+                return bias
+        if profile_name:
+            raise SystemExit(f"Bias profile {profile_name!r} not found in {path}")
+        if first is None:
+            raise SystemExit(f"No bias rows found in {path}")
+        return first
+
+
+def load_imu(path: Path, accel_bias: AccelBias | None = None) -> list[ImuSample]:
     csv_path = path
     if path.suffix.lower() == ".bin":
         csv_path = path.with_suffix(".csv")
@@ -166,7 +234,10 @@ def load_imu(path: Path) -> list[ImuSample]:
             samples.append(ImuSample(seconds, ax * scale, ay * scale, az * scale))
     if not samples:
         raise SystemExit(f"No usable IMU rows found in {csv_path}")
-    return sorted(samples, key=lambda sample: sample.seconds)
+    return apply_accel_bias(sorted(samples, key=lambda sample: sample.seconds), accel_bias)
+
+
+GNSS_SOURCES = ("bestnav", "fixed_ppk", "float_ppk", "dgps", "observation")
 
 
 def source_csv(session_dir: Path, source: str) -> Path:
@@ -174,8 +245,12 @@ def source_csv(session_dir: Path, source: str) -> Path:
         return find_receiver_csv(session_dir)
     if source == "fixed_ppk":
         return session_dir / "ppk" / "solution.csv"
+    if source == "float_ppk":
+        return session_dir / "ppk" / "solution_float.csv"
     if source == "dgps":
         return session_dir / "ppk" / "solution_dgps.csv"
+    if source == "observation":
+        return session_dir / "ppk" / "observation_single.csv"
     raise SystemExit(f"Unsupported source: {source}")
 
 
@@ -364,6 +439,32 @@ def signed_forward_accel(sample: ImuSample, point: GnssSample | None, previous_p
     return abs(magnitude) * sign
 
 
+def gnss_speed_mps(point: GnssSample | None, previous_point: GnssSample | None) -> float:
+    if point is not None:
+        return max(0.0, point.speed_mps)
+    if previous_point is not None:
+        return max(0.0, previous_point.speed_mps)
+    return 0.0
+
+
+def drift_corrected_forward_accel(
+    sample: ImuSample,
+    point: GnssSample | None,
+    previous_point: GnssSample | None,
+    *,
+    static_speed_mps: float,
+    residual_gate_mps2: float,
+) -> tuple[float, bool]:
+    """Return (accel, is_static) after residual gate + ZUPT when GNSS speed is near zero."""
+    raw = math.sqrt(sample.ax_mps2 * sample.ax_mps2 + sample.ay_mps2 * sample.ay_mps2 + sample.az_mps2 * sample.az_mps2)
+    residual = max(-6.0, min(6.0, raw - G0))
+    speed = gnss_speed_mps(point, previous_point)
+    is_static = speed <= static_speed_mps or abs(residual) <= residual_gate_mps2
+    if is_static:
+        return 0.0, True
+    return signed_forward_accel(sample, point, previous_point), False
+
+
 def kalman_update(
     state: list[float],
     covariance: list[list[float]],
@@ -400,7 +501,11 @@ def run_filter(
     accel_noise: float,
     gnss_update_period_s: float,
     imu_start_delay_s: float = 0.0,
-) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    *,
+    drift_correct: bool = True,
+    static_speed_mps: float = 0.2,
+    residual_gate_mps2: float = 0.05,
+) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
     start_second = samples[0].seconds + max(0.0, imu_start_delay_s)
     overlap = [
         sample for sample in samples
@@ -420,8 +525,11 @@ def run_filter(
     ref_lat, ref_lon, ref_height = points[0].lat, points[0].lon, points[0].height
     rows: list[dict[str, object]] = []
     dead_rows: list[dict[str, object]] = []
+    corrected_rows: list[dict[str, object]] = []
     dead_e, dead_n = first_gnss.east, first_gnss.north
     dead_ve, dead_vn = 0.0, 0.0
+    corr_e, corr_n = first_gnss.east, first_gnss.north
+    corr_ve, corr_vn = 0.0, 0.0
     previous_time = overlap[0].time
     previous_gnss = first_gnss
     last_update_time = datetime.min.replace(tzinfo=timezone.utc)
@@ -430,15 +538,31 @@ def run_filter(
         assert sample.time is not None
         dt = max(1e-4, min(1.0, (sample.time - previous_time).total_seconds()))
         gnss = interp_gnss(points, sample.time)
-        accel = signed_forward_accel(sample, gnss, previous_gnss)
+        raw_accel = signed_forward_accel(sample, gnss, previous_gnss)
+        if drift_correct:
+            corr_accel, is_static = drift_corrected_forward_accel(
+                sample,
+                gnss,
+                previous_gnss,
+                static_speed_mps=static_speed_mps,
+                residual_gate_mps2=residual_gate_mps2,
+            )
+        else:
+            corr_accel, is_static = raw_accel, False
         heading = math.radians((gnss.heading_deg if gnss else previous_gnss.heading_deg) if previous_gnss else 0.0)
-        ae = accel * math.sin(heading)
-        an = accel * math.cos(heading)
+        raw_ae = raw_accel * math.sin(heading)
+        raw_an = raw_accel * math.cos(heading)
+        ae = corr_accel * math.sin(heading)
+        an = corr_accel * math.cos(heading)
 
+        # Kalman prediction uses drift-corrected accel when enabled.
         state[0] += state[2] * dt + 0.5 * ae * dt * dt
         state[1] += state[3] * dt + 0.5 * an * dt * dt
         state[2] += ae * dt
         state[3] += an * dt
+        if drift_correct and is_static:
+            state[2] = 0.0
+            state[3] = 0.0
 
         f = [[1.0, 0.0, dt, 0.0], [0.0, 1.0, 0.0, dt], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
         covariance = [[sum(f[r][m] * covariance[m][n] for m in range(4)) for n in range(4)] for r in range(4)]
@@ -450,10 +574,21 @@ def run_filter(
         covariance[2][2] += q_vel
         covariance[3][3] += q_vel
 
-        dead_e += dead_ve * dt + 0.5 * ae * dt * dt
-        dead_n += dead_vn * dt + 0.5 * an * dt * dt
-        dead_ve += ae * dt
-        dead_vn += an * dt
+        # Raw IMU diagnostic (no drift correction).
+        dead_e += dead_ve * dt + 0.5 * raw_ae * dt * dt
+        dead_n += dead_vn * dt + 0.5 * raw_an * dt * dt
+        dead_ve += raw_ae * dt
+        dead_vn += raw_an * dt
+
+        # Drift-corrected IMU-only trajectory.
+        if is_static:
+            corr_ve = 0.0
+            corr_vn = 0.0
+        else:
+            corr_e += corr_ve * dt + 0.5 * ae * dt * dt
+            corr_n += corr_vn * dt + 0.5 * an * dt * dt
+            corr_ve += ae * dt
+            corr_vn += an * dt
 
         gnss_used = False
         if gnss and (sample.time - last_update_time).total_seconds() >= gnss_update_period_s:
@@ -464,6 +599,7 @@ def run_filter(
 
         lat, lon, height = enu_to_llh(state[0], state[1], ref_lat, ref_lon, ref_height)
         dead_lat, dead_lon, dead_height = enu_to_llh(dead_e, dead_n, ref_lat, ref_lon, ref_height)
+        corr_lat, corr_lon, corr_height = enu_to_llh(corr_e, corr_n, ref_lat, ref_lon, ref_height)
         rows.append({
             "time": sample.time.isoformat(),
             "source": source,
@@ -475,6 +611,8 @@ def run_filter(
             "ve_mps": f"{state[2]:.4f}",
             "vn_mps": f"{state[3]:.4f}",
             "gnss_used": "1" if gnss_used else "0",
+            "drift_corrected": "1" if drift_correct else "0",
+            "zupt": "1" if is_static else "0",
         })
         dead_rows.append({
             "time": sample.time.isoformat(),
@@ -484,8 +622,18 @@ def run_filter(
             "east_m": f"{dead_e:.3f}",
             "north_m": f"{dead_n:.3f}",
         })
+        corrected_rows.append({
+            "time": sample.time.isoformat(),
+            "lat": f"{corr_lat:.10f}",
+            "lon": f"{corr_lon:.10f}",
+            "height_m": f"{corr_height:.3f}",
+            "east_m": f"{corr_e:.3f}",
+            "north_m": f"{corr_n:.3f}",
+            "zupt": "1" if is_static else "0",
+            "forward_accel_mps2": f"{corr_accel:.6f}",
+        })
         previous_time = sample.time
-    return rows, dead_rows
+    return rows, dead_rows, corrected_rows
 
 
 def write_rows(path: Path, rows: list[dict[str, object]]) -> None:
@@ -519,7 +667,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Calculate a GNSS+IMU Kalman trajectory.")
     parser.add_argument("recording", help="GNSS recording output directory or name inside out/")
     parser.add_argument("--imu", required=True, type=Path, help="IMU .BIN or CSV file")
-    parser.add_argument("--source", choices=["bestnav", "fixed_ppk", "dgps"], default="fixed_ppk")
+    parser.add_argument("--source", choices=list(GNSS_SOURCES), default="fixed_ppk")
     parser.add_argument("--time-offset-s", type=float, help="IMU seconds are placed at GNSS start + offset + imu seconds")
     parser.add_argument("--imu-start-utc", help="Absolute UTC time for IMU second zero, e.g. 2026-05-10T10:56:07Z")
     parser.add_argument("--auto-align", action="store_true", help="Estimate IMU/GNSS time offset from motion correlation")
@@ -527,11 +675,18 @@ def main() -> int:
     parser.add_argument("--align-padding-s", type=float, default=30.0)
     parser.add_argument("--position-sigma-m", type=float, default=0.6)
     parser.add_argument("--accel-noise", type=float, default=2.0)
+    parser.add_argument("--accel-bias", help="Manual accelerometer bias ax,ay,az in m/s^2, subtracted from IMU samples")
+    parser.add_argument("--accel-bias-profile", type=Path, help="CSV profile with bias_ax_mps2,bias_ay_mps2,bias_az_mps2 columns")
+    parser.add_argument("--accel-bias-name", help="Profile name to use when --accel-bias-profile has multiple rows")
     parser.add_argument("--gnss-update-period-s", type=float, default=0.05)
     parser.add_argument("--imu-start-delay-s", type=float, default=0.0, help="Skip this many seconds from IMU start before starting the trajectory")
+    parser.add_argument("--drift-correct", action=argparse.BooleanOptionalAction, default=True, help="Apply residual gate + ZUPT before Kalman / corrected IMU path")
+    parser.add_argument("--static-speed-mps", type=float, default=0.2, help="GNSS speed at or below this is treated as stationary for ZUPT")
+    parser.add_argument("--accel-residual-gate-mps2", type=float, default=0.05, help="|‖a‖−g| at or below this is treated as zero accel")
     parser.add_argument("--dead-only", action="store_true", help="Write only the IMU dead-reckoning trajectory, not the fused Kalman CSV")
     parser.add_argument("--output", type=Path, help="Output fused CSV path")
-    parser.add_argument("--dead-output", type=Path, help="Output IMU diagnostic trajectory CSV path")
+    parser.add_argument("--dead-output", type=Path, help="Output raw IMU diagnostic trajectory CSV path")
+    parser.add_argument("--corrected-output", type=Path, help="Output drift-corrected IMU trajectory CSV path")
     parser.add_argument("--update-viewer", action="store_true", help="Rebuild viewer/ after writing outputs")
     args = parser.parse_args()
 
@@ -539,7 +694,12 @@ def main() -> int:
     imu_dir = output_subdir(session_dir, "imu")
     imu_csv = copy_or_convert_imu(args.imu.resolve(), imu_dir)
     gnss = load_gnss(source_csv(session_dir, args.source))
-    imu = load_imu(imu_csv)
+    accel_bias = parse_accel_bias(args.accel_bias)
+    if args.accel_bias_profile:
+        if accel_bias is not None:
+            raise SystemExit("Use either --accel-bias or --accel-bias-profile, not both.")
+        accel_bias = load_accel_bias_profile(args.accel_bias_profile, args.accel_bias_name)
+    imu = load_imu(imu_csv, accel_bias)
     offset, score = assign_times(
         gnss,
         imu,
@@ -549,7 +709,7 @@ def main() -> int:
         args.align_step_s,
         args.align_padding_s,
     )
-    rows, dead_rows = run_filter(
+    rows, dead_rows, corrected_rows = run_filter(
         gnss,
         imu,
         args.source,
@@ -557,14 +717,20 @@ def main() -> int:
         args.accel_noise,
         args.gnss_update_period_s,
         args.imu_start_delay_s,
+        drift_correct=args.drift_correct,
+        static_speed_mps=args.static_speed_mps,
+        residual_gate_mps2=args.accel_residual_gate_mps2,
     )
-    output = args.output or imu_dir / f"kalman_{args.source}_{imu_csv.stem}.csv"
-    dead_output = args.dead_output or imu_dir / f"imu_dead_reckoning_{args.source}_{imu_csv.stem}.csv"
+    source_label = args.source.replace("_ppk", "")
+    output = args.output or imu_dir / f"kalman_{source_label}_{imu_csv.stem}.csv"
+    dead_output = args.dead_output or imu_dir / f"imu_dead_reckoning_{source_label}_{imu_csv.stem}.csv"
+    corrected_output = args.corrected_output or imu_dir / f"imu_drift_corrected_{source_label}_{imu_csv.stem}.csv"
     if not args.dead_only:
         write_rows(output, rows)
     write_rows(dead_output, dead_rows)
+    write_rows(corrected_output, corrected_rows)
     report_prefix = "imu_dead_reckoning" if args.dead_only else "kalman"
-    report = imu_dir / f"{report_prefix}_{args.source}_{imu_csv.stem}_report.txt"
+    report = imu_dir / f"{report_prefix}_{source_label}_{imu_csv.stem}_report.txt"
     report.write_text(
         "\n".join([
             f"recording={session_dir}",
@@ -572,18 +738,26 @@ def main() -> int:
             f"gnss_source={args.source}",
             f"time_offset_s={offset:.3f}",
             f"imu_start_delay_s={args.imu_start_delay_s:.3f}",
+            f"accel_bias_name={'' if accel_bias is None else accel_bias.name}",
+            f"accel_bias_mps2={'' if accel_bias is None else f'{accel_bias.ax_mps2:.8f},{accel_bias.ay_mps2:.8f},{accel_bias.az_mps2:.8f}'}",
+            f"drift_correct={1 if args.drift_correct else 0}",
+            f"static_speed_mps={args.static_speed_mps:.3f}",
+            f"accel_residual_gate_mps2={args.accel_residual_gate_mps2:.4f}",
             f"auto_align_score={'' if score is None else f'{score:.4f}'}",
-            f"overlap_rows={len(rows)}",
+            f"overlap_rows={len(rows) if rows else len(dead_rows)}",
             f"kalman_csv={'' if args.dead_only else output}",
             f"imu_dead_reckoning_csv={dead_output}",
+            f"imu_drift_corrected_csv={corrected_output}",
         ]),
         encoding="utf-8",
     )
     if not args.dead_only:
         print(f"Wrote Kalman trajectory: {output}")
     print(f"Wrote IMU diagnostic trajectory: {dead_output}")
+    print(f"Wrote IMU drift-corrected trajectory: {corrected_output}")
     print(f"Time offset: {offset:.3f} s" + (f" (correlation {score:.4f})" if score is not None else ""))
     print(f"IMU start delay: {args.imu_start_delay_s:.3f} s")
+    print(f"Drift correct: {'on' if args.drift_correct else 'off'}")
     if score is not None and score < 0.20:
         print("Warning: auto alignment confidence is low; compare with --time-offset-s 0 or set --imu-start-utc manually.")
     print(f"Report: {report}")

@@ -162,32 +162,62 @@
           <label><span class="label">IMU recording</span><select id="imuSelect"></select></label>
           <button id="assignBtn" type="button">Attach selected IMU</button>
           <div class="meta" id="suggestion"></div>
-          <div class="label">Kalman sources</div>
-          <div class="checks">
-            <label class="check"><input id="srcBestnav" type="checkbox" value="bestnav" checked>Bestnav</label>
-            <label class="check"><input id="srcFixed" type="checkbox" value="fixed_ppk">Fixed PPK</label>
-            <label class="check"><input id="srcDgps" type="checkbox" value="dgps">DGPS</label>
+
+          <div class="label" style="margin-top:10px">1) Calibrate IMU filter from static ride</div>
+          <div class="meta">Only to <b>create</b> a new profile. Already have <code>from_static_brauciens_5</code>? Skip this — pick it in step 2.</div>
+          <div class="grid2">
+            <label><span class="label">New profile name</span><input id="newBiasProfile" type="text" placeholder="from_static_brauciens_5"></label>
+            <label><span class="label">Static window s</span><input id="biasWindow" type="text" value="2,60" placeholder="start,end optional"></label>
           </div>
-          <button id="allSourcesBtn" type="button">Select available sources</button>
+          <button id="calibrateBiasBtn" type="button">Calibrate from static recording</button>
+          <div class="meta" id="profileSummary"></div>
+
+          <div class="label" style="margin-top:12px">2) Process IMU alone (raw → filtered)</div>
+          <div class="meta">Select profile below, then press Process IMU. Writes map layers: IMU raw + IMU drift-corrected.</div>
+          <label><span class="label">IMU processing profile</span><select id="accelBiasProfile"></select></label>
+          <div class="label" style="margin-top:8px">Filter options (auto-filled from profile)</div>
+          <div class="grid3">
+            <label class="check" style="align-self:end"><input id="driftCorrect" type="checkbox" checked>Drift correct (ZUPT)</label>
+            <label><span class="label">Static speed m/s</span><input id="staticSpeed" type="number" step="0.05" value="0.2"></label>
+            <label><span class="label">Residual gate</span><input id="residualGate" type="number" step="0.01" value="0.05"></label>
+          </div>
+          <div class="grid2">
+            <label><span class="label">IMU trajectory anchor (GNSS for heading/start)</span><select id="imuTrajectorySource"><option value="bestnav">Receiver (raw)</option><option value="fixed_ppk">Fixed PPK</option><option value="float_ppk">Float PPK</option><option value="dgps">DGPS</option><option value="observation">Observation</option></select></label>
+            <label><span class="label">Start delays s</span><input id="imuStartDelays" type="text" value="0" placeholder="0"></label>
+          </div>
+          <button id="imuTrajectoryBtn" class="primary" type="button">Process IMU (raw + drift-corrected)</button>
+
+          <div class="label" style="margin-top:12px">3) Kalman fusion (pick GNSS + pick IMU)</div>
+          <div class="meta">GNSS: raw receiver or PPK. IMU: raw or already-filtered settings from the profile.</div>
+          <div class="label">GNSS input</div>
+          <div class="checks">
+            <label class="check"><input id="srcBestnav" type="checkbox" value="bestnav" checked>Receiver raw (bestnav)</label>
+            <label class="check"><input id="srcFixed" type="checkbox" value="fixed_ppk">Fixed PPK</label>
+            <label class="check"><input id="srcFloat" type="checkbox" value="float_ppk">Float PPK</label>
+            <label class="check"><input id="srcDgps" type="checkbox" value="dgps">DGPS</label>
+            <label class="check"><input id="srcObservation" type="checkbox" value="observation">Observation single</label>
+          </div>
+          <button id="allSourcesBtn" type="button">Select available GNSS</button>
+          <label><span class="label">IMU input for Kalman</span>
+            <select id="imuKalmanMode">
+              <option value="processed" selected>Processed (apply profile / drift-correct)</option>
+              <option value="raw">Raw IMU (no bias, no ZUPT)</option>
+            </select>
+          </label>
+          <div class="grid3">
+            <label><span class="label">GNSS sigma</span><input id="positionSigma" type="number" step="0.1" value="0.6"></label>
+            <label><span class="label">Accel noise</span><input id="accelNoise" type="number" step="0.1" value="2.0"></label>
+            <label><span class="label">Update s</span><input id="updatePeriod" type="number" step="0.01" value="0.05"></label>
+          </div>
           <label><span class="label">Alignment</span><select id="alignmentMode"><option value="offset">manual offset</option><option value="utc">known IMU UTC start</option><option value="auto">auto align</option></select></label>
           <div class="grid2">
             <label><span class="label">Offset seconds</span><input id="timeOffset" type="number" step="0.1" value="0"></label>
             <label><span class="label">IMU start UTC</span><input id="imuStartUtc" type="text" placeholder="2026-05-21T12:26:49Z"></label>
           </div>
           <div class="grid2">
-            <label><span class="label">IMU trajectory anchor</span><select id="imuTrajectorySource"><option value="bestnav">Bestnav</option><option value="fixed_ppk">Fixed PPK</option><option value="dgps">DGPS</option></select></label>
-            <label><span class="label">Start delays s</span><input id="imuStartDelays" type="text" value="0" placeholder="0, 1, 2.5"></label>
-          </div>
-          <div class="grid2">
             <label><span class="label">Auto step s</span><input id="alignStep" type="number" step="0.1" value="0.5"></label>
             <label><span class="label">Padding s</span><input id="alignPadding" type="number" step="1" value="30"></label>
           </div>
-          <div class="grid3">
-            <label><span class="label">GNSS sigma</span><input id="positionSigma" type="number" step="0.1" value="0.6"></label>
-            <label><span class="label">Accel noise</span><input id="accelNoise" type="number" step="0.1" value="2.0"></label>
-            <label><span class="label">Update s</span><input id="updatePeriod" type="number" step="0.01" value="0.05"></label>
-          </div>
-          <button id="imuTrajectoryBtn" type="button">Create IMU trajectory</button>
           <button id="calculateBtn" class="primary" type="button">Calculate Kalman</button>
         </div>
       </div>
@@ -244,15 +274,25 @@
 
     const layerLabels = {
       receiver: "Receiver", ppk: "PPK fixed", float: "PPK float", dgps: "PPK DGPS",
-      observation: "Observation single", kalman: "Kalman GNSS+IMU", imu_dead_reckoning: "IMU diagnostic",
-      matches: "Fixed differences", float_matches: "Float differences", dgps_matches: "DGPS differences",
+      observation: "Observation single",
+      kalman_bestnav: "Kalman · Receiver", kalman_fixed: "Kalman · Fixed",
+      kalman_float: "Kalman · Float", kalman_dgps: "Kalman · DGPS",
+      kalman_observation: "Kalman · Observation",
+      imu_dead_reckoning: "IMU raw",
+      imu_drift_corrected: "IMU drift-corrected",
+      matches: "Fixed differences", float_matches: "Float differences",
+      dgps_matches: "DGPS differences", observation_matches: "Observation differences",
       receiver_headings: "Receiver headings", ppk_headings: "PPK headings", float_headings: "Float headings",
       dgps_headings: "DGPS headings", observation_headings: "Observation headings"
     };
     const defaultColors = {
       receiver: "#1f77b4", ppk: "#d62728", float: "#9467bd", dgps: "#ff7f0e",
-      observation: "#2ca02c", kalman: "#111827", imu_dead_reckoning: "#00a6a6",
-      matches: "#f2994a", float_matches: "#b07aa1", dgps_matches: "#ffbf00",
+      observation: "#2ca02c",
+      kalman_bestnav: "#111827", kalman_fixed: "#3b3b3b", kalman_float: "#4b5563",
+      kalman_dgps: "#374151", kalman_observation: "#1f2937",
+      imu_dead_reckoning: "#00a6a6",
+      imu_drift_corrected: "#0b6e4f",
+      matches: "#f2994a", float_matches: "#b07aa1", dgps_matches: "#ffbf00", observation_matches: "#86bf6b",
       receiver_headings: "#1f77b4", ppk_headings: "#d62728", float_headings: "#9467bd",
       dgps_headings: "#ff7f0e", observation_headings: "#2ca02c"
     };
@@ -268,15 +308,40 @@
     let currentTimeLimit = null;
     let busyStartedAt = 0;
     let busyTimer = null;
+    let busyOwner = null;
+    let recordingLoadToken = 0;
+    let recordingLoadController = null;
 
-    function sourceLabel(source) { return { bestnav: "Bestnav", fixed_ppk: "Fixed PPK", dgps: "DGPS" }[source] || source; }
+    function sourceLabel(source) {
+      return {
+        bestnav: "Receiver",
+        fixed_ppk: "Fixed PPK",
+        float_ppk: "Float PPK",
+        dgps: "DGPS",
+        observation: "Observation"
+      }[source] || source;
+    }
     function fmtDuration(value) { return value == null ? "?" : `${Number(value).toFixed(1)} s`; }
     function setControlsDisabled(disabled) {
       document.querySelectorAll("button, input, select").forEach(control => {
+        // Keep search + recording list usable so a slow IMU load can be cancelled by picking another ride.
+        if (control.closest("#recordings") || control.id === "search") return;
         control.disabled = disabled;
       });
     }
-    function setBusy(title, detail = "") {
+
+    function clearMapLayers() {
+      Object.values(layerState).forEach(item => {
+        if (item.layer && map.hasLayer(item.layer)) map.removeLayer(item.layer);
+      });
+      layerState = {};
+      els.layers.innerHTML = "";
+      els.mapLegend.innerHTML = "";
+      els.mapLegend.classList.remove("visible");
+      els.stats.innerHTML = "";
+    }
+    function setBusy(title, detail = "", owner = null) {
+      busyOwner = owner;
       busyStartedAt = Date.now();
       els.busyTitle.textContent = title;
       els.busyDetail.textContent = detail;
@@ -290,7 +355,9 @@
         els.busyElapsed.textContent = `Elapsed ${elapsed}s`;
       }, 500);
     }
-    function clearBusy(message = "") {
+    function clearBusy(message = "", owner = null) {
+      if (owner != null && busyOwner != null && owner !== busyOwner) return;
+      busyOwner = null;
       window.clearInterval(busyTimer);
       busyTimer = null;
       document.body.classList.remove("busy");
@@ -301,6 +368,7 @@
     }
     async function api(path, options = {}) {
       const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
+      if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || `Request failed: ${response.status}`);
       if (data.ok === false && data.error) throw new Error(data.error);
@@ -328,9 +396,88 @@
       els.imuSelect.innerHTML = options.map(imu => `<option value="${imu.path}">${imu.group}: ${imu.name} (${fmtDuration(imu.duration_s)})</option>`).join("");
       updateSuggestion();
     }
+    function processingProfiles() {
+      return state?.imu_processing_profiles?.length ? state.imu_processing_profiles : (state?.imu_bias_profiles || []);
+    }
+    function findProfile(name) {
+      return processingProfiles().find(profile => profile.profile === name) || null;
+    }
+    function applyProfileToForm(profile) {
+      if (!profile) {
+        els.profileSummary.textContent = "";
+        return;
+      }
+      els.driftCorrect.checked = profile.drift_correct !== false;
+      if (profile.static_speed_mps != null) els.staticSpeed.value = Number(profile.static_speed_mps).toFixed(3);
+      if (profile.accel_residual_gate_mps2 != null) els.residualGate.value = Number(profile.accel_residual_gate_mps2).toFixed(4);
+      if (profile.position_sigma_m != null) els.positionSigma.value = Number(profile.position_sigma_m);
+      if (profile.accel_noise != null) els.accelNoise.value = Number(profile.accel_noise);
+      if (profile.gnss_update_period_s != null) els.updatePeriod.value = Number(profile.gnss_update_period_s);
+      const bias = [profile.bias_ax_mps2, profile.bias_ay_mps2, profile.bias_az_mps2]
+        .map(value => value == null ? "?" : Number(value).toFixed(4)).join(", ");
+      const gate = profile.accel_residual_gate_mps2 == null ? "?" : Number(profile.accel_residual_gate_mps2).toFixed(4);
+      const speed = profile.static_speed_mps == null ? "?" : Number(profile.static_speed_mps).toFixed(3);
+      const rms = profile.rms_residual_mps2 == null ? "?" : Number(profile.rms_residual_mps2).toFixed(4);
+      els.profileSummary.textContent = `Active: ${profile.profile} | bias [${bias}] | gate ${gate} | ZUPT speed ${speed} | residual RMS ${rms}`;
+    }
+    function renderBiasProfiles() {
+      const current = els.accelBiasProfile.value;
+      const profiles = processingProfiles();
+      const preferred = current || "from_static_brauciens_5";
+      els.accelBiasProfile.innerHTML = `<option value="">No IMU processing profile</option>` + profiles.map(profile => {
+        const rms = profile.rms_residual_mps2 == null ? "n/a" : `${Number(profile.rms_residual_mps2).toFixed(4)} RMS`;
+        const gate = profile.accel_residual_gate_mps2 == null ? "" : `, gate ${Number(profile.accel_residual_gate_mps2).toFixed(3)}`;
+        return `<option value="${profile.profile}">${profile.profile} (${rms}${gate})</option>`;
+      }).join("");
+      if ([...els.accelBiasProfile.options].some(option => option.value === preferred)) els.accelBiasProfile.value = preferred;
+      else if ([...els.accelBiasProfile.options].some(option => option.value === current)) els.accelBiasProfile.value = current;
+      applyProfileToForm(findProfile(els.accelBiasProfile.value));
+    }
+    function imuFilterPayload({ forKalman = false } = {}) {
+      const name = els.accelBiasProfile.value;
+      // Process-IMU always builds filtered trajectory; Kalman may choose raw instead.
+      const mode = forKalman ? (els.imuKalmanMode?.value || "processed") : "processed";
+      if (mode === "raw") {
+        return {
+          imu_mode: "raw",
+          imu_processing_profile: "",
+          accel_bias_profile: "",
+          drift_correct: false,
+          static_speed_mps: Number(els.staticSpeed.value || 0.2),
+          accel_residual_gate_mps2: Number(els.residualGate.value || 0.05),
+          position_sigma_m: Number(els.positionSigma.value || 0.6),
+          accel_noise: Number(els.accelNoise.value || 2),
+          gnss_update_period_s: Number(els.updatePeriod.value || 0.05)
+        };
+      }
+      return {
+        imu_mode: "processed",
+        imu_processing_profile: name,
+        accel_bias_profile: name,
+        drift_correct: els.driftCorrect.checked,
+        static_speed_mps: Number(els.staticSpeed.value || 0.2),
+        accel_residual_gate_mps2: Number(els.residualGate.value || 0.05),
+        position_sigma_m: Number(els.positionSigma.value || 0.6),
+        accel_noise: Number(els.accelNoise.value || 2),
+        gnss_update_period_s: Number(els.updatePeriod.value || 0.05)
+      };
+    }
+    function parseBiasWindow() {
+      const parts = String(els.biasWindow?.value || "").split(/[;,]/).map(item => item.trim()).filter(Boolean);
+      return {
+        start_s: parts[0] || "",
+        end_s: parts[1] || ""
+      };
+    }
     function renderSources() {
       const available = new Set(availableSources(selectedRecording));
-      const mapping = { bestnav: els.srcBestnav, fixed_ppk: els.srcFixed, dgps: els.srcDgps };
+      const mapping = {
+        bestnav: els.srcBestnav,
+        fixed_ppk: els.srcFixed,
+        float_ppk: els.srcFloat,
+        dgps: els.srcDgps,
+        observation: els.srcObservation
+      };
       for (const [source, input] of Object.entries(mapping)) {
         input.disabled = !available.has(source);
         if (!available.has(source)) input.checked = false;
@@ -460,7 +607,7 @@
     }
     function defaultLineStyle(name) {
       return {
-        weight: name.endsWith("_headings") ? 2 : (["matches", "float_matches", "dgps_matches"].includes(name) ? 2 : 4),
+        weight: name.endsWith("_headings") ? 2 : (["matches", "float_matches", "dgps_matches", "observation_matches"].includes(name) ? 2 : 4),
         headingLengthM: 1.5
       };
     }
@@ -511,24 +658,48 @@
     function setLayerPref(name, patch) {
       layerPrefs[name] = { color: layerColor(name), checked: layerChecked(name), ...layerStyle(name), ...(layerPrefs[name] || {}), ...patch };
     }
+    function layerPointMeta(collection) {
+      const features = collection?.features || [];
+      const path = features.find(feature => feature.properties?.kind === "path");
+      const points = path?.properties?.points != null
+        ? Number(path.properties.points) || 0
+        : features.filter(feature => feature.properties?.kind === "point").length || features.length;
+      const markers = path?.properties?.markers != null
+        ? Number(path.properties.markers) || 0
+        : features.filter(feature => feature.properties?.kind === "point").length;
+      return { points, markers };
+    }
+    function formatPointCount(n) {
+      return Number(n || 0).toLocaleString("lv-LV");
+    }
+    function layerCountLabel(collection) {
+      const { points, markers } = layerPointMeta(collection);
+      if (!points) return "0";
+      if (markers && markers < points) return `${formatPointCount(points)} pts · ${formatPointCount(markers)} on map`;
+      return `${formatPointCount(points)} pts`;
+    }
     function layerRowHtml(name, collection, compact = false) {
       const label = layerLabels[name] || name;
       const color = layerColor(name);
       const style = layerStyle(name);
       const checked = layerChecked(name) ? "checked" : "";
-      const count = collection?.features?.length || 0;
+      const countLabel = layerCountLabel(collection);
+      const { points, markers } = layerPointMeta(collection);
+      const title = markers && markers < points
+        ? `${label}: ${formatPointCount(points)} CSV points, ${formatPointCount(markers)} markers drawn`
+        : `${label}: ${formatPointCount(points)} points`;
       if (compact) {
-        return `<label class="legend-row" title="${label}">
+        return `<label class="legend-row" title="${title}">
           <input data-layer-toggle="${name}" type="checkbox" ${checked}>
           <span class="swatch" data-layer-swatch="${name}" style="--layer-color:${color}"></span>
           <span class="legend-name">${label}</span>
-          <span class="meta">${count}</span>
+          <span class="meta">${countLabel}</span>
         </label>`;
       }
-      return `<label class="layer-row">
+      return `<label class="layer-row" title="${title}">
         <input data-layer-toggle="${name}" type="checkbox" ${checked}>
         <span class="swatch" data-layer-swatch="${name}" style="--layer-color:${color}"></span>
-        <span>${label} <span class="meta">(${count})</span></span>
+        <span>${label} <span class="meta">(${countLabel})</span></span>
         <input data-layer-color="${name}" type="color" value="${color}">
         <input data-layer-style="${name}" data-style-field="weight" type="number" min="1" max="14" step="1" value="${style.weight}" title="Line thickness" aria-label="${label} line thickness">
         <input data-layer-style="${name}" data-style-field="headingLengthM" type="number" min="0.1" max="50" step="0.1" value="${style.headingLengthM}" title="Heading length in meters" aria-label="${label} heading length in meters" ${name.endsWith("_headings") ? "" : "disabled hidden"}>
@@ -565,7 +736,11 @@
       }
     }
     function renderLayers() {
-      if (!recordingData) { els.layers.innerHTML = ""; els.mapLegend.innerHTML = ""; els.mapLegend.classList.remove("visible"); return; }
+      if (!recordingData) {
+        clearMapLayers();
+        updateTimeline();
+        return;
+      }
       const rows = Object.entries(recordingData.layers || {}).filter(([, collection]) => collection?.features?.length);
       els.layers.innerHTML = rows.map(([name, collection]) => layerRowHtml(name, collection)).join("");
       els.mapLegend.innerHTML = rows.length ? `<div class="legend-title">Trajectories</div>${rows.map(([name, collection]) => layerRowHtml(name, collection, true)).join("")}` : "";
@@ -581,40 +756,83 @@
       const bounds = group.getBounds();
       if (bounds.isValid()) map.fitBounds(bounds, { padding: [28, 28], maxZoom: 21 });
     }
-    async function loadRecordingData() {
+    async function loadRecordingData(expectedName = selectedRecording?.name, { signal } = {}) {
+      const token = ++recordingLoadToken;
       recordingData = null;
+      clearMapLayers();
       updateTimeline();
-      const data = await api(`/api/recording-data?recording=${encodeURIComponent(selectedRecording.name)}`);
-      recordingData = data.data;
+      if (!expectedName) return false;
+      const meta = await api(`/api/recording-data?recording=${encodeURIComponent(expectedName)}`, { signal });
+      if (token !== recordingLoadToken) return false;
+      if (selectedRecording?.name !== expectedName) return false;
+      if (meta.recording && meta.recording !== expectedName) return false;
+      const dataUrl = meta.data_url || `data/${expectedName}.json`;
+      const response = await fetch(`${dataUrl}${dataUrl.includes("?") ? "&" : "?"}_=${Date.now()}`, {
+        cache: "no-store",
+        signal
+      });
+      if (!response.ok) throw new Error(`Could not load map data (${response.status})`);
+      const payload = await response.json();
+      if (token !== recordingLoadToken) return false;
+      if (selectedRecording?.name !== expectedName) return false;
+      recordingData = payload;
       renderLayers();
       els.stats.innerHTML = Object.entries(selectedRecording.stats || {}).slice(0, 8).map(([key, value]) => `<div><span>${key}</span><strong>${JSON.stringify(value)}</strong></div>`).join("");
+      return true;
     }
     async function selectRecording(name) {
+      if (recordingLoadController) recordingLoadController.abort();
+      recordingLoadController = new AbortController();
+      const signal = recordingLoadController.signal;
       selectedRecording = state.recordings.find(recording => recording.name === name) || null;
       renderRecordings(); renderImus(); renderSources(); renderResults();
       if (!selectedRecording) {
+        recordingData = null;
+        clearMapLayers();
+        updateTimeline();
         els.status.textContent = "Choose a recording.";
         return;
       }
-      setBusy("Loading recording", selectedRecording.name);
+      const expectedName = selectedRecording.name;
+      setBusy("Loading recording", expectedName, expectedName);
       try {
-        await loadRecordingData();
-        clearBusy(selectedRecording.name);
+        const applied = await loadRecordingData(expectedName, { signal });
+        if (applied) clearBusy(expectedName, expectedName);
+        else if (selectedRecording?.name === expectedName) clearBusy(expectedName, expectedName);
       } catch (error) {
-        clearBusy(error.message);
+        if (error?.name === "AbortError") return;
+        clearBusy(error.message, expectedName);
       }
     }
     async function refreshState(preserve = true) {
+      if (recordingLoadController) recordingLoadController.abort();
+      recordingLoadController = new AbortController();
+      const signal = recordingLoadController.signal;
       const previous = selectedRecording?.name;
-      setBusy("Refreshing dashboard", "Reading recordings, IMU files, bases, and viewer data");
-      state = await api("/api/state");
-      selectedRecording = previous && preserve ? state.recordings.find(recording => recording.name === previous) : state.recordings[0];
-      renderBases(); renderRecordings(); renderImus(); renderSources(); renderResults();
-      if (selectedRecording) await loadRecordingData();
-      clearBusy(selectedRecording ? selectedRecording.name : "No recordings found.");
+      const owner = `refresh:${Date.now()}`;
+      setBusy("Refreshing dashboard", "Reading recordings, IMU files, bases, and viewer data", owner);
+      try {
+        state = await api("/api/state", { signal });
+        selectedRecording = previous && preserve ? state.recordings.find(recording => recording.name === previous) : state.recordings[0];
+        renderBases(); renderRecordings(); renderImus(); renderBiasProfiles(); renderSources(); renderResults();
+        if (selectedRecording) {
+          const applied = await loadRecordingData(selectedRecording.name, { signal });
+          if (!applied && selectedRecording?.name !== previous) {
+            // A newer selectRecording took over.
+            return;
+          }
+        } else {
+          recordingData = null;
+          clearMapLayers();
+        }
+        clearBusy(selectedRecording ? selectedRecording.name : "No recordings found.", owner);
+      } catch (error) {
+        if (error?.name === "AbortError") return;
+        clearBusy(error.message, owner);
+      }
     }
     function selectedSources() {
-      return [els.srcBestnav, els.srcFixed, els.srcDgps].filter(input => input.checked && !input.disabled).map(input => input.value);
+      return [els.srcBestnav, els.srcFixed, els.srcFloat, els.srcDgps, els.srcObservation].filter(input => input.checked && !input.disabled).map(input => input.value);
     }
     function commandLog(results) {
       return results.map(item => [item.command.join(" "), item.stdout?.trim(), item.stderr?.trim()].filter(Boolean).join("\n")).join("\n\n");
@@ -647,24 +865,83 @@
       if (!selectedRecording) return;
       const sources = selectedSources();
       if (!sources.length) { els.status.textContent = "Choose at least one GNSS source."; return; }
-      setBusy("Calculating Kalman", `${selectedRecording.name}: ${sources.map(sourceLabel).join(", ")}`);
+      const owner = `calculate:${Date.now()}`;
+      setBusy("Calculating Kalman", `${selectedRecording.name}: ${sources.map(sourceLabel).join(", ")}`, owner);
       try {
-        const result = await api("/api/calculate", { method: "POST", body: JSON.stringify({ recording: selectedRecording.name, imu: els.imuSelect.value, sources, alignment_mode: els.alignmentMode.value, time_offset_s: Number(els.timeOffset.value || 0), imu_start_utc: els.imuStartUtc.value.trim(), align_step_s: Number(els.alignStep.value || 0.5), align_padding_s: Number(els.alignPadding.value || 30), position_sigma_m: Number(els.positionSigma.value || 0.6), accel_noise: Number(els.accelNoise.value || 2), gnss_update_period_s: Number(els.updatePeriod.value || 0.05) }) });
+        const result = await api("/api/calculate", {
+          method: "POST",
+          body: JSON.stringify({
+            recording: selectedRecording.name,
+            imu: els.imuSelect.value,
+            sources,
+            alignment_mode: els.alignmentMode.value,
+            time_offset_s: Number(els.timeOffset.value || 0),
+            imu_start_utc: els.imuStartUtc.value.trim(),
+            align_step_s: Number(els.alignStep.value || 0.5),
+            align_padding_s: Number(els.alignPadding.value || 30),
+            ...imuFilterPayload({ forKalman: true })
+          })
+        });
         els.log.textContent = commandLog(result.commands);
         await refreshState(true);
-        clearBusy(result.ok ? "Kalman finished." : "Kalman finished with errors.");
-      } catch (error) { clearBusy(error.message); }
+        clearBusy(result.ok ? "Kalman finished." : "Kalman finished with errors — see Results log.", owner);
+      } catch (error) { clearBusy(error.message, owner); }
     }
     async function createImuTrajectory() {
       if (!selectedRecording) return;
       const delays = parseDelays();
       if (!delays.length) { els.status.textContent = "Enter at least one start delay."; return; }
-      setBusy("Creating IMU trajectory", `${selectedRecording.name}: delays ${delays.join(", ")} s`);
+      if (!els.accelBiasProfile.value) {
+        els.status.textContent = "Select IMU processing profile (e.g. from_static_brauciens_5) in step 2.";
+        return;
+      }
+      const owner = `imu:${Date.now()}`;
+      setBusy("Processing IMU", `${selectedRecording.name}: raw + drift-corrected (${els.accelBiasProfile.value})`, owner);
       try {
-        const result = await api("/api/imu-trajectory", { method: "POST", body: JSON.stringify({ recording: selectedRecording.name, imu: els.imuSelect.value, source: els.imuTrajectorySource.value, alignment_mode: els.alignmentMode.value, time_offset_s: Number(els.timeOffset.value || 0), imu_start_utc: els.imuStartUtc.value.trim(), align_step_s: Number(els.alignStep.value || 0.5), align_padding_s: Number(els.alignPadding.value || 30), position_sigma_m: Number(els.positionSigma.value || 0.6), accel_noise: Number(els.accelNoise.value || 2), gnss_update_period_s: Number(els.updatePeriod.value || 0.05), start_delays_s: delays }) });
+        const result = await api("/api/imu-trajectory", {
+          method: "POST",
+          body: JSON.stringify({
+            recording: selectedRecording.name,
+            imu: els.imuSelect.value,
+            source: els.imuTrajectorySource.value,
+            alignment_mode: els.alignmentMode.value,
+            time_offset_s: Number(els.timeOffset.value || 0),
+            imu_start_utc: els.imuStartUtc.value.trim(),
+            align_step_s: Number(els.alignStep.value || 0.5),
+            align_padding_s: Number(els.alignPadding.value || 30),
+            start_delays_s: delays,
+            ...imuFilterPayload({ forKalman: false })
+          })
+        });
         els.log.textContent = commandLog(result.commands);
         await refreshState(true);
-        clearBusy(result.ok ? "IMU trajectory finished." : "IMU trajectory finished with errors.");
+        clearBusy(result.ok ? "IMU processed: raw + drift-corrected written. Toggle them on the map." : "IMU processing failed — see Results log.", owner);
+      } catch (error) { clearBusy(error.message, owner); }
+    }
+    async function calibrateBias() {
+      const profile = els.newBiasProfile.value.trim();
+      if (!profile) { els.status.textContent = "Enter a new profile name."; return; }
+      if (!els.imuSelect.value) { els.status.textContent = "Choose an IMU recording first."; return; }
+      const window = parseBiasWindow();
+      setBusy("Calibrating IMU processing profile from static", profile);
+      try {
+        const result = await api("/api/calibrate-imu", {
+          method: "POST",
+          body: JSON.stringify({
+            recording: selectedRecording?.name || "",
+            imu: els.imuSelect.value,
+            profile,
+            start_s: window.start_s,
+            end_s: window.end_s
+          })
+        });
+        els.log.textContent = commandLog([result.command]);
+        state.imu_processing_profiles = result.imu_processing_profiles || [];
+        state.imu_bias_profiles = result.imu_bias_profiles || [];
+        renderBiasProfiles();
+        els.accelBiasProfile.value = profile;
+        applyProfileToForm(result.profile || findProfile(profile));
+        clearBusy(result.ok ? `Profile saved: ${profile}. Now select a moving ride and Calculate Kalman.` : "IMU profile calibration failed.");
       } catch (error) { clearBusy(error.message); }
     }
     async function loadResult(result) {
@@ -688,11 +965,13 @@
     els.fitBtn.addEventListener("click", fitVisibleLayers);
     els.imuSelect.addEventListener("change", updateSuggestion);
     els.assignBtn.addEventListener("click", assignSelectedImu);
+    els.calibrateBiasBtn.addEventListener("click", calibrateBias);
+    els.accelBiasProfile.addEventListener("change", () => applyProfileToForm(findProfile(els.accelBiasProfile.value)));
     els.imuTrajectoryBtn.addEventListener("click", createImuTrajectory);
     els.calculateBtn.addEventListener("click", calculate);
     els.timeFilter.addEventListener("input", () => { updateTimeLimit(); drawLayers(); });
     els.timeSlider.addEventListener("input", () => { updateTimeLimit(); drawLayers(); });
-    els.allSourcesBtn.addEventListener("click", () => [els.srcBestnav, els.srcFixed, els.srcDgps].forEach(input => input.checked = !input.disabled));
+    els.allSourcesBtn.addEventListener("click", () => [els.srcBestnav, els.srcFixed, els.srcFloat, els.srcDgps, els.srcObservation].forEach(input => input.checked = !input.disabled));
     refreshState(false).catch(error => { clearBusy(error.message); });
   </script>
 </body>

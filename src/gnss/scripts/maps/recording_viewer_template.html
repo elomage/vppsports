@@ -26,11 +26,26 @@
       background: #fff; color: #1d252c; font-size: 12px;
     }
     .field { margin-bottom: 14px; }
-    .toggles { display: grid; gap: 8px; margin: 14px 0; }
+    .toggles { display: grid; gap: 10px; margin: 14px 0; }
+    .toggle-group {
+      display: grid; gap: 5px; padding: 8px; border: 1px solid #d1d8d4; border-radius: 8px; background: #fff;
+    }
+    .toggle-group.collapsed { gap: 0; }
+    .toggle-group.collapsed .toggle { display: none; }
+    .toggle-group-title {
+      display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 8px; align-items: center;
+      width: 100%; margin: 0; padding: 2px 4px; border: 0; background: transparent; color: #28666e;
+      font: inherit; font-size: 12px; font-weight: 800; letter-spacing: 0.01em; text-align: left; cursor: pointer;
+    }
+    .toggle-group-title:hover { color: #12383c; }
+    .toggle-group-title .swatch { margin-right: 0; }
+    .toggle-group-chevron {
+      color: #61707a; font-size: 11px; font-weight: 800; line-height: 1;
+    }
     .toggle {
       display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: center;
-      min-height: 34px; padding: 7px 8px; border: 1px solid #d1d8d4; border-radius: 6px; background: #fff;
-      font-size: 14px;
+      min-height: 30px; padding: 5px 8px; border: 1px solid #e4e9e6; border-radius: 6px; background: #fbfaf7;
+      font-size: 13px;
     }
     .toggle input { width: 16px; height: 16px; margin: 0; }
     .toggle[aria-disabled="true"] { opacity: 0.45; }
@@ -70,22 +85,36 @@
       border: 1px solid #d1d8d4; border-radius: 6px; background: #fff; padding: 8px 9px;
     }
     .rec-item.selected { border-color: #28666e; box-shadow: inset 3px 0 0 #28666e; }
+    .rec-header {
+      display: grid; grid-template-columns: minmax(0, 1fr) 28px; gap: 6px; align-items: start;
+    }
     .rec-check {
       display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; align-items: start;
       margin: 0; color: #1d252c; font-size: 13px; cursor: pointer;
     }
     .rec-check input { width: 16px; height: 16px; margin: 0; }
     .rec-name { min-width: 0; overflow-wrap: anywhere; }
+    .rec-expand {
+      width: 28px; height: 26px; border: 1px solid #aeb7b3; border-radius: 5px; background: #fff;
+      color: #1d252c; font-size: 12px; font-weight: 800; line-height: 1; cursor: pointer;
+    }
+    .rec-expand:hover { background: #f3f7f5; }
     .style-grid {
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px;
       margin: 9px 0 0 26px;
     }
+    .rec-item:not(.expanded) .style-grid { display: none; }
     .style-field {
-      display: grid; grid-template-columns: 32px 52px 64px minmax(0, 1fr); gap: 6px; align-items: center;
+      display: grid; grid-template-columns: 32px 52px minmax(0, 1fr); gap: 6px; align-items: center;
       margin: 0; font-size: 11px; font-weight: 700; color: #52606a;
+    }
+    .style-field.heading {
+      grid-column: 1 / -1;
+      grid-template-columns: 32px 52px 56px minmax(0, 1fr);
     }
     .style-field[aria-disabled="true"] { opacity: 0.4; }
     .style-field input[hidden] { display: none; }
+    .style-field > span { min-width: 0; overflow-wrap: anywhere; }
     .list-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 8px 0 10px; }
     .list-actions button {
       border: 1px solid #aeb7b3; border-radius: 6px; background: #fff; color: #1d252c;
@@ -212,21 +241,45 @@
         <input id="search" type="search" placeholder="Type date, LOG number, name">
       </div>
       <div class="toggles">
-        <label class="toggle" id="receiverToggle"><input type="checkbox" id="showReceiver" checked><span><span class="swatch" style="background:#1f77b4"></span>Receiver path</span><span class="count" id="receiverCount"></span></label>
-        <label class="toggle" id="ppkToggle"><input type="checkbox" id="showPpk" checked><span><span class="swatch" style="background:#d62728"></span>PPK fixed path</span><span class="count" id="ppkCount"></span></label>
-        <label class="toggle" id="floatToggle"><input type="checkbox" id="showFloat" checked><span><span class="swatch" style="background:#9467bd"></span>PPK float path</span><span class="count" id="floatCount"></span></label>
-        <label class="toggle" id="dgpsToggle"><input type="checkbox" id="showDgps" checked><span><span class="swatch" style="background:#ff7f0e"></span>PPK DGPS path</span><span class="count" id="dgpsCount"></span></label>
-        <label class="toggle" id="observationToggle"><input type="checkbox" id="showObservation"><span><span class="swatch" style="background:#2ca02c"></span>Observation single</span><span class="count" id="observationCount"></span></label>
-        <label class="toggle" id="kalmanToggle"><input type="checkbox" id="showKalman" checked><span><span class="swatch" style="background:#111827"></span>Kalman GNSS+IMU</span><span class="count" id="kalmanCount"></span></label>
-        <label class="toggle" id="imuDeadReckoningToggle"><input type="checkbox" id="showImuDeadReckoning"><span><span class="swatch" style="background:#00a6a6"></span>IMU diagnostic path</span><span class="count" id="imuDeadReckoningCount"></span></label>
-        <label class="toggle" id="matchesToggle"><input type="checkbox" id="showMatches" checked><span><span class="swatch" style="background:#f2994a"></span>Fixed difference lines</span><span class="count" id="matchesCount"></span></label>
-        <label class="toggle" id="floatMatchesToggle"><input type="checkbox" id="showFloatMatches"><span><span class="swatch" style="background:#b07aa1"></span>Float difference lines</span><span class="count" id="floatMatchesCount"></span></label>
-        <label class="toggle" id="dgpsMatchesToggle"><input type="checkbox" id="showDgpsMatches"><span><span class="swatch" style="background:#ffbf00"></span>DGPS difference lines</span><span class="count" id="dgpsMatchesCount"></span></label>
-        <label class="toggle" id="receiverHeadingsToggle"><input type="checkbox" id="showReceiverHeadings"><span><span class="swatch" style="background:#1f77b4"></span>Receiver headings</span><span class="count" id="receiverHeadingsCount"></span></label>
-        <label class="toggle" id="ppkHeadingsToggle"><input type="checkbox" id="showPpkHeadings"><span><span class="swatch" style="background:#d62728"></span>PPK fixed headings</span><span class="count" id="ppkHeadingsCount"></span></label>
-        <label class="toggle" id="floatHeadingsToggle"><input type="checkbox" id="showFloatHeadings"><span><span class="swatch" style="background:#9467bd"></span>PPK float headings</span><span class="count" id="floatHeadingsCount"></span></label>
-        <label class="toggle" id="dgpsHeadingsToggle"><input type="checkbox" id="showDgpsHeadings"><span><span class="swatch" style="background:#ff7f0e"></span>PPK DGPS headings</span><span class="count" id="dgpsHeadingsCount"></span></label>
-        <label class="toggle" id="observationHeadingsToggle"><input type="checkbox" id="showObservationHeadings"><span><span class="swatch" style="background:#2ca02c"></span>Observation headings</span><span class="count" id="observationHeadingsCount"></span></label>
+        <div class="toggle-group" data-group="receiver">
+          <button class="toggle-group-title" type="button" aria-expanded="true"><span class="swatch" style="background:#1f77b4"></span><span>Receiver</span><span class="toggle-group-chevron" aria-hidden="true">▾</span></button>
+          <label class="toggle" id="receiverToggle"><input type="checkbox" id="showReceiver" checked><span>Path</span><span class="count" id="receiverCount"></span></label>
+          <label class="toggle" id="receiverHeadingsToggle"><input type="checkbox" id="showReceiverHeadings"><span>Headings</span><span class="count" id="receiverHeadingsCount"></span></label>
+          <label class="toggle" id="kalmanBestnavToggle"><input type="checkbox" id="showKalmanBestnav" checked><span>Kalman + IMU</span><span class="count" id="kalmanBestnavCount"></span></label>
+        </div>
+        <div class="toggle-group" data-group="ppk">
+          <button class="toggle-group-title" type="button" aria-expanded="true"><span class="swatch" style="background:#d62728"></span><span>PPK fixed</span><span class="toggle-group-chevron" aria-hidden="true">▾</span></button>
+          <label class="toggle" id="ppkToggle"><input type="checkbox" id="showPpk" checked><span>Path</span><span class="count" id="ppkCount"></span></label>
+          <label class="toggle" id="ppkHeadingsToggle"><input type="checkbox" id="showPpkHeadings"><span>Headings</span><span class="count" id="ppkHeadingsCount"></span></label>
+          <label class="toggle" id="matchesToggle"><input type="checkbox" id="showMatches" checked><span>Diff vs receiver</span><span class="count" id="matchesCount"></span></label>
+          <label class="toggle" id="kalmanFixedToggle"><input type="checkbox" id="showKalmanFixed"><span>Kalman + IMU</span><span class="count" id="kalmanFixedCount"></span></label>
+        </div>
+        <div class="toggle-group" data-group="float">
+          <button class="toggle-group-title" type="button" aria-expanded="true"><span class="swatch" style="background:#9467bd"></span><span>PPK float</span><span class="toggle-group-chevron" aria-hidden="true">▾</span></button>
+          <label class="toggle" id="floatToggle"><input type="checkbox" id="showFloat" checked><span>Path</span><span class="count" id="floatCount"></span></label>
+          <label class="toggle" id="floatHeadingsToggle"><input type="checkbox" id="showFloatHeadings"><span>Headings</span><span class="count" id="floatHeadingsCount"></span></label>
+          <label class="toggle" id="floatMatchesToggle"><input type="checkbox" id="showFloatMatches"><span>Diff vs receiver</span><span class="count" id="floatMatchesCount"></span></label>
+          <label class="toggle" id="kalmanFloatToggle"><input type="checkbox" id="showKalmanFloat"><span>Kalman + IMU</span><span class="count" id="kalmanFloatCount"></span></label>
+        </div>
+        <div class="toggle-group" data-group="dgps">
+          <button class="toggle-group-title" type="button" aria-expanded="true"><span class="swatch" style="background:#ff7f0e"></span><span>PPK DGPS</span><span class="toggle-group-chevron" aria-hidden="true">▾</span></button>
+          <label class="toggle" id="dgpsToggle"><input type="checkbox" id="showDgps" checked><span>Path</span><span class="count" id="dgpsCount"></span></label>
+          <label class="toggle" id="dgpsHeadingsToggle"><input type="checkbox" id="showDgpsHeadings"><span>Headings</span><span class="count" id="dgpsHeadingsCount"></span></label>
+          <label class="toggle" id="dgpsMatchesToggle"><input type="checkbox" id="showDgpsMatches"><span>Diff vs receiver</span><span class="count" id="dgpsMatchesCount"></span></label>
+          <label class="toggle" id="kalmanDgpsToggle"><input type="checkbox" id="showKalmanDgps"><span>Kalman + IMU</span><span class="count" id="kalmanDgpsCount"></span></label>
+        </div>
+        <div class="toggle-group" data-group="observation">
+          <button class="toggle-group-title" type="button" aria-expanded="true"><span class="swatch" style="background:#2ca02c"></span><span>Observation single</span><span class="toggle-group-chevron" aria-hidden="true">▾</span></button>
+          <label class="toggle" id="observationToggle"><input type="checkbox" id="showObservation"><span>Path</span><span class="count" id="observationCount"></span></label>
+          <label class="toggle" id="observationHeadingsToggle"><input type="checkbox" id="showObservationHeadings"><span>Headings</span><span class="count" id="observationHeadingsCount"></span></label>
+          <label class="toggle" id="observationMatchesToggle"><input type="checkbox" id="showObservationMatches"><span>Diff vs receiver</span><span class="count" id="observationMatchesCount"></span></label>
+          <label class="toggle" id="kalmanObservationToggle"><input type="checkbox" id="showKalmanObservation"><span>Kalman + IMU</span><span class="count" id="kalmanObservationCount"></span></label>
+        </div>
+        <div class="toggle-group" data-group="imu">
+          <button class="toggle-group-title" type="button" aria-expanded="true"><span class="swatch" style="background:#00a6a6"></span><span>IMU</span><span class="toggle-group-chevron" aria-hidden="true">▾</span></button>
+          <label class="toggle" id="imuDeadReckoningToggle"><input type="checkbox" id="showImuDeadReckoning"><span>Raw diagnostic</span><span class="count" id="imuDeadReckoningCount"></span></label>
+          <label class="toggle" id="imuDriftCorrectedToggle"><input type="checkbox" id="showImuDriftCorrected" checked><span>Drift-corrected</span><span class="count" id="imuDriftCorrectedCount"></span></label>
+        </div>
       </div>
       <div class="draw-order">
         <div class="section-header">
@@ -285,38 +338,50 @@
     }).addTo(map);
 
     const layerConfig = {
-      receiver: { label: "Receiver", inputId: "showReceiver", toggleId: "receiverToggle", countId: "receiverCount" },
-      ppk: { label: "PPK fixed", inputId: "showPpk", toggleId: "ppkToggle", countId: "ppkCount" },
-      float: { label: "PPK float", inputId: "showFloat", toggleId: "floatToggle", countId: "floatCount" },
-      dgps: { label: "PPK DGPS", inputId: "showDgps", toggleId: "dgpsToggle", countId: "dgpsCount" },
-      observation: { label: "Observation", inputId: "showObservation", toggleId: "observationToggle", countId: "observationCount" },
-      kalman: { label: "Kalman GNSS+IMU", inputId: "showKalman", toggleId: "kalmanToggle", countId: "kalmanCount" },
-      imu_dead_reckoning: { label: "IMU diagnostic", inputId: "showImuDeadReckoning", toggleId: "imuDeadReckoningToggle", countId: "imuDeadReckoningCount" },
-      matches: { label: "Fixed difference", inputId: "showMatches", toggleId: "matchesToggle", countId: "matchesCount" },
-      float_matches: { label: "Float difference", inputId: "showFloatMatches", toggleId: "floatMatchesToggle", countId: "floatMatchesCount" },
-      dgps_matches: { label: "DGPS difference", inputId: "showDgpsMatches", toggleId: "dgpsMatchesToggle", countId: "dgpsMatchesCount" },
+      receiver: { label: "Receiver path", inputId: "showReceiver", toggleId: "receiverToggle", countId: "receiverCount" },
       receiver_headings: { label: "Receiver headings", inputId: "showReceiverHeadings", toggleId: "receiverHeadingsToggle", countId: "receiverHeadingsCount" },
-      ppk_headings: { label: "PPK fixed headings", inputId: "showPpkHeadings", toggleId: "ppkHeadingsToggle", countId: "ppkHeadingsCount" },
-      float_headings: { label: "PPK float headings", inputId: "showFloatHeadings", toggleId: "floatHeadingsToggle", countId: "floatHeadingsCount" },
-      dgps_headings: { label: "PPK DGPS headings", inputId: "showDgpsHeadings", toggleId: "dgpsHeadingsToggle", countId: "dgpsHeadingsCount" },
-      observation_headings: { label: "Observation headings", inputId: "showObservationHeadings", toggleId: "observationHeadingsToggle", countId: "observationHeadingsCount" }
+      kalman_bestnav: { label: "Kalman · Receiver", inputId: "showKalmanBestnav", toggleId: "kalmanBestnavToggle", countId: "kalmanBestnavCount" },
+      ppk: { label: "Fixed path", inputId: "showPpk", toggleId: "ppkToggle", countId: "ppkCount" },
+      ppk_headings: { label: "Fixed headings", inputId: "showPpkHeadings", toggleId: "ppkHeadingsToggle", countId: "ppkHeadingsCount" },
+      matches: { label: "Fixed diff", inputId: "showMatches", toggleId: "matchesToggle", countId: "matchesCount" },
+      kalman_fixed: { label: "Kalman · Fixed", inputId: "showKalmanFixed", toggleId: "kalmanFixedToggle", countId: "kalmanFixedCount" },
+      float: { label: "Float path", inputId: "showFloat", toggleId: "floatToggle", countId: "floatCount" },
+      float_headings: { label: "Float headings", inputId: "showFloatHeadings", toggleId: "floatHeadingsToggle", countId: "floatHeadingsCount" },
+      float_matches: { label: "Float diff", inputId: "showFloatMatches", toggleId: "floatMatchesToggle", countId: "floatMatchesCount" },
+      kalman_float: { label: "Kalman · Float", inputId: "showKalmanFloat", toggleId: "kalmanFloatToggle", countId: "kalmanFloatCount" },
+      dgps: { label: "DGPS path", inputId: "showDgps", toggleId: "dgpsToggle", countId: "dgpsCount" },
+      dgps_headings: { label: "DGPS headings", inputId: "showDgpsHeadings", toggleId: "dgpsHeadingsToggle", countId: "dgpsHeadingsCount" },
+      dgps_matches: { label: "DGPS diff", inputId: "showDgpsMatches", toggleId: "dgpsMatchesToggle", countId: "dgpsMatchesCount" },
+      kalman_dgps: { label: "Kalman · DGPS", inputId: "showKalmanDgps", toggleId: "kalmanDgpsToggle", countId: "kalmanDgpsCount" },
+      observation: { label: "Observation path", inputId: "showObservation", toggleId: "observationToggle", countId: "observationCount" },
+      observation_headings: { label: "Observation headings", inputId: "showObservationHeadings", toggleId: "observationHeadingsToggle", countId: "observationHeadingsCount" },
+      observation_matches: { label: "Observation diff", inputId: "showObservationMatches", toggleId: "observationMatchesToggle", countId: "observationMatchesCount" },
+      kalman_observation: { label: "Kalman · Observation", inputId: "showKalmanObservation", toggleId: "kalmanObservationToggle", countId: "kalmanObservationCount" },
+      imu_dead_reckoning: { label: "IMU raw", inputId: "showImuDeadReckoning", toggleId: "imuDeadReckoningToggle", countId: "imuDeadReckoningCount" },
+      imu_drift_corrected: { label: "IMU drift-corrected", inputId: "showImuDriftCorrected", toggleId: "imuDriftCorrectedToggle", countId: "imuDriftCorrectedCount" }
     };
     const colorPalettes = {
       receiver: ["#1f77b4", "#9467bd", "#17becf", "#8c564b", "#7f7f7f", "#bcbd22"],
-      ppk: ["#d62728", "#e377c2", "#ff7f0e", "#4c78a8", "#9c755f", "#f58518"],
-      float: ["#9467bd", "#b07aa1", "#4c78a8", "#72b7b2", "#8c564b", "#af7aa1"],
-      dgps: ["#ff7f0e", "#f58518", "#f2c94c", "#e45756", "#b279a2", "#edc949"],
-      observation: ["#2ca02c", "#54a24b", "#59a14f", "#72b7b2", "#499894", "#b07aa1"],
-      kalman: ["#111827", "#28666e", "#4c78a8", "#8c564b", "#7f7f7f", "#12383c"],
-      imu_dead_reckoning: ["#00a6a6", "#17becf", "#499894", "#72b7b2", "#76b7b2", "#00c2a8"],
-      matches: ["#f2994a", "#f2c94c", "#e15759", "#edc949", "#b279a2", "#ff9da6"],
-      float_matches: ["#b07aa1", "#af7aa1", "#9467bd", "#9c755f", "#bab0ac", "#e377c2"],
-      dgps_matches: ["#ffbf00", "#f28e2b", "#edc949", "#f58518", "#e15759", "#ff9da6"],
       receiver_headings: ["#1f77b4", "#4e79a7", "#17becf", "#76b7b2", "#59a14f", "#499894"],
+      kalman_bestnav: ["#111827", "#28666e", "#4c78a8", "#8c564b", "#7f7f7f", "#12383c"],
+      ppk: ["#d62728", "#e377c2", "#ff7f0e", "#4c78a8", "#9c755f", "#f58518"],
       ppk_headings: ["#d62728", "#e15759", "#ff7f0e", "#f28e2b", "#e377c2", "#ff9da6"],
+      matches: ["#f2994a", "#f2c94c", "#e15759", "#edc949", "#b279a2", "#ff9da6"],
+      kalman_fixed: ["#3b3b3b", "#4b5563", "#374151", "#1f2937", "#111827", "#28666e"],
+      float: ["#9467bd", "#b07aa1", "#4c78a8", "#72b7b2", "#8c564b", "#af7aa1"],
       float_headings: ["#9467bd", "#af7aa1", "#b07aa1", "#4c78a8", "#9c755f", "#bab0ac"],
+      float_matches: ["#b07aa1", "#af7aa1", "#9467bd", "#9c755f", "#bab0ac", "#e377c2"],
+      kalman_float: ["#4b5563", "#6b7280", "#374151", "#1f2937", "#111827", "#28666e"],
+      dgps: ["#ff7f0e", "#f58518", "#f2c94c", "#e45756", "#b279a2", "#edc949"],
       dgps_headings: ["#ff7f0e", "#f58518", "#f2c94c", "#edc949", "#e45756", "#ffbf00"],
-      observation_headings: ["#2ca02c", "#54a24b", "#59a14f", "#72b7b2", "#499894", "#b07aa1"]
+      dgps_matches: ["#ffbf00", "#f28e2b", "#edc949", "#f58518", "#e15759", "#ff9da6"],
+      kalman_dgps: ["#374151", "#4b5563", "#1f2937", "#111827", "#28666e", "#3b3b3b"],
+      observation: ["#2ca02c", "#54a24b", "#59a14f", "#72b7b2", "#499894", "#b07aa1"],
+      observation_headings: ["#2ca02c", "#54a24b", "#59a14f", "#72b7b2", "#499894", "#b07aa1"],
+      observation_matches: ["#86bf6b", "#54a24b", "#59a14f", "#72b7b2", "#499894", "#b07aa1"],
+      kalman_observation: ["#1f2937", "#374151", "#4b5563", "#111827", "#28666e", "#3b3b3b"],
+      imu_dead_reckoning: ["#00a6a6", "#17becf", "#499894", "#72b7b2", "#76b7b2", "#00c2a8"],
+      imu_drift_corrected: ["#0b6e4f", "#087f5b", "#099268", "#12b886", "#20c997", "#38d9a9"]
     };
     const els = {
       search: document.getElementById("search"),
@@ -348,6 +413,7 @@
     }]));
     const defaultLayerOrder = Object.keys(layerConfig);
     const selectedIds = new Set();
+    const expandedRecordingIds = new Set();
     const dataCache = new Map();
     const recordingColors = new Map();
     const recordingLineStyles = new Map();
@@ -366,7 +432,8 @@
     let legendCollapsed = false;
     let layerOrder = [];
     let layerOrderCollapsed = false;
-    const storageKey = "gnss-recording-viewer-state-v1";
+    const collapsedToggleGroups = new Set();
+    const storageKey = "gnss-recording-viewer-state-v2";
 
     L.DomEvent.disableClickPropagation(els.manualTools);
     L.DomEvent.disableClickPropagation(els.timePanel);
@@ -403,25 +470,50 @@
       const ranges = Object.fromEntries([...timeRanges.entries()]);
       localStorage.setItem(storageKey, JSON.stringify({
         selectedIds: [...selectedIds],
+        expandedRecordingIds: [...expandedRecordingIds],
         toggles,
         colors,
         lineStyles,
         ranges,
         layerOrder,
         layerOrderCollapsed,
+        collapsedToggleGroups: [...collapsedToggleGroups],
         legendCollapsed,
         timePanelCollapsed,
         search: els.search.value
       }));
     }
 
+    function syncToggleGroupCollapse() {
+      document.querySelectorAll(".toggle-group[data-group]").forEach(group => {
+        const name = group.dataset.group;
+        const collapsed = collapsedToggleGroups.has(name);
+        const title = group.querySelector(".toggle-group-title");
+        const chevron = group.querySelector(".toggle-group-chevron");
+        group.classList.toggle("collapsed", collapsed);
+        if (title) title.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        if (chevron) chevron.textContent = collapsed ? "▸" : "▾";
+      });
+    }
+
+    function toggleToggleGroup(name) {
+      if (collapsedToggleGroups.has(name)) collapsedToggleGroups.delete(name);
+      else collapsedToggleGroups.add(name);
+      syncToggleGroupCollapse();
+      saveUiState();
+    }
+
     function applyUiState(state) {
       selectedIds.clear();
+      expandedRecordingIds.clear();
       const knownIds = new Set(manifest.recordings.map(recording => recording.id));
       if (Array.isArray(state.selectedIds)) {
         state.selectedIds.filter(id => knownIds.has(id)).forEach(id => selectedIds.add(id));
       } else if (manifest.recordings.length) {
         selectedIds.add(manifest.recordings[0].id);
+      }
+      if (Array.isArray(state.expandedRecordingIds)) {
+        state.expandedRecordingIds.filter(id => knownIds.has(id)).forEach(id => expandedRecordingIds.add(id));
       }
       for (const [name, checked] of Object.entries(state.toggles || {})) {
         if (toggleMeta[name]) toggleMeta[name].input.checked = Boolean(checked);
@@ -443,10 +535,15 @@
         }
       }
       layerOrder = Array.isArray(state.layerOrder) ? state.layerOrder.filter(key => typeof key === "string") : [];
+      collapsedToggleGroups.clear();
+      if (Array.isArray(state.collapsedToggleGroups)) {
+        state.collapsedToggleGroups.filter(name => typeof name === "string").forEach(name => collapsedToggleGroups.add(name));
+      }
       if (typeof state.search === "string") els.search.value = state.search;
       timePanelCollapsed = Boolean(state.timePanelCollapsed);
       legendCollapsed = Boolean(state.legendCollapsed);
       layerOrderCollapsed = Boolean(state.layerOrderCollapsed);
+      syncToggleGroupCollapse();
     }
 
     function layerKey(recordingId, layerName) {
@@ -479,7 +576,7 @@
 
     function defaultLineStyle(name) {
       return {
-        weight: name.endsWith("_headings") ? 2 : (["matches", "float_matches", "dgps_matches"].includes(name) ? 2 : 4),
+        weight: name.endsWith("_headings") ? 2 : (["matches", "float_matches", "dgps_matches", "observation_matches"].includes(name) ? 2 : 4),
         headingLengthM: 1.5
       };
     }
@@ -566,8 +663,22 @@
     function layerPointCount(collection) {
       if (!collection) return 0;
       const path = collection.features.find(feature => feature.properties.kind === "path");
-      if (path) return path.properties.points;
-      return collection.features.length;
+      if (path?.properties?.points != null) return Number(path.properties.points) || 0;
+      return collection.features.filter(feature => feature.properties?.kind === "point").length || collection.features.length;
+    }
+
+    function formatPointCount(n) {
+      return Number(n || 0).toLocaleString("lv-LV");
+    }
+
+    function layerCountLabel(collection) {
+      if (!collection) return "";
+      const path = collection.features.find(feature => feature.properties.kind === "path");
+      const points = layerPointCount(collection);
+      const markers = path?.properties?.markers != null ? Number(path.properties.markers) || 0 : 0;
+      if (!points) return "";
+      if (markers && markers < points) return `${formatPointCount(points)} pts · ${formatPointCount(markers)} on map`;
+      return `${formatPointCount(points)} pts`;
     }
 
     function parseTimeMs(value) {
@@ -634,7 +745,11 @@
 
     async function getRecordingData(recording) {
       if (!dataCache.has(recording.id)) {
-        dataCache.set(recording.id, fetchJsonFresh(recording.data));
+        const pending = fetchJsonFresh(recording.data).catch(error => {
+          dataCache.delete(recording.id);
+          throw error;
+        });
+        dataCache.set(recording.id, pending);
       }
       return dataCache.get(recording.id);
     }
@@ -776,16 +891,26 @@
         acc.float += recording.stats.float_points || 0;
         acc.dgps += recording.stats.dgps_points || 0;
         acc.observation += recording.stats.observation_single_points || 0;
-        acc.kalman += recording.stats.kalman_points || 0;
+        acc.kalmanBestnav += recording.stats.kalman_bestnav_points || 0;
+        acc.kalmanFixed += recording.stats.kalman_fixed_points || 0;
+        acc.kalmanFloat += recording.stats.kalman_float_points || 0;
+        acc.kalmanDgps += recording.stats.kalman_dgps_points || 0;
+        acc.kalmanObservation += recording.stats.kalman_observation_points || 0;
         acc.imuDeadReckoning += recording.stats.imu_dead_reckoning_points || 0;
+        acc.imuDriftCorrected += recording.stats.imu_drift_corrected_points || 0;
         acc.matches += recording.stats.matches || 0;
         acc.floatMatches += recording.stats.float_matches || 0;
         acc.dgpsMatches += recording.stats.dgps_matches || 0;
+        acc.observationMatches += recording.stats.observation_matches || 0;
         for (const [quality, count] of Object.entries(recording.stats.ppk_quality || {})) {
           acc.quality[quality] = (acc.quality[quality] || 0) + count;
         }
         return acc;
-      }, { receiver: 0, ppk: 0, float: 0, dgps: 0, observation: 0, kalman: 0, imuDeadReckoning: 0, matches: 0, floatMatches: 0, dgpsMatches: 0, quality: {} });
+      }, {
+        receiver: 0, ppk: 0, float: 0, dgps: 0, observation: 0,
+        kalmanBestnav: 0, kalmanFixed: 0, kalmanFloat: 0, kalmanDgps: 0, kalmanObservation: 0,
+        imuDeadReckoning: 0, imuDriftCorrected: 0, matches: 0, floatMatches: 0, dgpsMatches: 0, observationMatches: 0, quality: {}
+      });
       const quality = Object.keys(totals.quality).length
         ? Object.entries(totals.quality).map(([q, count]) => `Q${q}: ${count}`).join(", ")
         : "n/a";
@@ -796,11 +921,17 @@
         ["PPK float", `${totals.float} points`],
         ["PPK DGPS", `${totals.dgps} points`],
         ["Observation single", `${totals.observation} points`],
-        ["Kalman GNSS+IMU", `${totals.kalman} points`],
-        ["IMU diagnostic", `${totals.imuDeadReckoning} points`],
+        ["Kalman · Receiver", `${totals.kalmanBestnav} points`],
+        ["Kalman · Fixed", `${totals.kalmanFixed} points`],
+        ["Kalman · Float", `${totals.kalmanFloat} points`],
+        ["Kalman · DGPS", `${totals.kalmanDgps} points`],
+        ["Kalman · Observation", `${totals.kalmanObservation} points`],
+        ["IMU raw", `${totals.imuDeadReckoning} points`],
+        ["IMU drift-corrected", `${totals.imuDriftCorrected} points`],
         ["Fixed matches", `${totals.matches}`],
         ["Float matches", `${totals.floatMatches}`],
         ["DGPS matches", `${totals.dgpsMatches}`],
+        ["Observation matches", `${totals.observationMatches}`],
         ["PPK quality", quality]
       ];
       if (recordings.length === 1 && recordings[0].stats.horizontal_median_m !== undefined) {
@@ -905,8 +1036,22 @@
 
     function updateCounts(datasets) {
       for (const [name, meta] of Object.entries(toggleMeta)) {
-        const count = datasets.reduce((sum, { recording, data }) => sum + layerPointCount(filteredCollection(recording, data.layers[name])), 0);
-        meta.count.textContent = count ? count : "";
+        let points = 0;
+        let markers = 0;
+        for (const { recording, data } of datasets) {
+          const collection = filteredCollection(recording, data.layers[name]);
+          if (!collection) continue;
+          points += layerPointCount(collection);
+          const path = collection.features.find(feature => feature.properties?.kind === "path");
+          if (path?.properties?.markers != null) markers += Number(path.properties.markers) || 0;
+        }
+        if (!points) {
+          meta.count.textContent = "";
+          continue;
+        }
+        meta.count.textContent = (markers && markers < points)
+          ? `${formatPointCount(points)} pts · ${formatPointCount(markers)} on map`
+          : `${formatPointCount(points)} pts`;
       }
     }
 
@@ -1006,21 +1151,29 @@
       renderLayerOrderControls(recordings);
       if (shouldRenderTimeControls) renderTimeControls(recordings);
       els.fitSelected.disabled = !recordings.length;
+      // Clear immediately so checkbox changes are visible even while heavy IMU JSON loads.
+      removeCurrentLayers();
+      updateCounts([]);
+      renderLegend([]);
       if (!recordings.length) {
-        removeCurrentLayers();
-        updateCounts([]);
         syncLayerToggles([]);
         els.timePanel.innerHTML = "";
         updateTimePanelVisibility();
-        renderLegend([]);
         els.status.textContent = "Select one or more recordings.";
         return;
       }
       els.status.textContent = `Loading ${recordings.length} recording${recordings.length === 1 ? "" : "s"}...`;
-      const datasets = await Promise.all(recordings.map(async recording => ({
-        recording,
-        data: await getRecordingData(recording)
-      })));
+      let datasets;
+      try {
+        datasets = await Promise.all(recordings.map(async recording => ({
+          recording,
+          data: await getRecordingData(recording)
+        })));
+      } catch (error) {
+        if (token !== renderToken) return;
+        els.status.textContent = error.message || "Failed to load recording data.";
+        return;
+      }
       if (token !== renderToken) return;
       removeCurrentLayers();
       for (const { recording, data } of datasets) {
@@ -1041,22 +1194,26 @@
       els.list.innerHTML = recordings.map(recording => {
         const colors = colorsFor(recording.id);
         const selected = selectedIds.has(recording.id);
+        const expanded = expandedRecordingIds.has(recording.id);
         const styleControls = Object.entries(layerConfig).map(([name, config]) => {
           const available = recording.available[name];
           const style = lineStyleFor(recording.id, name);
           const isHeading = name.endsWith("_headings");
-          return `<label class="style-field" aria-disabled="${available ? "false" : "true"}">
+          return `<label class="style-field${isHeading ? " heading" : ""}" aria-disabled="${available ? "false" : "true"}">
             <input type="color" data-color-id="${recording.id}" data-layer="${name}" value="${colors[name]}" ${available ? "" : "disabled"}>
             <input type="number" data-style-id="${recording.id}" data-style-layer="${name}" data-style-field="weight" min="1" max="14" step="1" value="${style.weight}" title="Line thickness" aria-label="${escapeHtml(config.label)} line thickness" ${available ? "" : "disabled"}>
-            <input type="number" data-style-id="${recording.id}" data-style-layer="${name}" data-style-field="headingLengthM" min="0.1" max="50" step="0.1" value="${style.headingLengthM}" title="Heading length in meters" aria-label="${escapeHtml(config.label)} heading length in meters" ${available && isHeading ? "" : "disabled hidden"}>
+            <input type="number" data-style-id="${recording.id}" data-style-layer="${name}" data-style-field="headingLengthM" min="0.1" max="50" step="0.1" value="${style.headingLengthM}" title="Heading length in meters" aria-label="${escapeHtml(config.label)} heading length in meters" ${available ? "" : "disabled"}${isHeading ? "" : " hidden"}>
             <span>${config.label}</span>
           </label>`;
         }).join("");
-        return `<div class="rec-item ${selected ? "selected" : ""}" data-id="${recording.id}">
-          <label class="rec-check">
-            <input type="checkbox" data-recording-id="${recording.id}" ${selected ? "checked" : ""}>
-            <span class="rec-name">${escapeHtml(recording.name)}</span>
-          </label>
+        return `<div class="rec-item ${selected ? "selected" : ""} ${expanded ? "expanded" : ""}" data-id="${recording.id}">
+          <div class="rec-header">
+            <label class="rec-check">
+              <input type="checkbox" data-recording-id="${recording.id}" ${selected ? "checked" : ""}>
+              <span class="rec-name">${escapeHtml(recording.name)}</span>
+            </label>
+            <button class="rec-expand" type="button" data-expand-id="${recording.id}" aria-expanded="${expanded ? "true" : "false"}" title="${expanded ? "Collapse styles" : "Expand styles"}">${expanded ? "▾" : "▸"}</button>
+          </div>
           <div class="style-grid">${styleControls}</div>
         </div>`;
       }).join("");
@@ -1068,6 +1225,15 @@
           renderRecordingControls(visibleRecordings);
           saveUiState();
           updateMap({ fit: false });
+        });
+      });
+      els.list.querySelectorAll("[data-expand-id]").forEach(button => {
+        button.addEventListener("click", () => {
+          const id = button.dataset.expandId;
+          if (expandedRecordingIds.has(id)) expandedRecordingIds.delete(id);
+          else expandedRecordingIds.add(id);
+          renderRecordingControls(visibleRecordings);
+          saveUiState();
         });
       });
       els.list.querySelectorAll("[data-color-id]").forEach(input => {
@@ -1157,6 +1323,10 @@
       els.timeToggle.addEventListener("click", toggleTimePanel);
       els.legendToggle.addEventListener("click", toggleLegend);
       els.orderToggle.addEventListener("click", toggleLayerOrder);
+      document.querySelectorAll(".toggle-group[data-group] .toggle-group-title").forEach(button => {
+        button.addEventListener("click", () => toggleToggleGroup(button.closest(".toggle-group").dataset.group));
+      });
+      syncToggleGroupCollapse();
       updateManualControls();
       updateTimePanelVisibility();
       updateLegendVisibility();
