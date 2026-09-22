@@ -1,6 +1,5 @@
 const { connectDB, getCollection } = require("../config/db");
 const { ObjectId } = require("mongodb");
-const { MongoClient } = require("mongodb");
 const { default: mongoose } = require("mongoose");
 
 const runSchema = new mongoose.Schema({

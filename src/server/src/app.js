@@ -9,25 +9,6 @@ const { authenticateAccessToken } = require("./middleware/authenticate");
 
 mongoose.connect(process.env.MONGODB_URI);
 
-// Configure CORS middleware
-// const allowedOrigins = process.env.ALLOWED_ORIGINS
-//   ? process.env.ALLOWED_ORIGINS.split(",")
-//   : [];
-
-// app.use(
-//   cors({
-//     origin: (origin, callback) => {
-//       if (!origin) return callback(null, true);
-//       if (allowedOrigins.includes(origin)) {
-//         return callback(null, true);
-//       } else {
-//         return callback(new Error("Not allowed by CORS"));
-//       }
-//     },
-//     methods: ["GET", "POST"],
-//   })
-// );
-
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim())
   : [];

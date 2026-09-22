@@ -5,9 +5,6 @@ const sensorDataRouter = express.Router({ mergeParams: true });
 
 const runController = require("../controllers/runController");
 const runService = require("../services/runService");
-const trackController = require("../controllers/trackController");
-const driverController = require("../controllers/driverController");
-const { parseApiDataObject } = require("../controllers/sensorDataController");
 const { connectDB, getCollection } = require("../config/db");
 const { ObjectId } = require("mongodb");
 const { getRunVideoDirectory } = require("../utils/videoStorage");
@@ -1257,41 +1254,13 @@ runRouter.get("/", async (req, res) => {
 
 runRouter.get("/:runid", async (req, res) => {
   try {
-    // const { dateFrom, dateTo } = req.query;
-
-    // const { filterData } = req.query;
     const runid = req.params.runid;
     const authorizedRun = await findRunForUser(runid, req.user).catch(() => null);
     if (!authorizedRun) {
       return res.status(404).json({ message: "Run not found." });
     }
-    // var runs = null;
-    // if (dateFrom && dateTo) {
-    //   runs = await runController.filterRunsByDate(dateFrom, dateTo);
-    // } else {
-    //   runs = await runController.getAllRuns();
-    // }
 
-    let selectedRun = null;
-    // if (filterData == "true") {
-    //   // selectedRun = await runController.getSingleRunKalmanFilter(runid);
-    //   selectedRun = await runController.getSingleRunMovingAverage(runid);
-    //   // selectedRun = await runController.getSingleRunSavitzkyGolayFilter(runid);
-    // } else {
-    //   selectedRun = await runController.getSingleRunDB(runid);
-    // }
-
-    selectedRun = await runController.getSingleRunDB(runid);
-
-    // const selectedRun = await runController.getSingleRun(runid);
-    // const runTrack = await trackController.getSingleTrack(selectedRun.trackid);
-    // const runDriver = await driverController.getSingleDriver(
-    //   selectedRun.driverid
-    // );
-
-    // selectedRun.Track = runTrack;
-    // selectedRun.Driver = runDriver;
-
+    const selectedRun = await runController.getSingleRunDB(runid);
     res.json(selectedRun);
   } catch (error) {
     res
@@ -2873,24 +2842,6 @@ runRouter.post("/upload", async (req, res) => {
       message: "Error uploading run.",
       error: error.message,
     });
-  }
-});
-
-runRouter.post("/", async (req, res) => {
-  try {
-    const message = JSON.parse(data.toString());
-    console.log(message.type);
-
-    const data = Buffer.from(req.body);
-    var parsedData = parseApiDataObject(data);
-
-    // const newRun = await runController.createRun(parsedData);
-
-    res.json(newRun);
-  } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Error creating run", error: error.message });
   }
 });
 
