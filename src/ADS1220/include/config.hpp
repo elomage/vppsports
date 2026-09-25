@@ -7,9 +7,9 @@
 #define PRODUCTION_MODE
 
 // Define DUAL_CHANNEL_MODE to enable collecting the data from all adc in our case 4 ADCs, 8 channels.
-//#define DUAL_CHANNEL_MODE
+#define DUAL_CHANNEL_MODE
 // If this is commented out, the code will run in single ADC mode.1
-#define NUM_ADCS 1
+#define NUM_ADCS 4
 
 // ADC Configuration
 // SPI Settings
@@ -22,6 +22,7 @@
 
 // CONFIG0
 #define ADC_MUX ADS1220_REG::Config0::MUX_AIN0_AIN1
+#define ADC_MUX_2 ADS1220_REG::Config0::MUX_AIN2_AIN3
 #define ADC_GAIN ADS1220_REG::Config0::GAIN_64
 #define ADC_PGA_BYPASS false
 
@@ -37,6 +38,8 @@
 #define ADC_FIR ADS1220_REG::Config2::FIR_NONE
 #define ADC_PSW false // PSW open
 #define ADC_IDAC ADS1220_REG::Config2::IDAC_OFF
+
+#define USB_CHUNK_SIZE 4096 // 4kb buffer for USB
 
 #if NUM_ADCS == 4
 // For 4 ADCs at 2000SPS:
@@ -80,7 +83,8 @@ enum SystemState
     STATE_RECORDING = 1,
     STATE_TRANSMITTING = 2,
     STATE_CALIBRATING = 3,
-    STATE_JOYSTICK = 4
+    STATE_JOYSTICK = 4,
+    STATE_DUMPING = 5
 };
 
 #pragma pack(push, 1)

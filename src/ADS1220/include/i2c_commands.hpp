@@ -19,4 +19,8 @@
 #define FLAG_EOF 0x01
 #define MAX_FILENAME 64
 
+// for usb file transfers
+#define FLAG_NEW_FILE 0x02;
+#define FLAG_ALL_DONE 0x04;
+
 #endif
