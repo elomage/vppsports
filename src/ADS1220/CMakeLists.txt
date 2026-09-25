@@ -24,12 +24,15 @@ if (EXISTS ${picoVscode})
     include(${picoVscode})
 endif()
 # ====================================================================================
-set(PICO_BOARD pico CACHE STRING "Board type")
+set(PICO_BOARD pico_w CACHE STRING "Board type")
 
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
 project(VPP C CXX ASM)
+
+# FORCE RELEASE
+set(CMAKE_BUILD_TYPE Release)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
@@ -55,7 +58,7 @@ target_link_libraries(ads1220_root
     no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
     hardware_spi
     hardware_i2c
-    
+    pico_cyw43_arch_none
 )
 
 # Enable stdio over USB for convenience (match example behavior)

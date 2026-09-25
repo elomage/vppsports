@@ -2,6 +2,9 @@
 #include "hardware/spi.h"
 #include "hardware/i2c.h"
 #include "pico/multicore.h"
+#include "pico/cyw43_arch.h"
+#include "pico/stdio_usb.h"
+#include "tusb.h"
 #include <cstring>
 #include <string>
 #include <vector>
@@ -375,7 +378,11 @@ void check_server_commands()
 
 int32_t readADCPhase(ADS1220 *adc, uint8_t mux_config)
 {
+#ifdef DUAL_CHANNEL_MODE
+    // Only write CONFIG0 in dual-channel mode where the MUX actually changes between reads.
+    // In single-channel mode this write is unnecessary and disturbs the continuous conversion.
     adc->writeRegister(CONFIG0, Config0::pack(mux_config, ADC_GAIN, ADC_PGA_BYPASS));
+#endif
     while (!adc->isDataReady(false))
     {
         tight_loop_contents();
@@ -546,32 +553,44 @@ void handle_recording()
         // PHASE 1: Read AIN0/AIN1 (Sensors 1, 3, 5, 7)
         // ==========================================
         int32_t phase1[4];
-        phase1[0] = readADCPhase(adc1, Config0::MUX_AIN0_AIN1);
-#if NUM_ADCS >= 2
-        phase1[1] = readADCPhase(adc2, Config0::MUX_AIN0_AIN1);
-#endif
-#if NUM_ADCS >= 3
-        phase1[2] = readADCPhase(adc3, Config0::MUX_AIN0_AIN1);
-#endif
-#if NUM_ADCS >= 4
-        phase1[3] = readADCPhase(adc4, Config0::MUX_AIN0_AIN1);
-#endif
+
+        adc1->writeRegister(CONFIG0, Config0::pack(ADC_MUX, ADC_GAIN, ADC_PGA_BYPASS));
+        adc2->writeRegister(CONFIG0, Config0::pack(ADC_MUX, ADC_GAIN, ADC_PGA_BYPASS));
+        adc3->writeRegister(CONFIG0, Config0::pack(ADC_MUX, ADC_GAIN, ADC_PGA_BYPASS));
+        adc4->writeRegister(CONFIG0, Config0::pack(ADC_MUX, ADC_GAIN, ADC_PGA_BYPASS));
+
+        while (!adc1->isDataReady(false) || !adc2->isDataReady(false) ||
+               !adc3->isDataReady(false) || !adc4->isDataReady(false))
+        {
+            tight_loop_contents();
+        }
+
+        phase1[0] = adc1->readDataRaw(false);
+        phase1[1] = adc2->readDataRaw(false);
+        phase1[2] = adc3->readDataRaw(false);
+        phase1[3] = adc4->readDataRaw(false);
 
         // ==========================================
         // PHASE 2: Read AIN2/AIN3 (Sensors 2, 4, 6, 8)
         // ==========================================
 
         int32_t phase2[4];
-        phase2[0] = readADCPhase(adc1, Config0::MUX_AIN2_AIN3);
-#if NUM_ADCS >= 2
-        phase2[1] = readADCPhase(adc2, Config0::MUX_AIN2_AIN3);
-#endif
-#if NUM_ADCS >= 3
-        phase2[2] = readADCPhase(adc3, Config0::MUX_AIN2_AIN3);
-#endif
-#if NUM_ADCS >= 4
-        phase2[3] = readADCPhase(adc4, Config0::MUX_AIN2_AIN3);
-#endif
+
+        adc1->writeRegister(CONFIG0, Config0::pack(ADC_MUX_2, ADC_GAIN, ADC_PGA_BYPASS));
+        adc2->writeRegister(CONFIG0, Config0::pack(ADC_MUX_2, ADC_GAIN, ADC_PGA_BYPASS));
+        adc3->writeRegister(CONFIG0, Config0::pack(ADC_MUX_2, ADC_GAIN, ADC_PGA_BYPASS));
+        adc4->writeRegister(CONFIG0, Config0::pack(ADC_MUX_2, ADC_GAIN, ADC_PGA_BYPASS));
+
+        while (!adc1->isDataReady(false) || !adc2->isDataReady(false) ||
+               !adc3->isDataReady(false) || !adc4->isDataReady(false))
+        {
+            tight_loop_contents();
+        }
+
+        phase2[0] = adc1->readDataRaw(false);
+        phase2[1] = adc2->readDataRaw(false);
+        phase2[2] = adc3->readDataRaw(false);
+        phase2[3] = adc4->readDataRaw(false);
 
         // Merge into record (typedef picks right struct automatically)
 #if NUM_ADCS == 1
@@ -735,7 +754,7 @@ void build_filelist()
         f_closedir(&dir);
     }
     current_file_index = 0;
-    printf("Built filelist: %zu files\n", filelist.size());
+    // printf("Built filelist: %zu files\n", filelist.size());
 }
 
 const char *get_next_filename()
@@ -761,10 +780,10 @@ bool open_send_file(const char *fname)
     if (f_open(&send_file, fname, FA_READ) == FR_OK)
     {
         file_opened = true;
-        printf("Opened file for sending: %s\n", fname);
+        // printf("Opened file for sending: %s\n", fname);
         return true;
     }
-    printf("Failed to open file: %s\n", fname);
+    // printf("Failed to open file: %s\n", fname);
     return false;
 }
 
@@ -877,42 +896,207 @@ void handle_transmitting()
     }
 }
 
+void static usb_write(const uint8_t *buf, uint32_t len) {
+    uint32_t written = 0;
+    while (written < len) {
+        if(!tud_cdc_connected()) break;
+
+        uint32_t avail = tud_cdc_write_available();
+        if (avail > 0) {
+            uint32_t to_write = len - written;
+            if (to_write > avail) to_write = avail;
+            uint32_t n = tud_cdc_write(buf + written, to_write);
+            written += n;
+        }
+        tud_task();
+        tud_cdc_write_flush();
+    }
+}
+
+uint32_t calculate_hw_crc32(const uint8_t *data, size_t length)
+{
+    int dma_chan = dma_claim_unused_channel(true); // occupy free channel
+
+    dma_channel_config c = dma_channel_get_default_config(dma_chan);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    channel_config_set_sniff_enable(&c, true);
+
+    static uint8_t dummy_dest; // trash bin
+    dma_hw->sniff_data = 0xFFFFFFFF;
+
+    dma_sniffer_enable(dma_chan, DMA_SNIFF_CTRL_CALC_VALUE_CRC32R, true);
+
+    // to match python zlib crc we need to reverse and inverse bits 
+    dma_hw->sniff_ctrl |=
+        DMA_SNIFF_CTRL_OUT_INV_BITS |
+        DMA_SNIFF_CTRL_OUT_REV_BITS;
+
+    dma_channel_configure(dma_chan, &c, &dummy_dest, data, length, true); // start dma
+    dma_channel_wait_for_finish_blocking(dma_chan);                       // wait for finish
+
+    uint32_t crc = dma_hw->sniff_data;
+    dma_sniffer_disable();
+    dma_channel_unclaim(dma_chan);
+
+    return crc;
+}
+
+void handle_dumping()
+{
+    printf("--- ENTERED DUMPING MODE ---\n");
+    printf("Waiting command from PC... (Send 'S' to start)\n");
+    while (current_state == STATE_DUMPING)
+    {
+        gpio_put(LED_PIN, 1);
+        sleep_ms(50);
+        gpio_put(LED_PIN, 0);
+        sleep_ms(50);
+
+        int c = getchar_timeout_us(1000); // waiting character from serial port
+        if (c == 'S' || c == 's')
+        {
+            // printf("--- STARTING TRANSMITTING DATA ---");
+            build_filelist();
+            while (true)
+            {
+                const char *fname = get_next_filename();
+
+                if (strcmp(fname, "END") == 0)
+                {
+                    uint8_t tx_buf[12] = {0};
+                    tx_buf[2] = FLAG_ALL_DONE;
+                    usb_write(tx_buf, 12);
+                    sleep_ms(100); // delete later, debug purposes
+
+                    break;
+                }
+
+                if (open_send_file(fname))
+                {
+                    size_t name_len = strlen(fname);
+                    uint8_t name_buf[12 + 64] = {0};
+
+                    name_buf[0] = (uint8_t)(name_len & 0xFF);
+                    name_buf[1] = (uint8_t)((name_len >> 8) & 0xFF);
+                    name_buf[2] = FLAG_NEW_FILE;
+                    memcpy(name_buf + 12, fname, name_len);
+
+                    usb_write(name_buf, 12 + name_len);
+
+                    uint8_t usb_tx_buf[12 + USB_CHUNK_SIZE];
+                    UINT br;
+                    uint16_t chunk_id = 0;
+
+                    while (true)
+                    {
+                        f_read(&send_file, usb_tx_buf + 12, USB_CHUNK_SIZE, &br);
+                        if (br == 0)
+                            break;
+
+                        uint8_t flags = (br < USB_CHUNK_SIZE || f_eof(&send_file)) ? FLAG_EOF : 0;
+
+                        // calculate checksum using Pico inbuilt DMA CRC
+                        uint32_t crc = calculate_hw_crc32(usb_tx_buf + 12, br);
+
+                        usb_tx_buf[0] = (uint8_t)(br & 0xFF);      // length LOW
+                        usb_tx_buf[1] = (uint8_t)(br >> 8) & 0xFF; // length HIGH
+                        usb_tx_buf[2] = flags;
+                        usb_tx_buf[3] = (uint8_t)(chunk_id & 0xFF);      // id low
+                        usb_tx_buf[4] = (uint8_t)(chunk_id >> 8) & 0xFF; // id high
+                        usb_tx_buf[5] = (uint8_t)(crc & 0xFF);           // crc byte 1
+                        usb_tx_buf[6] = (uint8_t)((crc >> 8) & 0xFF);    // crc byte 2
+                        usb_tx_buf[7] = (uint8_t)((crc >> 16) & 0xFF);   // crc byte 3
+                        usb_tx_buf[8] = (uint8_t)((crc >> 24) & 0xFF);   // crc byte 4(high)
+                        usb_tx_buf[9] = 0;                               // Padding
+                        usb_tx_buf[10] = 0;                              // Padding
+                        usb_tx_buf[11] = 0;                              // Padding
+
+                        usb_write(usb_tx_buf, 12 + br);
+
+                        chunk_id++;
+                        // check if the computer got the whole chunk, check for OK
+
+                        if (flags & FLAG_EOF)
+                            break;
+                    }
+                    f_close(&send_file);
+                    file_opened = false;
+                    // printf("--- SENDING COMPLETE ---");
+                }
+            }
+        }
+        else if(c == 'D' || c == 'd') {
+            build_filelist();
+            while(true) {
+                const char *fname = get_next_filename();
+
+                if (strcmp(fname, "END") == 0) {
+                    break;
+                }
+                f_unlink(fname);
+            }
+            printf("ALL FILES DELETED\n");
+        }
+    }
+}
+
 int main()
 {
     stdio_init_all();
+
+    stdio_set_translate_crlf(&stdio_usb, false);
 
     // Initialize LED
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, GPIO_OUT);
     gpio_put(LED_PIN, 0); // start OFF
 
+    // Initialize  VBUS pin
+    if (cyw43_arch_init())
+    {
+        printf("Wi-Fi cipam kluda!\n");
+        return -1;
+    }
+
     setup_button(); // mostly for debugging (REAL application will use wireless commands)
     sleep_ms(100);
 
     init_hardware();
 
-    // --- TRACKSIDE AUTO-START WITH DELAY ---
-    printf("Power ON. Waiting 5 seconds for hardware to settle...\n");
-
-    // 5-Second Countdown Blinker
-    // Gives the mechanic time to close the box lid before recording starts
-    for (int i = 0; i < 5; i++)
-    {
-        gpio_put(LED_PIN, 1);
-        sleep_ms(500);
-        gpio_put(LED_PIN, 0);
-        sleep_ms(500);
-        printf("Starting in %d...\n", 5 - i);
-    }
-
     printf("Auto-starting recording NOW!\n");
 
-    current_state = STATE_RECORDING; // STATE_IDLE it was used with button or some signal to start
+    if (cyw43_arch_gpio_get(CYW43_WL_GPIO_VBUS_PIN))
+    {
+        current_state = STATE_DUMPING;
+    }
+    else
+    {
+        current_state = STATE_RECORDING; // STATE_IDLE it was used with button or some signal to start
+
+        // --- TRACKSIDE AUTO-START WITH DELAY ---
+        printf("Power ON. Waiting 5 seconds for hardware to settle...\n");
+
+        // 5-Second Countdown Blinker
+        // Gives the mechanic time to close the box lid before recording starts
+        for (int i = 0; i < 5; i++)
+        {
+            gpio_put(LED_PIN, 1);
+            sleep_ms(500);
+            gpio_put(LED_PIN, 0);
+            sleep_ms(500);
+            printf("Starting in %d...\n", 5 - i);
+        }
+    }
 
     while (true)
     {
         switch (current_state)
         {
+        case STATE_DUMPING:
+            handle_dumping();
+            break;
         case STATE_IDLE:
             handle_idle();
             break;

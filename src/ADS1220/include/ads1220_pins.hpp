@@ -28,12 +28,12 @@
 #define CS2_PIN 7
 
 // Third ADS1220
-#define DRDY3_PIN 2
-#define CS3_PIN 3
+#define DRDY3_PIN 27
+#define CS3_PIN 26
 
 // Fourth ADS1220
-#define DRDY4_PIN 4
-#define CS4_PIN 5
+#define DRDY4_PIN 22
+#define CS4_PIN 21
 
 #endif
 
@@ -46,8 +46,8 @@
 #define CS_PIN_SD 13
 
 // I2C pins
-#define SDA_PIN 26
-#define SCL_PIN 27
+#define SDA_PIN 2
+#define SCL_PIN 3
 
 // TODO: Implement mode switching button
-#define MODE_SELECT_PIN 14 // dummy button now ONLY FOR TESTING
+#define MODE_SELECT_PIN 9 // dummy button now ONLY FOR TESTING
