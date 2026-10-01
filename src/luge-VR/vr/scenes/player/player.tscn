@@ -1,0 +1,29 @@
+[gd_scene load_steps=3 format=3 uid="uid://krawrbv0tcm0"]
+
+[ext_resource type="PackedScene" uid="uid://bl4d7jqsdpkwb" path="res://scenes/player/sled.glb" id="1_icklt"]
+[ext_resource type="Script" uid="uid://du1fx8qy612xj" path="res://scenes/player/sled.gd" id="2_dovo2"]
+
+[node name="Player" instance=ExtResource("1_icklt")]
+
+[node name="Sled" parent="." index="0"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+input_ray_pickable = false
+mass = 117.0
+center_of_mass_mode = 1
+center_of_mass = Vector3(0, -0.2, 0.05)
+can_sleep = false
+continuous_cd = true
+contact_monitor = true
+max_contacts_reported = 8
+linear_damp_mode = 1
+linear_damp = 0.03
+angular_damp = 1.0
+script = ExtResource("2_dovo2")
+max_steer_force = null
+preload_input = null
+
+[node name="Camera3D" type="Camera3D" parent="Sled" index="3"]
+transform = Transform3D(0.04979514, -0.2870594, 0.9566177, 0.02862048, 0.9578227, 0.2859312, -0.9983493, 0.013140872, 0.05591069, 1.6705017, 0.4584305, -0.023873914)
+
+[node name="Camera3D2" type="Camera3D" parent="Sled" index="4"]
+transform = Transform3D(0.04979514, -0.2870594, 0.9566177, 0.02862048, 0.9578227, 0.2859312, -0.9983493, 0.013140872, 0.05591069, 1.6705017, 0.4584305, -0.023873914)

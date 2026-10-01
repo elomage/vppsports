@@ -1,0 +1,47 @@
+[gd_scene load_steps=9 format=3 uid="uid://dcvdjjjinyced"]
+
+[ext_resource type="Script" uid="uid://bw0p34kol6enc" path="res://scenes/track/track.gd" id="1_mll3j"]
+[ext_resource type="Script" uid="uid://b3dvn7lt048so" path="res://scenes/track/centerline.gd" id="2_kk5tn"]
+[ext_resource type="Script" uid="uid://bl38a1hpqrerh" path="res://scenes/track/mesh_instance_3d.gd" id="3_0mev1"]
+[ext_resource type="Script" uid="uid://d4d2oxamyx3vr" path="res://scenes/track/track_data.gd" id="4_236c3"]
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_236c3"]
+center_offset = Vector3(0, -2, 0)
+
+[sub_resource type="MultiMesh" id="MultiMesh_syd2a"]
+transform_format = 1
+mesh = SubResource("PlaneMesh_236c3")
+
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_mll3j"]
+friction = 0.01
+rough = true
+
+[sub_resource type="Curve3D" id="Curve3D_236c3"]
+bake_interval = 0.1
+
+[node name="Track" type="Node3D"]
+script = ExtResource("1_mll3j")
+
+[node name="Surroundings" type="MultiMeshInstance3D" parent="."]
+visible = false
+multimesh = SubResource("MultiMesh_syd2a")
+
+[node name="StaticBody3D" type="StaticBody3D" parent="."]
+collision_mask = 3
+input_ray_pickable = false
+physics_material_override = SubResource("PhysicsMaterial_mll3j")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="StaticBody3D"]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="StaticBody3D"]
+script = ExtResource("3_0mev1")
+
+[node name="Centerline" type="Path3D" parent="."]
+curve = SubResource("Curve3D_236c3")
+script = ExtResource("2_kk5tn")
+
+[node name="PathFollow3D" type="PathFollow3D" parent="Centerline"]
+
+[node name="TrackData" type="Node" parent="."]
+script = ExtResource("4_236c3")
+metadata/_custom_type_script = "uid://d4d2oxamyx3vr"
