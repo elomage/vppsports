@@ -1,0 +1,45 @@
+'use strict';
+const $=id=>document.getElementById(id);
+let state,data,pair,view=[0,1],marks={imu:null,gnss:null},mode=null,cursor=null,drag=null;
+const offset=()=>Number($('offset').value);
+const validOffset=()=> $('offset').value.trim()!=='' && Number.isFinite(offset()) && Math.abs(offset())<=86400;
+function status(text,error=false){$('status').textContent=text;$('status').classList.toggle('error',error)}
+async function api(url,body){
+  const r=await fetch(url,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});
+  const text=await r.text();
+  if(!r.headers.get('content-type')?.includes('application/json')){
+    throw Error(`Serveris neatbalsta laika sasaistes API (HTTP ${r.status}). Pārstartē scripts/viewer_server.py un pārlādē lapu ar Ctrl+F5.`);
+  }
+  let v;
+  try{v=JSON.parse(text)}catch{throw Error('Serveris atgrieza bojātu JSON atbildi. Pārbaudi servera kļūdu žurnālu.')}
+  if(!r.ok||v.error)throw Error(v.error||r.statusText);
+  return v;
+}
+function options(id,rows){$(id).replaceChildren(...rows.map(([value,label])=>new Option(label,value)))}
+function selectRecording(){const r=state.recordings.find(r=>r.name===$('recording').value);options('source',Object.entries(r.sources).filter(([,v])=>v.available).map(([s])=>[s,s]));const files=[...r.assigned_imus,...state.imu_inputs];options('imu',[...new Map(files.map(f=>[f.path,[f.path,f.name]])).values()]);invalidate()}
+function invalidate(){data=null;pair=null;marks={imu:null,gnss:null};$('save').disabled=true;$('align').disabled=true;$('command').textContent='';$('utc').textContent='';draw();status('Izvēlies failus un ielādē grafikus.');}
+function fit(){if(!data)return;view=[Math.min(0,data.imu[0][0]+offset()),Math.max(data.gnss.at(-1)[0],data.imu.at(-1)[0]+offset())];if(view[1]<=view[0])view[1]=view[0]+1;draw()}
+function changed(){if(!data)return;if(!validOffset()){$('save').disabled=true;status('Ievadi nobīdi starp −86400 un 86400 sekundēm.',true);return;}$('save').disabled=false;status('Nobīde mainīta — nav saglabāta.');draw()}
+function values(kind){if(kind==='gnss')return data.gnss.map(r=>[r[0],r[Number($('metric').value)]]);const a=Number($('axis').value);return data.imu.map(r=>[r[0]+offset(),a===4?Math.hypot(r[1],r[2],r[3])-9.80665:r[a]])}
+let signals={};
+function draw(){if(data&&!validOffset())return;for(const kind of ['imu','gnss']){const c=$(kind+'Plot'),w=c.clientWidth,h=c.clientHeight,dpr=devicePixelRatio||1;c.width=w*dpr;c.height=h*dpr;const ctx=c.getContext('2d');ctx.scale(dpr,dpr);ctx.clearRect(0,0,w,h);if(!data)continue;const rows=values(kind);signals[kind]=rows;const left=76,right=w-22,top=14,bottom=h-36;
+const visible=rows.filter(r=>r[0]>=view[0]&&r[0]<=view[1]&&Number.isFinite(r[1]));let lo=Infinity,hi=-Infinity;for(const r of visible){lo=Math.min(lo,r[1]);hi=Math.max(hi,r[1])}if(!visible.length){lo=-1;hi=1}const pad=Math.max((hi-lo)*.08,.01);lo-=pad;hi+=pad;const X=t=>left+(t-view[0])/(view[1]-view[0])*(right-left),Y=v=>bottom-(v-lo)/(hi-lo)*(bottom-top);
+ctx.font='12px system-ui';ctx.lineWidth=1;for(let i=0;i<=4;i++){const y=top+i*(bottom-top)/4;ctx.strokeStyle='#e6edf1';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(right,y);ctx.stroke();ctx.fillStyle='#647987';ctx.fillText((hi-i*(hi-lo)/4).toFixed(2),5,y+4)}const ticks=Math.max(2,Math.floor((right-left)/95));for(let i=0;i<=ticks;i++){const t=view[0]+i*(view[1]-view[0])/ticks,x=X(t);ctx.fillText(t.toFixed(view[1]-view[0]<10?3:1)+' s',x-16,h-12)}
+ctx.save();ctx.beginPath();ctx.rect(left,top,right-left,bottom-top);ctx.clip();ctx.strokeStyle=kind==='imu'?'#098c97':'#db8835';ctx.lineWidth=1.2;
+// Pixel buckets retain minima and maxima so short IMU peaks remain visible.
+let bucket=null;function flush(){if(!bucket)return;ctx.beginPath();ctx.moveTo(bucket.x,Y(bucket.first));ctx.lineTo(bucket.x,Y(bucket.min));ctx.lineTo(bucket.x,Y(bucket.max));ctx.lineTo(bucket.x,Y(bucket.last));ctx.stroke()}
+let prev=null;for(const r of visible){const x=Math.floor(X(r[0]));if(!bucket||bucket.x!==x){flush();if(prev&&r[0]-prev[0]<Math.max(1,(view[1]-view[0])/200)){ctx.beginPath();ctx.moveTo(X(prev[0]),Y(prev[1]));ctx.lineTo(x,Y(r[1]));ctx.stroke()}bucket={x,first:r[1],last:r[1],min:r[1],max:r[1]}}else{bucket.last=r[1];bucket.min=Math.min(bucket.min,r[1]);bucket.max=Math.max(bucket.max,r[1])}prev=r}flush();
+for(const [t,color] of [[marks[kind]===null?null:marks[kind]+(kind==='imu'?offset():0),'#b94e8c'],[cursor,'#8097a3']]){if(t===null)continue;ctx.strokeStyle=color;ctx.setLineDash([4,3]);ctx.beginPath();ctx.moveTo(X(t),top);ctx.lineTo(X(t),bottom);ctx.stroke()}ctx.restore();if(!visible.length){ctx.fillStyle='#617480';ctx.fillText('Šajā laika logā nav datu.',100,80)}}
+if(!data)return;const start=new Date(new Date(data.start_utc).getTime()+offset()*1000).toISOString();$('utc').textContent=`GNSS sākums: ${data.start_utc} · IMU t=0: ${start}`;$('markers').textContent=`IMU atzīme: ${marks.imu===null?'—':marks.imu.toFixed(3)+' s (IMU laiks)'} · GNSS atzīme: ${marks.gnss===null?'—':marks.gnss.toFixed(3)+' s'}`;$('align').disabled=marks.imu===null||marks.gnss===null;
+$('command').textContent=`python scripts/imu_kalman.py "${pair.recording}" --imu "${pair.imu}" --source ${pair.source} --imu-start-utc "${start}" --update-viewer`;
+}
+function eventTime(e,c){const r=c.getBoundingClientRect();return view[0]+Math.max(0,Math.min(1,(e.clientX-r.left-76)/(r.width-98)))*(view[1]-view[0])}
+function nearest(rows,t){let lo=0,hi=rows.length-1;while(lo<hi){const m=(lo+hi)>>1;if(rows[m][0]<t)lo=m+1;else hi=m}return lo>0&&Math.abs(rows[lo-1][0]-t)<Math.abs(rows[lo][0]-t)?rows[lo-1]:rows[lo]}
+for(const kind of ['imu','gnss']){const c=$(kind+'Plot');c.addEventListener('wheel',e=>{if(!data)return;e.preventDefault();const t=eventTime(e,c),f=e.deltaY>0?1.25:.8,span=Math.max(.02,Math.min(86400,(view[1]-view[0])*f)),ratio=(t-view[0])/(view[1]-view[0]);view=[t-span*ratio,t+span*(1-ratio)];draw()},{passive:false});c.addEventListener('pointerdown',e=>{if(!data)return;const t=eventTime(e,c);if(mode===kind){const r=nearest(signals[kind],t);marks[kind]=r[0]-(kind==='imu'?offset():0);mode=null;status('Atzīme novietota pie tuvākā mērījuma.');draw();return}drag={x:e.clientX,view:[...view]};c.setPointerCapture(e.pointerId)});c.addEventListener('pointermove',e=>{if(!data)return;if(drag){const delta=(e.clientX-drag.x)/(c.clientWidth-98)*(drag.view[1]-drag.view[0]);view=drag.view.map(t=>t-delta)}cursor=eventTime(e,c);const i=nearest(signals.imu,cursor),g=nearest(signals.gnss,cursor);$('readout').textContent=`GNSS laiks ${cursor.toFixed(3)} s · IMU laiks ${(cursor-offset()).toFixed(3)} s · tuvākais IMU: ${i[1].toFixed(4)} · tuvākais GNSS: ${g[1]===null?'—':g[1].toFixed(4)}`;draw()});c.addEventListener('pointerup',()=>drag=null);c.addEventListener('pointercancel',()=>drag=null)}
+$('recording').onchange=selectRecording;for(const id of ['source','imu'])$(id).onchange=invalidate;
+$('load').onclick=async()=>{const selection={recording:$('recording').value,source:$('source').value,imu:$('imu').value};if(!selection.imu||!selection.source)return status('Izvēlies IMU un pieejamu GNSS avotu.',true);$('load').disabled=true;for(const id of ['recording','source','imu'])$(id).disabled=true;invalidate();status('Ielādē pilnos mērījumus…');try{const result=await api('/api/alignment-preview',selection);data=result;pair=selection;$('offset').value=data.saved?.time_offset_s??0;$('save').disabled=false;fit();status(`Ielādēti ${data.imu.length.toLocaleString()} IMU un ${data.gnss.length.toLocaleString()} GNSS punkti.${data.saved?' Atjaunota saglabātā sasaiste.':''}`)}catch(e){status(e.message,true)}finally{$('load').disabled=false;for(const id of ['recording','source','imu'])$(id).disabled=false}};
+$('offset').oninput=changed;document.querySelectorAll('[data-nudge]').forEach(b=>b.onclick=()=>{$('offset').value=(offset()+Number(b.dataset.nudge)).toFixed(3);changed()});$('fit').onclick=fit;for(const id of ['axis','metric'])$(id).onchange=draw;
+$('markI').onclick=()=>{mode='imu';status('Noklikšķini uz kustības notikuma IMU grafikā.')};$('markG').onclick=()=>{mode='gnss';status('Noklikšķini uz tā paša notikuma GNSS grafikā.')};$('align').onclick=()=>{$('offset').value=(marks.gnss-marks.imu).toFixed(6);changed()};$('clear').onclick=()=>{marks={imu:null,gnss:null};mode=null;draw()};
+$('save').onclick=async()=>{if(!data||!validOffset())return status('Ievadi derīgu nobīdi.',true);const selectedOffset=offset();$('save').disabled=true;try{const r=await api('/api/alignment-save',{...pair,time_offset_s:selectedOffset});status(`Saglabāts: ${r.time_offset_s.toFixed(6)} s · ${r.path}`)}catch(e){status(e.message,true)}finally{$('save').disabled=false}};
+new ResizeObserver(()=>draw()).observe($('imuPlot'));
+(async()=>{try{state=await api('/api/state');options('recording',state.recordings.slice().reverse().map(r=>[r.name,r.name]));if(!state.recordings.length)throw Error('Nav pieejamu GNSS ierakstu.');selectRecording()}catch(e){status(e.message+' Palaid vai pārstartē viewer_server.py.',true)}})();

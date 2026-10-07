@@ -11,8 +11,8 @@ It does NOT call UPrecise. It parses the packets directly from the original .BIN
     RANGECMPB   message ID 140  -> RINEX .yyO
     OBSVMB      message ID 12   -> RINEX .yyO
     OBSVMCMPB   message ID 138  -> RINEX .yyO
-    OBSVHB      message ID 13   -> RINEX .yyO (slave antenna, explicit option)
-    OBSVHCMPB   message ID 139  -> RINEX .yyO (slave antenna, explicit option)
+    OBSVHB      message ID 13   -> RINEX .yyO (slave antenna fallback)
+    OBSVHCMPB   message ID 139  -> RINEX .yyO (slave antenna fallback)
 
   NAV:
     GPSEPHB    message ID 106  -> GPS     .yyN
@@ -163,7 +163,7 @@ OBS_SOURCE_LABELS = {
     "obsvhcmpb": "OBSVHCMPB slave antenna",
 }
 
-AUTO_OBS_SOURCE_ORDER = ("rangecmpb", "obsvmcmpb", "obsvmb", "rangeb")
+AUTO_OBS_SOURCE_ORDER = ("rangecmpb", "obsvmcmpb", "obsvmb", "rangeb", "obsvhcmpb", "obsvhb")
 
 
 @dataclass
@@ -456,16 +456,6 @@ def parse_rangeb_record(rec: bytes, signal_map: dict) -> Optional[Tuple[str, str
     return sat, suffix, Obs(psr_out, adr_out, doppler_out, cn0_out, lock, lli), sys_bits, sig_bits
 
 
-def choose_obs_source(packets: List[Packet], requested: str) -> str:
-    if requested != "auto":
-        return requested
-    packet_counts = Counter(pkt.msg_id for pkt in packets)
-    for source in AUTO_OBS_SOURCE_ORDER:
-        if any(packet_counts[msg_id] for msg_id in OBS_SOURCE_IDS[source]):
-            return source
-    return "rangecmpb"
-
-
 def read_observations(
     packets: List[Packet],
     signal_map: dict,
@@ -592,10 +582,10 @@ def fmt_obs_value(value: Optional[float], lli: str = " ") -> str:
     return f"{value:14.3f}{lli:1s} "
 
 
-def parse_bestnavxyz_approx_position(packets: List[Packet]) -> Optional[Tuple[float, float, float]]:
+def parse_bestnavxyz_approx_position(packets: List[Packet], message_id: int = MSG_BESTNAVXYZB) -> Optional[Tuple[float, float, float]]:
     last: Optional[Tuple[float, float, float]] = None
     for pkt in packets:
-        if pkt.msg_id != MSG_BESTNAVXYZB or len(pkt.payload) < 36:
+        if pkt.msg_id != message_id or len(pkt.payload) < 36:
             continue
         try:
             sol_status = struct.unpack_from("<I", pkt.payload, 0)[0]
@@ -1029,7 +1019,35 @@ def run_conversion(args: argparse.Namespace) -> Dict[str, Path]:
     buf = args.input.read_bytes()
     packets = list(iter_packets(buf, check_crc=not args.no_crc))
     packet_counts = Counter(pkt.msg_id for pkt in packets)
-    obs_source = choose_obs_source(packets, args.obs_source)
+    signal_map = SIGNAL_MAP_LEGACY_BDS if args.legacy_bds_codes else SIGNAL_MAP_STANDARD
+    sources = AUTO_OBS_SOURCE_ORDER if args.obs_source == "auto" else (args.obs_source,)
+    diagnostics = []
+    for obs_source in sources:
+        epochs, decoded_signal_counts, skipped_signals = read_observations(
+            packets, signal_map, obs_source, max_epochs=args.max_epochs,
+        )
+        epochs = filter_epochs_for_obs_profile(epochs, args.obs_profile)
+        # Signal-strength-only records cannot support a positioning solution.
+        epochs = OrderedDict(
+            (tow, usable) for tow, sats in epochs.items()
+            if len(usable := {
+                sat: signals for sat, signals in sats.items()
+                if any(obs.psr is not None for obs in signals.values())
+            }) >= max(1, args.min_sats)
+        )
+        diagnostics.append(f"{obs_source}: {len(epochs)} usable epochs")
+        if epochs:
+            break
+    else:
+        raise SystemExit(
+            "No usable observations after signal-profile and minimum-satellite filtering. "
+            + "; ".join(diagnostics)
+            + ". Check antenna data, --obs-source, --obs-profile and --min-sats."
+        )
+    slave_antenna = obs_source in {"obsvhb", "obsvhcmpb"}
+    if args.obs_source == "auto" and slave_antenna:
+        print("WARNING: No usable master-antenna observations; using SLAVE antenna observations.")
+        print("Source checks: " + "; ".join(diagnostics))
 
     gps_week = args.gps_week
     if args.date:
@@ -1039,18 +1057,8 @@ def run_conversion(args: argparse.Namespace) -> Dict[str, Path]:
     if gps_week is None:
         raise SystemExit("Could not infer GPS week. Supply --date YYYY-MM-DD or --gps-week.")
 
-    signal_map = SIGNAL_MAP_LEGACY_BDS if args.legacy_bds_codes else SIGNAL_MAP_STANDARD
-    epochs, decoded_signal_counts, skipped_signals = read_observations(
-        packets,
-        signal_map=signal_map,
-        obs_source=obs_source,
-        max_epochs=args.max_epochs,
-    )
-    epochs = filter_epochs_for_obs_profile(epochs, args.obs_profile)
-    if args.min_sats > 1:
-        epochs = OrderedDict((tow, sats) for tow, sats in epochs.items() if len(sats) >= args.min_sats)
     signal_counts = count_obs_signals(epochs)
-    approx_position = parse_bestnavxyz_approx_position(packets)
+    approx_position = parse_bestnavxyz_approx_position(packets, 242 if slave_antenna else MSG_BESTNAVXYZB)
 
     yy = legacy_year_suffix(gps_week)
     obs_path = outdir / f"{basename}.{yy}O"
@@ -1144,7 +1152,7 @@ def main() -> int:
         help=(
             "Raw observation log to use. auto prefers master antenna logs: "
             "RANGECMPB, then OBSVMCMPB, then OBSVMB, then RANGEB. "
-            "Use obsvhcmpb/obsvhb for the slave antenna."
+            "Falls back to slave antenna OBSVHCMPB/OBSVHB if no master source has usable epochs."
         ),
     )
     ap.add_argument("--min-sats", type=int, default=4, help="Drop OBS epochs with fewer than this many satellites")

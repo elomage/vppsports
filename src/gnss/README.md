@@ -58,6 +58,18 @@ python scripts/viewer_server.py --port 8765
 
 Pārlūkā atver `http://localhost:8765/app.html`.
 
+### Braucienu datu analīze
+
+Atver `http://localhost:8765/analysis.html` vai saiti **Datu analīze** skatītājā.
+Pēc servera koda atjaunināšanas pārstartē `scripts/viewer_server.py`.
+Lapa izmanto `out/` ierakstus, ļauj izvēlēties mēnesi un ierakstu un aprēķināt
+mēneša salīdzinājumu. Tajā redzams punktu skaits un biežums, pozīcijas pieejamība,
+laika iztrūkumi, satelīti, 3D nenoteiktība, uztvērēja vidējais 3D ātrums, virziena
+kvalitāte un pēcapstrādes datu pieejamība. C/N₀ tiek nolasīts no RINEX 3 `S`
+novērojumiem, ja tie ir pieejami; satelītu skaits netiek izmantots kā signāla
+stipruma aizvietotājs. Pēcapstrādes punkti netiek pieskaitīti uztvērēja punktiem.
+Aprēķini ir tikai lasīšanai, un to kešatmiņa atjaunojas, mainoties avota failiem.
+
 ## Projekta datu plūsma
 
 ```text
@@ -395,6 +407,27 @@ Serveris paredzēts lokālai lietošanai. Nepublicē to internetā bez papildu
 autentifikācijas un drošības ierobežojumiem.
 
 ## IMU un Kalmana filtrs
+
+### Manuāla laika sasaiste
+
+Atver `http://localhost:8765/alignment.html` (navigācijā **Laika sasaiste**).
+Pēc servera koda atjaunināšanas pārstartē `scripts/viewer_server.py`.
+Izvēlies GNSS sesiju, pieejamu avotu un IMU failu, tad ielādē grafikus.
+Abiem grafikiem ir kopīga laika ass: peles ritenis tuvina, vilkšana pārvieto logu.
+IMU grafikā var izvēlēties asi; GNSS grafikā — horizontālo pārvietojumu no
+sākuma, no koordinātām iegūtu ātrumu vai tā atvasinājumu.
+
+Atzīmē vienu un to pašu notikumu katrā grafikā un nospied **Savietot atzīmes**.
+Pozitīva nobīde novieto IMU sākumu vēlāk par pirmo GNSS punktu.
+Nobīdi var precizēt skaitliski. **Saglabāt sasaisti** ieraksta
+`out/<sesija>/imu/alignment_<avots>_<imu>.json`; šī pati failu/avota izvēle
+atjauno saglabāto nobīdi. Lapa izveido CLI komandu ar `--imu-start-utc`, ko
+izmantot turpmākajam Kalmana aprēķinam. Esošās apstrādes lapas iestatījumi
+netiek automātiski pārrakstīti.
+
+Grafiks saglabā signāla minimumu un maksimumu katrā ekrāna pikseļa intervālā.
+Tuvinot izmanto pilnos mērījumus. Nekustīgam ierakstam ar kustības salīdzināšanu
+nepietiek, lai noteiktu laika nobīdi. Ievades solis nav precizitātes garantija.
 
 Ievieto IMU `.BIN` vai `.csv` failus `in_imu/`.
 

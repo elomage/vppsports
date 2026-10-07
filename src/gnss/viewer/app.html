@@ -116,13 +116,15 @@
       .map-legend { bottom: 122px; }
     }
   </style>
+  <link rel="stylesheet" href="header.css">
 </head>
-<body>
+<body class="viewer-layout processing-layout">
+  <header id="site-header" class="site-header"></header>
+  <script src="header.js"></script>
   <aside>
     <div class="panel">
       <div class="topline">
         <h1>GNSS Processing Dashboard</h1>
-        <a href="index.html">Classic viewer</a>
       </div>
 
       <div class="section">
@@ -159,6 +161,8 @@
 
       <div id="tab-imu" class="tab-panel">
         <div class="section">
+          <p><a href="alignment.html">Atvērt IMU un GNSS laika sasaisti →</a></p>
+          <div class="meta">Salīdzini signālus uz kopīgas laika ass un saglabā laika nobīdi.</div>
           <label><span class="label">IMU recording</span><select id="imuSelect"></select></label>
           <button id="assignBtn" type="button">Attach selected IMU</button>
           <div class="meta" id="suggestion"></div>

@@ -132,6 +132,7 @@ def discover_all_recordings() -> list[Path]:
 
 
 def resolve_recording_args(values: list[str]) -> list[Path]:
+    values = [part.strip() for value in values for part in value.split(",") if part.strip()]
     if any(value.lower() == "all" for value in values):
         if len(values) > 1:
             raise SystemExit("Use either 'all' or explicit recording names, not both.")
@@ -186,7 +187,11 @@ def process_recording(args: argparse.Namespace, session_dir: Path) -> int:
         ],
     ))
 
-    if not args.skip_observation_single:
+    rinex_ok = results[-1].ok
+    if not rinex_ok:
+        print("Skipping observation single and PPK: RINEX conversion failed.")
+
+    if not args.skip_observation_single and rinex_ok:
         observation_command = [
             py,
             str(script_path("ppk", "run_observation_single.py")),
@@ -198,7 +203,7 @@ def process_recording(args: argparse.Namespace, session_dir: Path) -> int:
             observation_command.append("--force")
         results.append(run_step("Run rover-only observation single solution", observation_command))
 
-    if args.base:
+    if args.base and rinex_ok:
         ppk_command = [
             py,
             str(script_path("ppk", "run_ppk.py")),
@@ -277,7 +282,7 @@ def main() -> int:
         "--rinex-obs-source",
         default="auto",
         choices=["auto", "rangeb", "rangecmpb", "obsvmb", "obsvmcmpb", "obsvhb", "obsvhcmpb"],
-        help="Raw observation log used for RINEX. auto prefers master antenna logs; obsvh* uses the slave antenna.",
+        help="Raw observation log used for RINEX. auto prefers usable master logs, then falls back to slave antenna logs.",
     )
     args = parser.parse_args()
 

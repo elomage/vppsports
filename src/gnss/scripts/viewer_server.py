@@ -34,6 +34,10 @@ from imu_processing_profile import (
     profile_kalman_overrides,
 )
 from session_paths import OUT_DIR, output_subdir, resolve_session_dir
+from recording_analysis import analyze as analyze_recording, list_sessions as analysis_sessions
+from recording_analysis import get_session as analysis_session
+from observation_analysis import signal_details
+from imu_alignment import preview as alignment_preview, save_alignment
 
 SOURCES = GNSS_SOURCES
 IMU_BIAS_PROFILES = ROOT / "config" / "imu_bias_profiles.csv"  # legacy; prefer IMU_PROCESSING_PROFILES
@@ -915,6 +919,30 @@ class ViewerHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/api/observations":
+            try:
+                query=parse_qs(parsed.query)
+                name=query.get("recording",[""])[0]
+                result=analyze_recording(name,False,query.get("start_s",[None])[0],query.get("end_s",[None])[0])
+                write_json(self,signal_details(analysis_session(name),result['bounds']))
+            except ValueError as exc:
+                error_response(self,exc,status=400)
+            except Exception as exc:
+                error_response(self,exc)
+            return
+        if parsed.path in {"/api/analysis", "/api/analysis-sessions"}:
+            try:
+                if parsed.path.endswith("-sessions"):
+                    write_json(self, {"recordings": analysis_sessions()})
+                else:
+                    query = parse_qs(parsed.query)
+                    write_json(self, analyze_recording(query.get("recording", [""])[0], query.get("signal", ["1"])[0] != "0",
+                                                      query.get("start_s", [None])[0], query.get("end_s", [None])[0]))
+            except ValueError as exc:
+                error_response(self, exc, status=400)
+            except Exception as exc:
+                error_response(self, exc)
+            return
         if parsed.path in {"", "/"}:
             self.path = "/app.html"
             return super().do_GET()
@@ -942,6 +970,18 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         try:
             payload = read_json_body(self)
+            if parsed.path in {"/api/alignment-preview", "/api/alignment-save"}:
+                session = analysis_session(str(payload.get("recording") or ""))
+                imu = resolve_imu_for_recording(session, str(payload.get("imu") or ""))
+                allowed = [ROOT / "in_imu", session / "imu"]
+                if not any(imu.is_relative_to(folder.resolve()) for folder in allowed) or imu.suffix.lower() not in {".bin", ".csv"}:
+                    raise ValueError("Izvēlies IMU failu no ierakstu saraksta.")
+                source = str(payload.get("source") or "bestnav")
+                if parsed.path.endswith("preview"):
+                    write_json(self, alignment_preview(session, imu, source))
+                else:
+                    write_json(self, save_alignment(session, imu, source, float(payload["time_offset_s"])))
+                return
             if parsed.path == "/api/assign":
                 write_json(self, handle_assign(payload))
                 return
