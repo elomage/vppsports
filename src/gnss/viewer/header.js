@@ -3,7 +3,7 @@
   const header = document.getElementById('site-header');
   if (!header) return;
   const current = location.pathname.split('/').pop() || 'app.html';
-  const pages = [['app.html', 'Apstrāde'], ['index.html', 'Karte'], ['analysis.html', 'Datu analīze'], ['alignment.html', 'Laika sasaiste']];
+  const pages = [['app.html', 'Apstrāde'], ['index.html', 'Karte'], ['analysis.html', 'Datu analīze'], ['alignment.html', 'Sapludināšana']];
   header.innerHTML = `
     <a class="site-brand" href="app.html" aria-label="GNSS Lab — sākumlapa">
       <span class="site-mark" aria-hidden="true">◉</span> GNSS <small>LAB</small>

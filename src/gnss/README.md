@@ -456,6 +456,73 @@ python scripts/imu_kalman.py <ieraksts> `
   --update-viewer
 ```
 
+### Sapludināšanas algoritms (`scripts/gnss_imu_fusion.py`)
+
+`imu_kalman.py` izmanto Kalmana filtru ar RTS izlīdzināšanu. IMU šeit ir tikai
+3 asu akselerometrs (bez žiroskopa), tāpēc orientāciju no tā iegūt nevar:
+
+- stāvoklis `[E, N, vE, vN, b]` (b ir akselerometra nobīde gar kustības virzienu);
+- IMU dod paredzēšanu ar garenisko paātrinājumu. Kustības ass sensora koordinātās
+  tiek noteikta automātiski (mazāko kvadrātu fits pret GNSS paātrinājumu), un
+  gravitācijas daļa `g·sin(slīpums)` tiek atņemta, izmantojot GNSS augstuma profilu;
+- GNSS pozīcija (un bestnav Doppler ātrums, ja ir) koriģē filtru reālajos GNSS
+  mērījumu laikos, nevis interpolētos punktos;
+- kļūdaini GNSS punkti tiek noraidīti ar innovācijas vārtiem (`outlier_gate_sigma`)
+  un daļēji nosvērti ar Huber svaru (`huber_sigma`). Ja punkti tiek noraidīti ilgāk par
+  `max_reject_duration_s`, filtrs tos pieņem atkal ar palielinātu nenoteiktību;
+- ZUPT: kad GNSS ātrums un IMU trokšņi norāda uz stāvēšanu, ātrums tiek turēts uz 0;
+- ja IMU neatbilst GNSS paātrinājumam (`forward_axis_r2 < min_axis_r2`, parasti
+  nepareiza laika sasaiste), IMU tiek ignorēts un rezultāts ir tikai no GNSS.
+
+**Noklusētie parametri** ir `config/fusion_defaults.json`. GNSS pozīcijas σ pēc noklusējuma
+tiek ņemta no avota (`fixed_ppk` 0.05 m, `float_ppk` 0.3, `dgps` 0.8, `bestnav` pēc
+`position_type`, `observation` 2.5). Izmaiņas var norādīt:
+
+```powershell
+# vienam palaidienam
+python scripts/imu_kalman.py <ieraksts> --imu <imu> --source fixed_ppk `
+  --position-sigma-m 0.1 --outlier-gate-sigma 4 --fusion-set smooth=false
+
+# cits konfigurācijas fails
+python scripts/imu_kalman.py <ieraksts> --imu <imu> --fusion-config my_fusion.json
+```
+
+Viewer cilnē Kalman tukši lauki **GNSS sigma / Accel noise / Update s** nozīmē
+automātisko vērtību; **Fusion options** pieņem `key=value; key=value`.
+
+**GNSS pārtraukuma tests.** `--gnss-outage 60:75` (sekundes no pārklāšanās sākuma)
+noņem GNSS šajā logā un atskaitē parāda kļūdu pret noņemtajiem punktiem. Tā var
+objektīvi novērtēt, vai IMU palīdz. Piemēram, pārtraukums taisnā posmā pie ~28 m/s
+deva ~0.3 m kļūdu, bet pagriezienos (bez žiroskopa sānu kustība nav novērojama) kļūda
+ir ievērojami lielāka.
+
+Papildu izejas: `kalman_*.csv` tagad satur `sigma_e_m`, `sigma_n_m`, `bias_mps2`,
+`gnss_status` (`used/downweighted/rejected/reacquired/outage/none`) un
+`innovation_sigma`; `fusion_gnss_kalman_*.csv` saraksta katru GNSS epohu ar statusu.
+Atskaites fails satur visus izmantotos parametrus.
+
+**Svarīgi:** sapludināšanas kvalitāte ir ļoti atkarīga no pareizas IMU/GNSS laika
+sasaistes. `--auto-align` ir ticams tikai ar korelāciju virs ~0.3; pārbaudi
+`forward_axis_r2` (labs ≥ 0.5) atskaitē.
+
+### Sapludināšanas lapa un vairāki aprēķini
+
+`http://localhost:8765/alignment.html` (navigācijā **Sapludināšana**) ir grafiska saskarne sešos soļos:
+dati, laika sasaiste (automātiska meklēšana + savietošana ar roku), iestatījumi ar paskaidrojumiem,
+aprēķins, rezultāts un aprēķinu salīdzināšana. Pēc servera koda atjaunināšanas pārstartē `scripts/viewer_server.py`.
+
+Vienam GNSS ierakstam (tam pašam avotam un IMU) var izveidot cik vien vēlies aprēķinu ar dažādiem
+iestatījumiem. Katrs aprēķins tiek saglabāts atsevišķi:
+
+- faili `out/<ieraksts>/imu/kalman_<avots>_<imu>_<laiks>.csv` (un `…_report.txt`, `fusion_gnss_….csv`);
+- iestatījumi, rezultātu metrikas, nosaukums un piezīme datubāzē `out/fusion_runs.sqlite`
+  (SQLite; to var atvērt ar jebkuru SQLite rīku, tabula `fusion_runs`).
+
+6. solī vari atzīmēt vairākus aprēķinus un redzēt to trajektorijas vienā attēlā, salīdzināt metrikas,
+pārdēvēt tos, pievienot piezīmes, **ielādēt aprēķina iestatījumus atpakaļ 3. solī** un dzēst aprēķinu
+(tiek dzēsti arī tā faili). Vecāki `kalman_*.csv` faili bez datubāzes ieraksta tiek rādīti tikai
+apskatei.
+
 Akselerometra bias kalibracija no statiska IMU ieraksta:
 
 ```powershell

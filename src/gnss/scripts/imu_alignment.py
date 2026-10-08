@@ -6,6 +6,7 @@ from datetime import timedelta, datetime, timezone
 from pathlib import Path
 
 from imu_kalman import load_gnss, load_imu, source_csv, GNSS_SOURCES
+from gnss_imu_fusion import scan_alignment
 
 
 def read_samples(path):
@@ -50,6 +51,16 @@ def preview(session, imu, source):
     return dict(start_utc=start.isoformat(),
                 imu=[[s.seconds, s.ax_mps2, s.ay_mps2, s.az_mps2] for s in samples],
                 gnss=gnss, saved=saved)
+
+
+def scan(session, imu, source):
+    """Score every candidate IMU time offset (how well the IMU explains GNSS acceleration)."""
+    if source not in GNSS_SOURCES:
+        raise ValueError('Nezināms GNSS avots.')
+    points = load_gnss(source_csv(session, source))
+    result = scan_alignment(points, read_samples(imu))
+    result['start_utc'] = points[0].time.isoformat()
+    return result
 
 
 def save_alignment(session, imu, source, offset):

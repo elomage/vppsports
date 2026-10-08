@@ -270,14 +270,6 @@ def append_profile_cli_args(command: list[str], profile: dict[str, object]) -> N
     command.extend(["--accel-residual-gate-mps2", str(float(profile["accel_residual_gate_mps2"]))])
 
 
-def profile_kalman_overrides(profile: dict[str, object]) -> dict[str, float]:
-    return {
-        "accel_noise": float(profile["accel_noise"]),
-        "position_sigma_m": float(profile["position_sigma_m"]),
-        "gnss_update_period_s": float(profile["gnss_update_period_s"]),
-    }
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Calibrate a full IMU processing profile (bias + drift settings) from a static recording."

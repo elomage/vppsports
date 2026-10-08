@@ -209,10 +209,12 @@
             </select>
           </label>
           <div class="grid3">
-            <label><span class="label">GNSS sigma</span><input id="positionSigma" type="number" step="0.1" value="0.6"></label>
-            <label><span class="label">Accel noise</span><input id="accelNoise" type="number" step="0.1" value="2.0"></label>
-            <label><span class="label">Update s</span><input id="updatePeriod" type="number" step="0.01" value="0.05"></label>
+            <label><span class="label">GNSS sigma</span><input id="positionSigma" type="number" step="0.01" min="0" placeholder="auto" title="GNSS position sigma in m. Empty = automatic per GNSS source / solution type (config/fusion_defaults.json)"></label>
+            <label><span class="label">Accel noise</span><input id="accelNoise" type="number" step="0.1" min="0" placeholder="default" title="Lateral (unmodelled) acceleration noise in m/s2. Empty = config default"></label>
+            <label><span class="label">Update s</span><input id="updatePeriod" type="number" step="0.01" min="0" placeholder="all" title="Minimum spacing between GNSS updates in s. Empty = use every GNSS epoch"></label>
           </div>
+          <label><span class="label">Fusion options (key=value; ...)</span><input id="fusionSet" type="text" placeholder="outlier_gate_sigma=4; smooth=false" title="Any parameter from config/fusion_defaults.json"></label>
+          <label><span class="label">GNSS outage test (start:end s, ...)</span><input id="gnssOutage" type="text" placeholder="60:75" title="Withhold GNSS in these windows and report the error against it"></label>
           <label><span class="label">Alignment</span><select id="alignmentMode"><option value="offset">manual offset</option><option value="utc">known IMU UTC start</option><option value="auto">auto align</option></select></label>
           <div class="grid2">
             <label><span class="label">Offset seconds</span><input id="timeOffset" type="number" step="0.1" value="0"></label>
@@ -414,9 +416,6 @@
       els.driftCorrect.checked = profile.drift_correct !== false;
       if (profile.static_speed_mps != null) els.staticSpeed.value = Number(profile.static_speed_mps).toFixed(3);
       if (profile.accel_residual_gate_mps2 != null) els.residualGate.value = Number(profile.accel_residual_gate_mps2).toFixed(4);
-      if (profile.position_sigma_m != null) els.positionSigma.value = Number(profile.position_sigma_m);
-      if (profile.accel_noise != null) els.accelNoise.value = Number(profile.accel_noise);
-      if (profile.gnss_update_period_s != null) els.updatePeriod.value = Number(profile.gnss_update_period_s);
       const bias = [profile.bias_ax_mps2, profile.bias_ay_mps2, profile.bias_az_mps2]
         .map(value => value == null ? "?" : Number(value).toFixed(4)).join(", ");
       const gate = profile.accel_residual_gate_mps2 == null ? "?" : Number(profile.accel_residual_gate_mps2).toFixed(4);
@@ -437,33 +436,43 @@
       else if ([...els.accelBiasProfile.options].some(option => option.value === current)) els.accelBiasProfile.value = current;
       applyProfileToForm(findProfile(els.accelBiasProfile.value));
     }
+    function optionalNumber(el) {
+      const text = String(el?.value ?? "").trim();
+      return text === "" ? null : Number(text);
+    }
+    function fusionExtras() {
+      const split = text => String(text || "").split(/[;,\s]+/).map(item => item.trim()).filter(Boolean);
+      return { fusion_set: String(document.getElementById("fusionSet")?.value || "").split(";").map(item => item.trim()).filter(Boolean), gnss_outage: split(document.getElementById("gnssOutage")?.value) };
+    }
     function imuFilterPayload({ forKalman = false } = {}) {
       const name = els.accelBiasProfile.value;
       // Process-IMU always builds filtered trajectory; Kalman may choose raw instead.
       const mode = forKalman ? (els.imuKalmanMode?.value || "processed") : "processed";
       if (mode === "raw") {
         return {
+          ...fusionExtras(),
           imu_mode: "raw",
           imu_processing_profile: "",
           accel_bias_profile: "",
           drift_correct: false,
           static_speed_mps: Number(els.staticSpeed.value || 0.2),
           accel_residual_gate_mps2: Number(els.residualGate.value || 0.05),
-          position_sigma_m: Number(els.positionSigma.value || 0.6),
-          accel_noise: Number(els.accelNoise.value || 2),
-          gnss_update_period_s: Number(els.updatePeriod.value || 0.05)
+          position_sigma_m: optionalNumber(els.positionSigma),
+          accel_noise: optionalNumber(els.accelNoise),
+          gnss_update_period_s: optionalNumber(els.updatePeriod)
         };
       }
       return {
+        ...fusionExtras(),
         imu_mode: "processed",
         imu_processing_profile: name,
         accel_bias_profile: name,
         drift_correct: els.driftCorrect.checked,
         static_speed_mps: Number(els.staticSpeed.value || 0.2),
         accel_residual_gate_mps2: Number(els.residualGate.value || 0.05),
-        position_sigma_m: Number(els.positionSigma.value || 0.6),
-        accel_noise: Number(els.accelNoise.value || 2),
-        gnss_update_period_s: Number(els.updatePeriod.value || 0.05)
+        position_sigma_m: optionalNumber(els.positionSigma),
+        accel_noise: optionalNumber(els.accelNoise),
+        gnss_update_period_s: optionalNumber(els.updatePeriod)
       };
     }
     function parseBiasWindow() {

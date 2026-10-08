@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import shutil
 import struct
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
@@ -20,6 +21,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from session_paths import find_receiver_csv, output_subdir, resolve_session_dir
 from gnss_track_utils import ecef_to_geodetic, safe_float
+from gnss_imu_fusion import DEFAULT_CONFIG_PATH, FusionConfig, parse_outages, run_fusion
 
 WGS84_A = 6378137.0
 WGS84_F = 1 / 298.257223563
@@ -55,6 +57,10 @@ class GnssSample:
     north: float
     speed_mps: float
     heading_deg: float
+    ve_mps: float | None = None  # Doppler velocity (ENU), only when the source CSV has vx/vy/vz
+    vn_mps: float | None = None
+    position_type: str | None = None  # receiver solution type, used to pick a per-point sigma
+    sigma_m: float | None = None  # explicit per-point sigma if the source provides one
 
 
 def parse_time(value: object) -> datetime | None:
@@ -257,7 +263,7 @@ def source_csv(session_dir: Path, source: str) -> Path:
 def load_gnss(path: Path) -> list[GnssSample]:
     if not path.is_file():
         raise SystemExit(f"GNSS source CSV not found: {path}")
-    raw: list[tuple[datetime, float, float, float, float, float, float]] = []
+    raw: list[tuple] = []
     with path.open("r", newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         if not reader.fieldnames:
@@ -269,6 +275,10 @@ def load_gnss(path: Path) -> list[GnssSample]:
         x_key = find_first_key(reader.fieldnames, ["x_m", "x", "ecef_x", "ecef_x_m"])
         y_key = find_first_key(reader.fieldnames, ["y_m", "y", "ecef_y", "ecef_y_m"])
         z_key = find_first_key(reader.fieldnames, ["z_m", "z", "ecef_z", "ecef_z_m"])
+        vx_key = find_first_key(reader.fieldnames, ["vx_mps", "vx"])
+        vy_key = find_first_key(reader.fieldnames, ["vy_mps", "vy"])
+        vz_key = find_first_key(reader.fieldnames, ["vz_mps", "vz"])
+        type_key = find_first_key(reader.fieldnames, ["position_type", "pos_type"])
         if not time_key:
             raise SystemExit(f"GNSS CSV needs a time column: {path}")
         for row in reader:
@@ -290,7 +300,13 @@ def load_gnss(path: Path) -> list[GnssSample]:
                 x, y, z = llh_to_ecef(lat, lon, height or 0.0)
             if (lat == 0.0 and lon == 0.0) or (x == 0.0 and y == 0.0 and z == 0.0):
                 continue
-            raw.append((time, lat, lon, height or 0.0, x, y, z))
+            velocity = None
+            if vx_key and vy_key and vz_key:
+                vx, vy, vz = safe_float(row.get(vx_key)), safe_float(row.get(vy_key)), safe_float(row.get(vz_key))
+                if vx is not None and vy is not None and vz is not None and (vx, vy, vz) != (0.0, 0.0, 0.0):
+                    velocity = (vx, vy, vz)
+            position_type = (str(row.get(type_key) or "").strip() or None) if type_key else None
+            raw.append((time, lat, lon, height or 0.0, x, y, z, velocity, position_type))
     if len(raw) < 2:
         raise SystemExit(f"Need at least two usable GNSS rows in {path}")
     raw.sort(key=lambda item: item[0])
@@ -298,6 +314,14 @@ def load_gnss(path: Path) -> list[GnssSample]:
     ref_xyz = llh_to_ecef(ref_lat, ref_lon, ref_height)
     basis = enu_basis(ref_lat, ref_lon)
     enu_rows = [(item[0], item[1], item[2], item[3], *ecef_to_enu(item[4], item[5], item[6], ref_xyz, basis)) for item in raw]
+    east_axis, north_axis = basis
+    enu_velocity = [
+        None if item[7] is None else (
+            sum(a * b for a, b in zip(item[7], east_axis)),
+            sum(a * b for a, b in zip(item[7], north_axis)),
+        )
+        for item in raw
+    ]
     result: list[GnssSample] = []
     for index, row in enumerate(enu_rows):
         prev = enu_rows[max(0, index - 1)]
@@ -307,7 +331,13 @@ def load_gnss(path: Path) -> list[GnssSample]:
         dn = nxt[5] - prev[5]
         speed = math.hypot(de, dn) / dt
         heading = math.degrees(math.atan2(de, dn)) % 360.0 if speed > 1e-4 else (result[-1].heading_deg if result else 0.0)
-        result.append(GnssSample(row[0], row[1], row[2], row[3], row[4], row[5], speed, heading))
+        velocity = enu_velocity[index]
+        result.append(GnssSample(
+            row[0], row[1], row[2], row[3], row[4], row[5], speed, heading,
+            None if velocity is None else velocity[0],
+            None if velocity is None else velocity[1],
+            raw[index][8],
+        ))
     return result
 
 
@@ -465,47 +495,27 @@ def drift_corrected_forward_accel(
     return signed_forward_accel(sample, point, previous_point), False
 
 
-def kalman_update(
-    state: list[float],
-    covariance: list[list[float]],
-    meas_e: float,
-    meas_n: float,
-    measurement_var: float,
-) -> tuple[list[float], list[list[float]]]:
-    h = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]
-    residual = [meas_e - state[0], meas_n - state[1]]
-    s00 = covariance[0][0] + measurement_var
-    s01 = covariance[0][1]
-    s10 = covariance[1][0]
-    s11 = covariance[1][1] + measurement_var
-    det = s00 * s11 - s01 * s10
-    if abs(det) < 1e-12:
-        return state, covariance
-    inv_s = [[s11 / det, -s01 / det], [-s10 / det, s00 / det]]
-    k = [
-        [covariance[i][0] * inv_s[0][0] + covariance[i][1] * inv_s[1][0],
-         covariance[i][0] * inv_s[0][1] + covariance[i][1] * inv_s[1][1]]
-        for i in range(4)
-    ]
-    next_state = [state[i] + k[i][0] * residual[0] + k[i][1] * residual[1] for i in range(4)]
-    i_kh = [[(1.0 if r == c else 0.0) - k[r][c] if c < 2 else (1.0 if r == c else 0.0) for c in range(4)] for r in range(4)]
-    next_cov = [[sum(i_kh[r][m] * covariance[m][c] for m in range(4)) for c in range(4)] for r in range(4)]
-    return next_state, next_cov
+DIAG_UPDATE_PERIOD_S = 0.05  # how often the diagnostic IMU paths refresh their GNSS-derived sign
 
 
 def run_filter(
     points: list[GnssSample],
     samples: list[ImuSample],
     source: str,
-    position_sigma_m: float,
-    accel_noise: float,
-    gnss_update_period_s: float,
     imu_start_delay_s: float = 0.0,
     *,
     drift_correct: bool = True,
     static_speed_mps: float = 0.2,
     residual_gate_mps2: float = 0.05,
-) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
+    fusion_config: FusionConfig | None = None,
+    outages: list[tuple[float, float]] | None = None,
+    fuse: bool = True,
+) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]], dict[str, object], list[dict[str, object]]]:
+    """Return (fused_rows, dead_rows, corrected_rows, fusion_info, gnss_log_rows).
+
+    The fused trajectory comes from gnss_imu_fusion (Kalman + gating + ZUPT + RTS). The two
+    diagnostic IMU-only paths (raw and drift-corrected dead reckoning) are kept as before.
+    """
     start_second = samples[0].seconds + max(0.0, imu_start_delay_s)
     overlap = [
         sample for sample in samples
@@ -517,13 +527,8 @@ def run_filter(
     first_gnss = interp_gnss(points, overlap[0].time)
     if first_gnss is None:
         raise SystemExit("Could not initialize from GNSS at first overlap sample.")
-    state = [first_gnss.east, first_gnss.north, 0.0, 0.0]
-    covariance = [[0.0 for _ in range(4)] for _ in range(4)]
-    for i in range(4):
-        covariance[i][i] = 10.0
 
     ref_lat, ref_lon, ref_height = points[0].lat, points[0].lon, points[0].height
-    rows: list[dict[str, object]] = []
     dead_rows: list[dict[str, object]] = []
     corrected_rows: list[dict[str, object]] = []
     dead_e, dead_n = first_gnss.east, first_gnss.north
@@ -555,25 +560,6 @@ def run_filter(
         ae = corr_accel * math.sin(heading)
         an = corr_accel * math.cos(heading)
 
-        # Kalman prediction uses drift-corrected accel when enabled.
-        state[0] += state[2] * dt + 0.5 * ae * dt * dt
-        state[1] += state[3] * dt + 0.5 * an * dt * dt
-        state[2] += ae * dt
-        state[3] += an * dt
-        if drift_correct and is_static:
-            state[2] = 0.0
-            state[3] = 0.0
-
-        f = [[1.0, 0.0, dt, 0.0], [0.0, 1.0, 0.0, dt], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
-        covariance = [[sum(f[r][m] * covariance[m][n] for m in range(4)) for n in range(4)] for r in range(4)]
-        covariance = [[sum(covariance[r][m] * f[c][m] for m in range(4)) for c in range(4)] for r in range(4)]
-        q_pos = 0.25 * accel_noise * dt ** 4
-        q_vel = accel_noise * dt * dt
-        covariance[0][0] += q_pos
-        covariance[1][1] += q_pos
-        covariance[2][2] += q_vel
-        covariance[3][3] += q_vel
-
         # Raw IMU diagnostic (no drift correction).
         dead_e += dead_ve * dt + 0.5 * raw_ae * dt * dt
         dead_n += dead_vn * dt + 0.5 * raw_an * dt * dt
@@ -590,30 +576,12 @@ def run_filter(
             corr_ve += ae * dt
             corr_vn += an * dt
 
-        gnss_used = False
-        if gnss and (sample.time - last_update_time).total_seconds() >= gnss_update_period_s:
-            state, covariance = kalman_update(state, covariance, gnss.east, gnss.north, position_sigma_m * position_sigma_m)
+        if gnss and (sample.time - last_update_time).total_seconds() >= DIAG_UPDATE_PERIOD_S:
             last_update_time = sample.time
-            gnss_used = True
             previous_gnss = gnss
 
-        lat, lon, height = enu_to_llh(state[0], state[1], ref_lat, ref_lon, ref_height)
         dead_lat, dead_lon, dead_height = enu_to_llh(dead_e, dead_n, ref_lat, ref_lon, ref_height)
         corr_lat, corr_lon, corr_height = enu_to_llh(corr_e, corr_n, ref_lat, ref_lon, ref_height)
-        rows.append({
-            "time": sample.time.isoformat(),
-            "source": source,
-            "lat": f"{lat:.10f}",
-            "lon": f"{lon:.10f}",
-            "height_m": f"{height:.3f}",
-            "east_m": f"{state[0]:.3f}",
-            "north_m": f"{state[1]:.3f}",
-            "ve_mps": f"{state[2]:.4f}",
-            "vn_mps": f"{state[3]:.4f}",
-            "gnss_used": "1" if gnss_used else "0",
-            "drift_corrected": "1" if drift_correct else "0",
-            "zupt": "1" if is_static else "0",
-        })
         dead_rows.append({
             "time": sample.time.isoformat(),
             "lat": f"{dead_lat:.10f}",
@@ -633,7 +601,50 @@ def run_filter(
             "forward_accel_mps2": f"{corr_accel:.6f}",
         })
         previous_time = sample.time
-    return rows, dead_rows, corrected_rows
+
+    rows: list[dict[str, object]] = []
+    info: dict[str, object] = {}
+    gnss_log: list[dict[str, object]] = []
+    if fuse:
+        config = fusion_config or FusionConfig.load()
+        if not drift_correct:
+            config.zupt = False
+        config.static_speed_mps = static_speed_mps
+        result = run_fusion(points, samples, source, config, imu_start_delay_s, outages or [])
+        info = result.info
+        for i, time in enumerate(result.times):
+            lat, lon, _ = enu_to_llh(float(result.east[i]), float(result.north[i]), ref_lat, ref_lon, ref_height)
+            status = result.gnss_status[i]
+            rows.append({
+                "time": time.isoformat(),
+                "source": source,
+                "lat": f"{lat:.10f}",
+                "lon": f"{lon:.10f}",
+                "height_m": f"{result.height[i]:.3f}",
+                "east_m": f"{result.east[i]:.3f}",
+                "north_m": f"{result.north[i]:.3f}",
+                "ve_mps": f"{result.ve[i]:.4f}",
+                "vn_mps": f"{result.vn[i]:.4f}",
+                "gnss_used": "1" if status in ("used", "downweighted", "reacquired") else "0",
+                "drift_corrected": "1" if drift_correct else "0",
+                "zupt": "1" if result.zupt[i] else "0",
+                "sigma_e_m": f"{result.sigma_e[i]:.4f}",
+                "sigma_n_m": f"{result.sigma_n[i]:.4f}",
+                "bias_mps2": f"{result.bias[i]:.5f}",
+                "gnss_status": status,
+                "innovation_sigma": f"{result.innovation[i]:.2f}",
+            })
+        t0 = overlap[0].time
+        for entry in result.gnss_log:
+            gnss_log.append({
+                "time": (t0 + timedelta(seconds=float(entry["time_s"]))).isoformat(),
+                "status": entry["status"],
+                "innovation_sigma": f"{float(entry['innovation_sigma']):.2f}",
+                "sigma_m": f"{float(entry['sigma_m']):.3f}",
+                "east_m": f"{float(entry['east_m']):.3f}",
+                "north_m": f"{float(entry['north_m']):.3f}",
+            })
+    return rows, dead_rows, corrected_rows, info, gnss_log
 
 
 def write_rows(path: Path, rows: list[dict[str, object]]) -> None:
@@ -663,6 +674,38 @@ def copy_or_convert_imu(input_path: Path, imu_dir: Path) -> Path:
     return csv_copy
 
 
+def build_fusion_config(args: argparse.Namespace) -> FusionConfig:
+    overrides: dict[str, object] = {
+        "gnss_sigma_m": args.position_sigma_m,
+        "accel_noise_lateral_mps2": args.accel_noise,
+        "accel_noise_along_mps2": args.accel_noise_along,
+        "gnss_speed_sigma_mps": args.gnss_speed_sigma_mps,
+        "outlier_gate_sigma": args.outlier_gate_sigma,
+        "fusion_rate_hz": args.fusion_rate_hz,
+        "gnss_update_period_s": args.gnss_update_period_s,
+        "static_speed_mps": args.static_speed_mps,
+        "smooth": args.smooth,
+    }
+    if args.forward_axis:
+        try:
+            overrides["forward_axis"] = [float(part) for part in args.forward_axis.replace(";", ",").split(",")]
+        except ValueError as exc:
+            raise SystemExit("--forward-axis must be x,y,z numbers") from exc
+    for item in args.fusion_set:
+        key, sep, value = item.partition("=")
+        if not sep:
+            raise SystemExit(f"--fusion-set needs KEY=VALUE, got {item!r}")
+        try:
+            overrides[key.strip()] = json.loads(value)
+        except json.JSONDecodeError:
+            overrides[key.strip()] = value
+    known = {item.name for item in fields(FusionConfig)}
+    unknown = sorted(set(overrides) - known)
+    if unknown:
+        raise SystemExit(f"Unknown fusion parameter(s): {', '.join(unknown)}. Known: {', '.join(sorted(known))}")
+    return FusionConfig.load(args.fusion_config, overrides)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Calculate a GNSS+IMU Kalman trajectory.")
     parser.add_argument("recording", help="GNSS recording output directory or name inside out/")
@@ -673,15 +716,24 @@ def main() -> int:
     parser.add_argument("--auto-align", action="store_true", help="Estimate IMU/GNSS time offset from motion correlation")
     parser.add_argument("--align-step-s", type=float, default=0.5)
     parser.add_argument("--align-padding-s", type=float, default=30.0)
-    parser.add_argument("--position-sigma-m", type=float, default=0.6)
-    parser.add_argument("--accel-noise", type=float, default=2.0)
+    parser.add_argument("--fusion-config", type=Path, help=f"JSON fusion parameters (default: {DEFAULT_CONFIG_PATH.relative_to(ROOT)})")
+    parser.add_argument("--fusion-set", action="append", default=[], metavar="KEY=VALUE", help="Override any fusion parameter, e.g. --fusion-set outlier_gate_sigma=4 (repeatable)")
+    parser.add_argument("--position-sigma-m", type=float, help="GNSS position sigma for all points (default: per source / per position type from the fusion config)")
+    parser.add_argument("--accel-noise", type=float, help="Lateral (unmodelled) acceleration noise, m/s^2 (fusion config: accel_noise_lateral_mps2)")
+    parser.add_argument("--accel-noise-along", type=float, help="Along-track accelerometer noise, m/s^2")
+    parser.add_argument("--gnss-speed-sigma-mps", type=float, help="Doppler velocity sigma, m/s")
+    parser.add_argument("--outlier-gate-sigma", type=float, help="Reject GNSS points whose innovation exceeds this many sigma")
+    parser.add_argument("--fusion-rate-hz", type=float, help="IMU averaging rate used by the filter")
+    parser.add_argument("--forward-axis", help="Sensor travel axis x,y,z (default: estimated from GNSS)")
+    parser.add_argument("--smooth", action=argparse.BooleanOptionalAction, default=None, help="RTS backward smoothing (default on)")
+    parser.add_argument("--gnss-outage", action="append", default=[], metavar="START:END", help="Withhold GNSS between START and END seconds (from the first overlap sample) and report the error against it; repeatable")
     parser.add_argument("--accel-bias", help="Manual accelerometer bias ax,ay,az in m/s^2, subtracted from IMU samples")
     parser.add_argument("--accel-bias-profile", type=Path, help="CSV profile with bias_ax_mps2,bias_ay_mps2,bias_az_mps2 columns")
     parser.add_argument("--accel-bias-name", help="Profile name to use when --accel-bias-profile has multiple rows")
-    parser.add_argument("--gnss-update-period-s", type=float, default=0.05)
+    parser.add_argument("--gnss-update-period-s", type=float, help="Minimum spacing between GNSS updates; 0 uses every epoch")
     parser.add_argument("--imu-start-delay-s", type=float, default=0.0, help="Skip this many seconds from IMU start before starting the trajectory")
     parser.add_argument("--drift-correct", action=argparse.BooleanOptionalAction, default=True, help="Apply residual gate + ZUPT before Kalman / corrected IMU path")
-    parser.add_argument("--static-speed-mps", type=float, default=0.2, help="GNSS speed at or below this is treated as stationary for ZUPT")
+    parser.add_argument("--static-speed-mps", type=float, help="GNSS speed at or below this is treated as stationary for ZUPT")
     parser.add_argument("--accel-residual-gate-mps2", type=float, default=0.05, help="|‖a‖−g| at or below this is treated as zero accel")
     parser.add_argument("--dead-only", action="store_true", help="Write only the IMU dead-reckoning trajectory, not the fused Kalman CSV")
     parser.add_argument("--output", type=Path, help="Output fused CSV path")
@@ -709,28 +761,36 @@ def main() -> int:
         args.align_step_s,
         args.align_padding_s,
     )
-    rows, dead_rows, corrected_rows = run_filter(
+    fusion_config = build_fusion_config(args)
+    rows, dead_rows, corrected_rows, fusion_info, gnss_log = run_filter(
         gnss,
         imu,
         args.source,
-        args.position_sigma_m,
-        args.accel_noise,
-        args.gnss_update_period_s,
         args.imu_start_delay_s,
         drift_correct=args.drift_correct,
-        static_speed_mps=args.static_speed_mps,
+        static_speed_mps=fusion_config.static_speed_mps,
         residual_gate_mps2=args.accel_residual_gate_mps2,
+        fusion_config=fusion_config,
+        outages=parse_outages(args.gnss_outage),
+        fuse=not args.dead_only,
     )
     source_label = args.source.replace("_ppk", "")
     output = args.output or imu_dir / f"kalman_{source_label}_{imu_csv.stem}.csv"
     dead_output = args.dead_output or imu_dir / f"imu_dead_reckoning_{source_label}_{imu_csv.stem}.csv"
     corrected_output = args.corrected_output or imu_dir / f"imu_drift_corrected_{source_label}_{imu_csv.stem}.csv"
+    gnss_log_output = output.with_name(f"fusion_gnss_{output.stem}.csv")
     if not args.dead_only:
         write_rows(output, rows)
+        if gnss_log:
+            write_rows(gnss_log_output, gnss_log)
     write_rows(dead_output, dead_rows)
     write_rows(corrected_output, corrected_rows)
     report_prefix = "imu_dead_reckoning" if args.dead_only else "kalman"
-    report = imu_dir / f"{report_prefix}_{source_label}_{imu_csv.stem}_report.txt"
+    # A run with an explicit --output keeps its own report; otherwise the report is shared per source+IMU.
+    report = (
+        output.with_name(f"{output.stem}_report.txt") if args.output
+        else imu_dir / f"{report_prefix}_{source_label}_{imu_csv.stem}_report.txt"
+    )
     report.write_text(
         "\n".join([
             f"recording={session_dir}",
@@ -741,13 +801,15 @@ def main() -> int:
             f"accel_bias_name={'' if accel_bias is None else accel_bias.name}",
             f"accel_bias_mps2={'' if accel_bias is None else f'{accel_bias.ax_mps2:.8f},{accel_bias.ay_mps2:.8f},{accel_bias.az_mps2:.8f}'}",
             f"drift_correct={1 if args.drift_correct else 0}",
-            f"static_speed_mps={args.static_speed_mps:.3f}",
+            f"static_speed_mps={fusion_config.static_speed_mps:.3f}",
             f"accel_residual_gate_mps2={args.accel_residual_gate_mps2:.4f}",
             f"auto_align_score={'' if score is None else f'{score:.4f}'}",
             f"overlap_rows={len(rows) if rows else len(dead_rows)}",
             f"kalman_csv={'' if args.dead_only else output}",
             f"imu_dead_reckoning_csv={dead_output}",
             f"imu_drift_corrected_csv={corrected_output}",
+            *[f"fusion_{key}={value}" for key, value in fusion_info.items()],
+            *[f"fusion_config_{item.name}={getattr(fusion_config, item.name)}" for item in fields(fusion_config)],
         ]),
         encoding="utf-8",
     )
@@ -758,6 +820,17 @@ def main() -> int:
     print(f"Time offset: {offset:.3f} s" + (f" (correlation {score:.4f})" if score is not None else ""))
     print(f"IMU start delay: {args.imu_start_delay_s:.3f} s")
     print(f"Drift correct: {'on' if args.drift_correct else 'off'}")
+    if fusion_info:
+        print(
+            f"GNSS epochs: {fusion_info['gnss_epochs']} (used {fusion_info['gnss_used']}, "
+            f"downweighted {fusion_info['gnss_downweighted']}, rejected {fusion_info['gnss_rejected']}, "
+            f"outage {fusion_info['gnss_outage']})"
+        )
+        print(f"Forward axis: {fusion_info['forward_axis']} (fit R2 {fusion_info['forward_axis_r2'] or 'manual'}), final bias {fusion_info['final_bias_mps2']:.4f} m/s^2")
+        if "outage_rmse_m" in fusion_info:
+            print(f"GNSS outage error: RMSE {fusion_info['outage_rmse_m']:.3f} m, max {fusion_info['outage_max_m']:.3f} m over {fusion_info['outage_points']} withheld points (GNSS reference sigma ~{fusion_info['outage_ref_sigma_m']:.2f} m)")
+        if not fusion_info["imu_used"]:
+            print("Warning: the IMU does not match GNSS acceleration (axis fit R2 below min_axis_r2), so the IMU was ignored and the result is GNSS-only. Check the IMU/GNSS alignment (--time-offset-s) or set --forward-axis.")
     if score is not None and score < 0.20:
         print("Warning: auto alignment confidence is low; compare with --time-offset-s 0 or set --imu-start-utc manually.")
     print(f"Report: {report}")

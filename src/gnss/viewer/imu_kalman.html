@@ -108,9 +108,9 @@
       <div class="section">
         <div class="label">Filter Settings</div>
         <div class="grid3">
-          <label><span class="label">GNSS sigma m</span><input id="positionSigma" type="number" step="0.1" value="0.6"></label>
-          <label><span class="label">Accel noise</span><input id="accelNoise" type="number" step="0.1" value="2.0"></label>
-          <label><span class="label">Update period s</span><input id="updatePeriod" type="number" step="0.01" value="0.05"></label>
+          <label><span class="label">GNSS sigma m</span><input id="positionSigma" type="number" step="0.01" min="0" placeholder="auto" title="GNSS position sigma in m. Empty = automatic per GNSS source / solution type (config/fusion_defaults.json)"></label>
+          <label><span class="label">Accel noise</span><input id="accelNoise" type="number" step="0.1" min="0" placeholder="default" title="Lateral (unmodelled) acceleration noise in m/s2. Empty = config default"></label>
+          <label><span class="label">Update period s</span><input id="updatePeriod" type="number" step="0.01" min="0" placeholder="all" title="Minimum spacing between GNSS updates in s. Empty = use every GNSS epoch"></label>
         </div>
         <button id="calculateBtn" class="primary" type="button">Calculate Kalman</button>
       </div>
@@ -139,6 +139,10 @@
     }).addTo(map);
     L.control.scale({ position: "bottomright", metric: true, imperial: false }).addTo(map);
 
+    function optionalNumber(el) {
+      const text = String(el?.value ?? "").trim();
+      return text === "" ? null : Number(text);
+    }
     const els = {
       search: document.getElementById("search"),
       recordings: document.getElementById("recordings"),
@@ -328,9 +332,9 @@
             imu_start_utc: els.imuStartUtc.value.trim(),
             align_step_s: Number(els.alignStep.value || 0.5),
             align_padding_s: Number(els.alignPadding.value || 30),
-            position_sigma_m: Number(els.positionSigma.value || 0.6),
-            accel_noise: Number(els.accelNoise.value || 2),
-            gnss_update_period_s: Number(els.updatePeriod.value || 0.05)
+            position_sigma_m: optionalNumber(els.positionSigma),
+            accel_noise: optionalNumber(els.accelNoise),
+            gnss_update_period_s: optionalNumber(els.updatePeriod)
           })
         });
         els.log.textContent = result.commands.map(item => [

@@ -10,7 +10,7 @@ import math
 import mimetypes
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -31,13 +31,15 @@ from imu_processing_profile import (
     append_profile_cli_args,
     list_profiles as list_imu_processing_profiles,
     load_profile,
-    profile_kalman_overrides,
 )
 from session_paths import OUT_DIR, output_subdir, resolve_session_dir
 from recording_analysis import analyze as analyze_recording, list_sessions as analysis_sessions
 from recording_analysis import get_session as analysis_session
 from observation_analysis import signal_details
-from imu_alignment import preview as alignment_preview, save_alignment
+from imu_alignment import preview as alignment_preview, save_alignment, scan as alignment_scan
+from gnss_imu_fusion import DEFAULT_CONFIG_PATH as FUSION_CONFIG_PATH, FusionConfig
+import fusion_db
+import fusion_runs
 
 SOURCES = GNSS_SOURCES
 IMU_BIAS_PROFILES = ROOT / "config" / "imu_bias_profiles.csv"  # legacy; prefer IMU_PROCESSING_PROFILES
@@ -493,16 +495,93 @@ def append_drift_options(command: list[str], payload: dict[str, Any]) -> None:
         command.extend(["--accel-residual-gate-mps2", str(float(payload["accel_residual_gate_mps2"]))])
 
 
-def kalman_numeric_args(payload: dict[str, Any]) -> dict[str, float]:
-    values = {
-        "position_sigma_m": float(payload.get("position_sigma_m", 0.6)),
-        "accel_noise": float(payload.get("accel_noise", 2.0)),
-        "gnss_update_period_s": float(payload.get("gnss_update_period_s", 0.05)),
+def append_fusion_options(command: list[str], payload: dict[str, Any]) -> None:
+    """Pass only what the user set; everything else comes from config/fusion_defaults.json."""
+    for key, flag in (
+        ("position_sigma_m", "--position-sigma-m"),
+        ("accel_noise", "--accel-noise"),
+        ("gnss_update_period_s", "--gnss-update-period-s"),
+    ):
+        value = payload.get(key)
+        if value is not None and value != "":
+            command.extend([flag, str(float(value))])
+    fusion_set = payload.get("fusion_set") or []
+    if isinstance(fusion_set, str):
+        fusion_set = [item for item in fusion_set.split(";") if item.strip()]
+    for item in fusion_set:
+        command.extend(["--fusion-set", str(item).strip()])
+    outages = payload.get("gnss_outage") or []
+    if isinstance(outages, str):
+        outages = outages.replace(",", " ").split()
+    for item in outages:
+        command.extend(["--gnss-outage", str(item).strip()])
+
+
+def _recording_imu_dir(recording: str) -> Path:
+    return resolve_session_dir(recording) / "imu"
+
+
+def run_summary_for_client(run: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in run.items() if key != "imu_path"}
+
+
+def handle_fusion_run(payload: dict[str, Any]) -> dict[str, Any]:
+    """Run one fusion for one GNSS source, store it in the DB and return its trajectory."""
+    source = str((payload.get("sources") or [""])[0])
+    result = handle_calculate({**payload, "sources": [source]})
+    output = next(iter(result["outputs"]), None)
+    if not result["ok"] or output is None:
+        return {"ok": False, "commands": result["commands"]}
+    session_dir = resolve_session_dir(str(payload["recording"]))
+    imu_dir = session_dir / "imu"
+    run = fusion_runs.store_run(
+        imu_dir, session_dir.name, source, resolve_imu_for_recording(session_dir, str(payload["imu"])), output, payload,
+    )
+    return {
+        "ok": True,
+        "run": run_summary_for_client(run),
+        "trajectory": fusion_runs.trajectory(imu_dir, run["kalman_file"]),
+        "commands": result["commands"],
     }
-    profile = resolve_processing_profile(payload)
-    if profile is not None:
-        values.update(profile_kalman_overrides(profile))
-    return values
+
+
+def handle_fusion_runs(query: dict[str, list[str]]) -> dict[str, Any]:
+    recording = query.get("recording", [""])[0]
+    imu_dir = _recording_imu_dir(recording)
+    runs = fusion_runs.list_runs(imu_dir, resolve_session_dir(recording).name, RUN_LABEL_TO_SOURCE)
+    return {"runs": [run_summary_for_client(run) for run in runs]}
+
+
+def handle_fusion_run_data(query: dict[str, list[str]]) -> dict[str, Any]:
+    recording = query.get("recording", [""])[0]
+    uid = query.get("uid", [""])[0]
+    imu_dir = _recording_imu_dir(recording)
+    if uid.startswith("db:"):
+        run = fusion_db.get_run(int(uid[3:]))
+        if run is None:
+            raise ValueError("Aprēķins nav atrasts.")
+        kalman = run["kalman_file"]
+    elif uid.startswith("file:"):
+        kalman = Path(uid[5:]).name
+    else:
+        raise ValueError("Nederīgs aprēķina identifikators.")
+    return {"uid": uid, "trajectory": fusion_runs.trajectory(imu_dir, kalman)}
+
+
+def handle_fusion_run_update(payload: dict[str, Any]) -> dict[str, Any]:
+    run = fusion_db.update_run(int(payload["id"]), payload)
+    if run is None:
+        raise ValueError("Aprēķins nav atrasts.")
+    return {"run": run_summary_for_client(run)}
+
+
+def handle_fusion_run_delete(payload: dict[str, Any]) -> dict[str, Any]:
+    run = fusion_db.get_run(int(payload["id"]))
+    if run is None:
+        raise ValueError("Aprēķins nav atrasts.")
+    removed = fusion_runs.delete_run_files(_recording_imu_dir(run["recording"]), run)
+    fusion_db.delete_run(run["id"])
+    return {"ok": True, "removed": removed}
 
 
 def handle_calibrate_imu(payload: dict[str, Any]) -> dict[str, Any]:
@@ -566,7 +645,6 @@ def handle_calculate(payload: dict[str, Any]) -> dict[str, Any]:
         output = imu_dir / f"kalman_{source_run_label(source)}_{imu_stem}_{run_id}.csv"
         dead_output = imu_dir / f"imu_dead_reckoning_{source_run_label(source)}_{imu_stem}_{run_id}.csv"
         corrected_output = imu_dir / f"imu_drift_corrected_{source_run_label(source)}_{imu_stem}_{run_id}.csv"
-        nums = kalman_numeric_args(payload)
         command = [
             sys.executable,
             str(ROOT / "scripts" / "imu_kalman.py"),
@@ -575,12 +653,6 @@ def handle_calculate(payload: dict[str, Any]) -> dict[str, Any]:
             str(imu_path),
             "--source",
             source,
-            "--position-sigma-m",
-            str(nums["position_sigma_m"]),
-            "--accel-noise",
-            str(nums["accel_noise"]),
-            "--gnss-update-period-s",
-            str(nums["gnss_update_period_s"]),
             "--output",
             str(output),
             "--dead-output",
@@ -591,6 +663,7 @@ def handle_calculate(payload: dict[str, Any]) -> dict[str, Any]:
         append_alignment_options(command, payload)
         append_accel_bias_options(command, payload)
         append_drift_options(command, payload)
+        append_fusion_options(command, payload)
         result = run_command(command)
         commands.append(result)
         if result["returncode"] == 0:
@@ -601,7 +674,10 @@ def handle_calculate(payload: dict[str, Any]) -> dict[str, Any]:
                 "corrected": corrected_output.name,
             })
 
-    viewer_result = run_command([sys.executable, str(ROOT / "scripts" / "maps" / "build_recording_viewer.py")])
+    if payload.get("skip_viewer"):
+        viewer_result = {"command": [], "returncode": 0, "stdout": "", "stderr": ""}
+    else:
+        viewer_result = run_command([sys.executable, str(ROOT / "scripts" / "maps" / "build_recording_viewer.py")])
     ok = all(item["returncode"] == 0 for item in commands)
     return {
         "ok": ok,
@@ -626,7 +702,6 @@ def _imu_dead_only_command(
     dead_output: Path,
     corrected_output: Path,
 ) -> list[str]:
-    nums = kalman_numeric_args(payload)
     command = [
         sys.executable,
         str(ROOT / "scripts" / "imu_kalman.py"),
@@ -638,12 +713,6 @@ def _imu_dead_only_command(
         "--dead-only",
         "--imu-start-delay-s",
         str(delay_s),
-        "--position-sigma-m",
-        str(nums["position_sigma_m"]),
-        "--accel-noise",
-        str(nums["accel_noise"]),
-        "--gnss-update-period-s",
-        str(nums["gnss_update_period_s"]),
         "--dead-output",
         str(dead_output),
         "--corrected-output",
@@ -952,6 +1021,21 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             except BaseException as exc:
                 error_response(self, exc)
             return
+        if parsed.path == "/api/fusion-defaults":
+            try:
+                write_json(self, {"defaults": asdict(FusionConfig.load()), "config_file": str(FUSION_CONFIG_PATH)})
+            except BaseException as exc:
+                error_response(self, exc)
+            return
+        if parsed.path in {"/api/fusion-runs", "/api/fusion-run-data"}:
+            try:
+                query = parse_qs(parsed.query)
+                write_json(self, handle_fusion_runs(query) if parsed.path.endswith("runs") else handle_fusion_run_data(query))
+            except ValueError as exc:
+                error_response(self, exc, status=400)
+            except BaseException as exc:
+                error_response(self, exc)
+            return
         if parsed.path == "/api/result":
             try:
                 write_json(self, handle_result(parse_qs(parsed.query)))
@@ -970,14 +1054,16 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         try:
             payload = read_json_body(self)
-            if parsed.path in {"/api/alignment-preview", "/api/alignment-save"}:
+            if parsed.path in {"/api/alignment-preview", "/api/alignment-save", "/api/alignment-scan"}:
                 session = analysis_session(str(payload.get("recording") or ""))
                 imu = resolve_imu_for_recording(session, str(payload.get("imu") or ""))
                 allowed = [ROOT / "in_imu", session / "imu"]
                 if not any(imu.is_relative_to(folder.resolve()) for folder in allowed) or imu.suffix.lower() not in {".bin", ".csv"}:
                     raise ValueError("Izvēlies IMU failu no ierakstu saraksta.")
                 source = str(payload.get("source") or "bestnav")
-                if parsed.path.endswith("preview"):
+                if parsed.path.endswith("scan"):
+                    write_json(self, alignment_scan(session, imu, source))
+                elif parsed.path.endswith("preview"):
                     write_json(self, alignment_preview(session, imu, source))
                 else:
                     write_json(self, save_alignment(session, imu, source, float(payload["time_offset_s"])))
@@ -987,6 +1073,11 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 return
             if parsed.path == "/api/calculate":
                 write_json(self, handle_calculate(payload))
+                return
+            if parsed.path in {"/api/fusion-run", "/api/fusion-run-update", "/api/fusion-run-delete"}:
+                handler = {"/api/fusion-run": handle_fusion_run, "/api/fusion-run-update": handle_fusion_run_update,
+                           "/api/fusion-run-delete": handle_fusion_run_delete}[parsed.path]
+                write_json(self, handler(payload))
                 return
             if parsed.path == "/api/imu-trajectory":
                 write_json(self, handle_imu_trajectory(payload))
