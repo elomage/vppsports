@@ -1,0 +1,5 @@
+pyserial>=3.5
+numpy>=1.26
+folium>=0.20
+requests>=2.32
+PyYAML>=6.0

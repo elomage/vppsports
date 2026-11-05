@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="lv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GNSS karte</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="header.css?v=4">
+<link rel="stylesheet" href="map.css">
+</head>
+<body class="map-body">
+<header id="site-header" class="site-header"></header>
+<div class="map-app">
+  <aside class="side">
+    <div class="side-head">
+      <input id="filter" type="search" placeholder="Meklēt ierakstu (datums, LOG nr.)">
+      <div class="row">
+        <label><input type="radio" name="base" value="esri" checked> Satelīts</label>
+        <label><input type="radio" name="base" value="osm"> OSM</label>
+        <button id="btnFit" type="button" title="Pielāgot skatu ieslēgtajām līnijām">Pielāgot</button>
+        <button id="btnOff" type="button" title="Izslēgt visas līnijas">Visas ✕</button>
+      </div>
+      <p id="msg" class="msg" role="status"></p>
+    </div>
+    <div id="tree" class="tree"></div>
+  </aside>
+  <section class="mapcol">
+    <div class="mapwrap">
+    <div id="map"></div>
+    <div id="vidbox" class="vidbox" hidden>
+      <div class="vh"><b id="vidTitle"></b><button id="vidReset" type="button" title="Atjaunot noklusējuma vietu un izmēru">⤢</button><button id="vidClose" type="button" title="Aizvērt">✕</button></div>
+      <video id="vid" controls preload="metadata" playsinline></video>
+      <div class="vcal">
+        <button data-nudge="-1" type="button">−1 s</button><button data-nudge="-0.1" type="button">−0.1</button>
+        <button data-nudge="0.1" type="button">+0.1</button><button data-nudge="1" type="button">+1 s</button>
+        <button id="vidSync" type="button" title="Pašreizējais video kadrs = pašreizējais laiks kartē">Sinhronizēt ar karti</button>
+      </div>
+      <small id="vidInfo"></small>
+    </div>
+    </div>
+    <div class="timebar">
+      <button id="play" type="button" title="Atskaņot">▶</button>
+      <div class="sliderwrap"><div id="ticks" class="ticks"></div><input id="slider" type="range" min="0" max="1000" value="0" disabled></div>
+      <span id="clock" class="mono">—</span>
+      <select id="speed" title="Atskaņošanas ātrums"><option value="0.1">0.1×</option><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="5">5×</option><option value="10">10×</option></select>
+    </div>
+    <div id="readout" class="readout"></div>
+  </section>
+</div>
+<script src="header.js?v=4"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="map.js"></script>
+</body>
+</html>

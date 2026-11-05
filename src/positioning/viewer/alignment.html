@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="lv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GNSS + IMU sapludināšana</title>
+<link rel="stylesheet" href="header.css?v=4">
+<link rel="stylesheet" href="alignment.css">
+</head>
+<body>
+<header id="site-header" class="site-header"></header>
+<main>
+
+<section class="intro">
+  <p class="eyebrow">GNSS + IMU / SAPLUDINĀŠANA</p>
+  <h1>Apvieno GNSS un IMU vienā trajektorijā</h1>
+  <p class="lead">GNSS dod pozīciju, bet reti un ar troksni. IMU (akselerometrs) dod kustību ļoti bieži, bet pats par sevi “aizpeld”.
+    Filtrs izmanto IMU starp GNSS punktiem un ar GNSS to labo. Šajā lapā tu to izdari piecos soļos, un pie katra iestatījuma redzi, ko tas ietekmē.</p>
+  <ol class="stepper" aria-label="Soļi">
+    <li><a href="#s1"><b>1</b> Dati</a></li>
+    <li><a href="#s2"><b>2</b> Laiks</a></li>
+    <li><a href="#s3"><b>3</b> Iestatījumi</a></li>
+    <li><a href="#s4"><b>4</b> Aprēķins</a></li>
+    <li><a href="#s5"><b>5</b> Rezultāts</a></li>
+    <li><a href="#s6"><b>6</b> Salīdzināšana</a></li>
+  </ol>
+</section>
+
+<p id="status" class="status" role="status" aria-live="polite">Ielādē ierakstu sarakstu…</p>
+
+<!-- 1. DATI -->
+<section class="step" id="s1">
+  <h2><span class="num">1</span> Izvēlies datus</h2>
+  <p class="explain">Vajag trīs lietas: GNSS ierakstu, GNSS risinājuma veidu un IMU failu, kas uzņemts tajā pašā braucienā.</p>
+  <div class="fields">
+    <label class="field">GNSS ieraksts
+      <select id="recording"></select>
+      <small>Mape <code>out/…</code> ar apstrādātiem GNSS datiem.</small></label>
+    <label class="field">GNSS risinājuma veids
+      <select id="source"></select>
+      <small id="sourceHelp">Jo precīzāks avots, jo precīzāks rezultāts.</small></label>
+    <label class="field">IMU fails
+      <select id="imu"></select>
+      <small>Akselerometra ieraksts (<code>.BIN</code> vai <code>.csv</code>). ★ = šim ierakstam piesaistītais noklusējums; vari izvēlēties arī citu.
+        <button id="setDefaultImu" type="button" class="linklike">Padarīt izvēlēto par šī ieraksta noklusējumu</button></small></label>
+    <label class="field">Akselerometra nobīdes korekcija
+      <select id="profile"></select>
+      <small>Sensora paliekošā kļūda, kas izmērīta nekustīgā ierakstā. “Nav” = netiek labota. XDK žurnālam nav vajadzīga: filtrs pats atrod abu sensoru nobīdes.</small></label>
+  </div>
+  <p class="help" id="attachNote">XDK žurnālus un SYNC (pogu spiedienu) failus pievieno ieraksta lapā:
+    <a href="recordings.html">Ieraksti → IMU un pogu spiedieni</a> (augšupielāde, savienošana notiek automātiski).</p>
+  <button id="load" class="primary">Ielādēt datus</button>
+</section>
+
+<!-- 2. LAIKS -->
+<section class="step" id="s2">
+  <h2><span class="num">2</span> Savieno laikus</h2>
+  <p class="explain">IMU pulkstenis sākas no 0 brīdī, kad to ieslēdz. GNSS ir kalendāra laiks (UTC). Lai filtrs zinātu, kuram GNSS brīdim atbilst kurš IMU brīdis, vajag
+    <b>nobīdi</b>: cik sekundes pēc pirmā GNSS punkta IMU pulkstenis rādīja 0.
+    <b>Ja nobīde ir nepareiza, IMU neatbilst kustībai un sapludināšana nedod neko.</b></p>
+
+  <div class="card">
+    <div class="cardhead"><h3>A. Atrast nobīdi automātiski</h3><button id="scan" disabled>Meklēt nobīdi</button></div>
+    <p class="help">Programma izmēģina simtiem nobīžu un katrai novērtē, cik labi IMU paātrinājums sakrīt ar GNSS ātruma izmaiņām (rādītājs 0–1, “atbilstība”).
+      Augstākais pīķis ir visticamākā nobīde. Ja pīķu nav vai tie ir līdzīgi, automātiskā meklēšana nav droša, tad izmanto B.</p>
+    <canvas id="scanPlot" class="small" aria-label="Atbilstība pret nobīdi"></canvas>
+    <div id="scanResult" class="peaks"></div>
+  </div>
+
+  <div class="card">
+    <div class="cardhead"><h3>B. Savietot ar roku</h3></div>
+    <p class="help">Atrodi vienu un to pašu kustības notikumu (sākums, apstāšanās, bremzēšana) abos grafikos, atzīmē to un nospied “Savietot atzīmes”.
+      Ritenis tuvina, vilkšana pārbīda. Abi grafiki ir uz vienas laika ass: kad nobīde ir pareiza, notikumi atrodas vienā vertikālē.</p>
+    <div class="plotbox">
+      <div class="plothead"><h4>IMU</h4>
+        <label>Signāls <select id="axis"><option value="1">X ass, m/s²</option><option value="2">Y ass, m/s²</option><option value="3">Z ass, m/s²</option><option value="4" selected>Kopējais paātrinājums − g, m/s²</option></select></label>
+        <button id="markI">Atzīmēt IMU notikumu</button></div>
+      <canvas id="imuPlot" aria-label="IMU paātrinājums laikā"></canvas>
+    </div>
+    <div class="plotbox">
+      <div class="plothead"><h4>GNSS</h4>
+        <label>Signāls <select id="metric"><option value="2" selected>Ātrums, m/s</option><option value="3">Paātrinājums, m/s²</option><option value="1">Pārvietojums no sākuma, m</option></select></label>
+        <button id="markG">Atzīmēt GNSS notikumu</button></div>
+      <canvas id="gnssPlot" aria-label="GNSS kustība laikā"></canvas>
+    </div>
+    <div class="toolbar" id="pressTools" hidden><label class="switch"><input id="showPresses" type="checkbox" checked> Rādīt SYNC pogas spiedienus grafikos</label>
+      <span class="legendline"><i class="pk g"></i> GNSS spiediens (Pico) &nbsp; <i class="pk x"></i> XDK spiediens (ar izvēlēto nobīdi) &nbsp; nepārtraukta līnija = pāris, raustīta = nav pāra</span></div>
+    <div class="toolbar"><span id="markers">Atzīmē vienu un to pašu notikumu abos grafikos.</span>
+      <button id="align" disabled>Savietot atzīmes</button><button id="clear">Notīrīt atzīmes</button><button id="fit">Rādīt visu ierakstu</button></div>
+    <p id="readout" class="readout">Pārvelc peli virs grafika, lai redzētu vērtības.</p>
+  </div>
+
+  <div class="card" id="syncCard" hidden>
+    <div class="cardhead"><h3>SYNC pogas sasaiste: kā tika iegūta nobīde</h3><button id="useButton" type="button">Lietot pogas nobīdi</button></div>
+    <div id="syncSteps"></div>
+    <div class="scroll"><table class="runs" id="syncPairs"></table></div>
+  </div>
+
+  <div class="card accent">
+    <div class="cardhead"><h3>Izvēlētā nobīde</h3></div>
+    <div class="offsetrow">
+      <label class="field narrow">IMU nobīde, s
+        <input id="offset" type="number" step="0.001" value="0"></label>
+      <div class="nudges" role="group" aria-label="Precizēt nobīdi">
+        <button data-nudge="-1">−1 s</button><button data-nudge="-0.1">−0,1</button><button data-nudge="-0.01">−0,01</button>
+        <button data-nudge="0.01">+0,01</button><button data-nudge="0.1">+0,1</button><button data-nudge="1">+1 s</button>
+      </div>
+      <button id="save" disabled>Saglabāt sasaisti</button>
+    </div>
+    <p class="help">Pozitīva nobīde pārbīda IMU vēlākā laikā. Nobīde ir skaitīta no <b>izvēlētā GNSS avota pirmā punkta</b>, tāpēc ar citu avotu tā pati sasaiste izskatās citādi.
+      Programma aprēķinam izmanto absolūto UTC laiku, kas ir vienāds visiem avotiem.</p>
+    <p id="utc" class="mono"></p>
+  </div>
+</section>
+
+<!-- 3. IESTATĪJUMI -->
+<section class="step" id="s3">
+  <h2><span class="num">3</span> Iestatījumi</h2>
+  <p class="explain">Noklusētās vērtības der vairumam gadījumu, un tu vari uzreiz pāriet uz 4. soli. Katram iestatījumam ir paskaidrots, ko tas dara un kas notiek, ja to palielini vai samazini.
+    Mainītie iestatījumi ir iezīmēti.</p>
+  <div class="toolbar"><span id="changedCount">Nekas nav mainīts.</span><button id="resetAll">Atiestatīt visus uz noklusējumu</button></div>
+  <div id="settings"></div>
+</section>
+
+<!-- 4. APRĒĶINS -->
+<section class="step" id="s4">
+  <h2><span class="num">4</span> Aprēķini</h2>
+  <p class="explain">Ar zemāk redzamajiem iestatījumiem tiek palaists aprēķins. Rezultāts tiek saglabāts kā jauns fails un parādās arī kartē.</p>
+  <div class="fields">
+    <label class="field">Aprēķina nosaukums (neobligāti)
+      <input id="runName" type="text" placeholder="piemēram: stingrāks slieksnis">
+      <small>Pēc tā vēlāk atpazīsi šo aprēķinu 6. solī. Ja atstāj tukšu, tiks piešķirts numurs.</small></label>
+    <label class="field">Piezīme (neobligāti)
+      <input id="runNotes" type="text" placeholder="ko šeit izmēģināji">
+      <small>Saglabājas kopā ar iestatījumiem.</small></label>
+  </div>
+  <label class="switch"><input id="rebuildMap" type="checkbox" checked> Pēc aprēķina atjaunot arī karti (+~10 s)</label>
+  <p class="help">Katrs aprēķins tiek saglabāts atsevišķi (iestatījumi, rezultāti un faili), tāpēc vienam un tam pašam GNSS ierakstam vari izveidot cik vien vēlies variantu un tos salīdzināt.</p>
+  <button id="run" class="primary big" disabled>Aprēķināt sapludināšanu</button>
+  <div class="card" id="allCard" hidden>
+    <div class="cardhead"><h3>Visi varianti uzreiz (XDK)</h3></div>
+    <p class="help">Sapludina izvēlēto XDK žurnālu ar <b>katru pieejamo GNSS līkni</b> un <b>katru metodi</b> (ar un bez RTS, ZUPT, NHC, vecais akselerometra filtrs, GNSS-only atskaite). Visi rezultāti tiek saglabāti kā parasti aprēķini un parādās <b>6. solī un kartē</b>, kur tos var salīdzināt. Laiks tiek ņemts no SYNC pogas, ja tā ir. Aizņem 20 s līdz dažām minūtēm.</p>
+    <div class="toolbar"><button id="allRun" class="primary" type="button">Aprēķināt visus variantus</button><span id="allStatus"></span>
+      <a id="allReport" class="button" href="#" target="_blank" rel="noopener" hidden>Atvērt metriku atskaiti</a></div>
+    <pre id="allOut" hidden></pre>
+  </div>
+  <details><summary>Līdzvērtīga komanda terminālim</summary>
+    <p class="help">Šo pašu aprēķinu var palaist arī komandrindā. Komanda mainās līdz ar iestatījumiem.</p>
+    <pre id="command"></pre></details>
+</section>
+
+<!-- 5. REZULTĀTS -->
+<section class="step" id="s5" hidden>
+  <h2><span class="num">5</span> Rezultāts</h2>
+  <div id="verdict" class="verdict"></div>
+  <div id="metrics" class="metrics"></div>
+  <div class="card">
+    <div class="cardhead"><h3>Trajektorija no augšas</h3><label class="switch"><input id="mapResult" type="checkbox"> Satelīta karte fonā</label><button id="recenterResult">⌖ Centrēt skatu</button></div>
+    <p id="mapNoteResult" class="help warnnote" hidden>Karte netiek ielādēta (nav interneta vai serveris nav pieejams). Trajektorija joprojām ir redzama.</p>
+    <p class="help">Skats no augšas, metri no ieraksta sākuma. Ritenis tuvina, vilkšana pārbīda, poga “Centrēt skatu” atgriež skatu uz visu trajektoriju.</p>
+    <canvas id="resultPlot" class="tall" aria-label="Trajektorija"></canvas>
+    <ul id="legend" class="legend"></ul>
+  </div>
+  <div class="toolbar"><a id="mapLink" class="button" href="map.html">Atvērt kartē</a><button id="useAxis" hidden>Lietot šo kustības asi nākamajiem aprēķiniem</button></div>
+  <pre id="log" hidden></pre>
+</section>
+
+<!-- 6. SALĪDZINĀŠANA -->
+<section class="step" id="s6">
+  <h2><span class="num">6</span> Salīdzini aprēķinus</h2>
+  <p class="explain">Šeit ir visi saglabātie šī GNSS ieraksta aprēķini. Atzīmē vairākus, un to trajektorijas tiks uzzīmētas vienā attēlā ar dažādām krāsām. Tabulā blakus redzi, ar kādiem iestatījumiem katrs radīts un kāds ir rezultāts.</p>
+  <div class="toolbar">
+    <span id="runCount"></span>
+    <label class="switch"><input id="onlySelection" type="checkbox" checked> Tikai izvēlētais GNSS avots un IMU</label>
+    <button id="refreshRuns">Atjaunot sarakstu</button>
+  </div>
+  <div class="tablewrap">
+    <table class="runs">
+      <thead><tr><th>Rādīt</th><th></th><th>Nosaukums</th><th>Mainītie iestatījumi</th>
+        <th title="IMU laika nobīde, s, skaitīta no šī GNSS avota pirmā punkta (tāda pati kā 2. solī)">Nobīde, s</th>
+        <th title="Cik labi IMU izskaidro GNSS paātrinājumu">IMU R²</th>
+        <th title="Noraidīto GNSS punktu skaits / visi punkti">Noraidīti</th>
+        <th title="Vidējā kvadrātiskā starpība starp trajektoriju un pieņemtajiem GNSS punktiem, m">Līdz GNSS, m</th>
+        <th title="Kļūda pret noņemtajiem punktiem GNSS pārtraukuma testā, m">Pārtraukums, m</th><th></th></tr></thead>
+      <tbody id="runRows"></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <div class="cardhead"><h3>Trajektorijas kopā</h3>
+      <label class="switch">GNSS:
+        <select id="showGnss"><option value="points">punkti</option><option value="line">trajektorija</option><option value="none">nekas</option></select></label>
+      <label class="switch"><input id="mapCompare" type="checkbox"> Satelīta karte fonā</label>
+      <button id="recenterCompare">⌖ Centrēt skatu</button></div>
+    <p id="mapNoteCompare" class="help warnnote" hidden>Karte netiek ielādēta (nav interneta vai serveris nav pieejams). Trajektorijas joprojām ir redzamas.</p>
+    <p class="help">Skats no augšas. Ritenis tuvina, vilkšana pārbīda, poga “Centrēt skatu” atgriež skatu uz visu trajektoriju. Ja trajektorijas gandrīz sakrīt, tuvini vietu, kur tās atšķiras (piemēram, pagriezienos vai pēc apstāšanās).</p>
+    <canvas id="comparePlot" class="tall" aria-label="Aprēķinu salīdzinājums"></canvas>
+    <ul id="compareLegend" class="legend"></ul>
+  </div>
+</section>
+
+</main>
+<script src="header.js?v=4"></script>
+<script src="alignment.js"></script>
+</body>
+</html>

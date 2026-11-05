@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="lv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GNSS ieraksti</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="header.css?v=4">
+<link rel="stylesheet" href="alignment.css">
+<link rel="stylesheet" href="recordings.css">
+</head>
+<body>
+<header id="site-header" class="site-header"></header>
+<main class="rec-layout">
+
+<aside class="rec-side">
+  <h2>Ieraksti</h2>
+  <p class="help">Katrs GNSS ieraksts ir sava mape ar visu, kas pie tā pieder. IMU, pogu spiedieni un video ir neobligāti.</p>
+  <div class="drop" id="dropBin" tabindex="0">
+    <b>+ Jauns GNSS ieraksts</b><span>Ievelc <code>.BIN</code> vai klikšķini</span>
+    <input type="file" id="fileBin" accept=".bin,.BIN" hidden>
+  </div>
+  <ul id="recList" class="reclist"></ul>
+</aside>
+
+<section class="rec-main">
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+  <div id="empty" class="step"><h2>Izvēlies vai augšupielādē GNSS ierakstu</h2>
+    <p class="explain">Pēc augšupielādes ierakstu var apstrādāt (CSV, RINEX, PPK), sadalīt braucienos, pievienot IMU ar pogu spiedieniem un video.</p></div>
+
+  <div id="recView" hidden>
+    <div class="step" id="secGnss">
+      <h2>GNSS dati <small id="recName" class="mono"></small></h2>
+      <div id="gnssChips" class="chips"></div>
+      <div class="toolbar">
+        <button id="btnProcess" type="button" class="primary">CSV + RINEX + single</button>
+        <button id="btnPpk" type="button">PPK (bāze automātiski)</button>
+        <span id="procOut" class="mono"></span>
+      </div>
+    </div>
+
+    <div class="step" id="secTrips">
+      <h2>Braucieni <small>sadali garo ierakstu</small></h2>
+      <p class="explain">Klikšķini uz grafika vai kartes laika ass: pirmais klikšķis = sākums, otrais = beigas. Katrs brauciens tiek apstrādāts atsevišķi (savs RINEX/PPK), tāpēc satelīti uztverami labāk.</p>
+      <div class="mapwrap"><div id="map"></div></div>
+      <svg id="timeline" viewBox="0 0 1000 110" preserveAspectRatio="none" aria-label="Ātrums un satelīti laikā"></svg>
+      <div class="legendline"><i style="background:#087e86"></i> ātrums &nbsp; <i style="background:#db8835"></i> satelīti &nbsp; <i style="background:#9fb3c0"></i> esošie braucieni</div>
+      <div class="fields">
+        <label class="field">Sākums (UTC)<input id="tStart" type="text" placeholder="2026-11-03T23:10:00Z"></label>
+        <label class="field">Beigas (UTC)<input id="tEnd" type="text" placeholder="2026-11-03T23:11:50Z"></label>
+        <label class="field">Nosaukums<input id="tName" type="text" placeholder="Brauciens"></label>
+      </div>
+      <div class="toolbar"><button id="btnTrip" type="button" class="primary">Izveidot braucienu</button><span id="tripMsg"></span></div>
+      <div id="tripList"></div>
+    </div>
+
+    <div class="step" id="secImu">
+      <h2>IMU un pogu spiedieni <small>neobligāti</small></h2>
+      <p class="explain">Augšupielādē XDK žurnālu (<code>LOG_00N.CSV</code>) un abus SYNC failus (<code>SYNC0000N.CSV</code> no GNSS un <code>SYNC_00N.CSV</code> no XDK).
+        Veidu atpazīst pats. Viss glabājas šī ieraksta mapē (<code>imu/</code>, <code>sync/</code>).</p>
+      <div class="drop" id="dropImu" tabindex="0"><b>+ IMU / SYNC faili</b><span>Ievelc vienu vai vairākus failus</span>
+        <input type="file" id="fileImu" multiple hidden></div>
+      <div class="cols">
+        <div><h3>XDK / IMU žurnāli</h3><ul id="xdkList" class="files"></ul></div>
+        <div><h3>Pogu spiedienu faili (SYNC)</h3><ul id="syncList" class="files"></ul></div>
+      </div>
+      <div class="toolbar"><button id="btnLink" type="button" class="primary">Savienot automātiski</button>
+        <a href="alignment.html" class="linklike">Manuāla sinhronizācija / sapludināšana →</a></div>
+      <pre id="linkOut" class="mono out" hidden></pre>
+    </div>
+
+    <div class="step" id="secVideo">
+      <h2>Video <small>neobligāti</small></h2>
+      <p class="explain">Video tiek saistīts tikai pēc laika (vienkārša nobīde), pozīcija no video netiek ņemta.</p>
+      <div class="drop" id="dropVid" tabindex="0"><b>+ Video</b><span>.mp4 .mov .mkv .avi .webm</span>
+        <input type="file" id="fileVid" accept="video/*" hidden></div>
+      <ul id="vidList" class="files"></ul>
+    </div>
+  </div>
+
+  <div class="step" id="secCfg">
+    <h2>IMU konfigurācija <small>kopīga visiem ierakstiem</small></h2>
+    <p class="explain">Vienīgais, kas nav piesaistīts konkrētam ierakstam: akselerometra nobīžu un apstrādes profili, ar kuriem tiek labota sensora kļūda.</p>
+    <div id="cfgBox" class="scroll"></div>
+    <p class="help">Jaunu profilu izveido sapludināšanas lapā no nekustīga IMU ieraksta.</p>
+  </div>
+</section>
+</main>
+<script src="header.js?v=4"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="recordings.js"></script>
+</body>
+</html>
